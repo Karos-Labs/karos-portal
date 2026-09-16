@@ -543,10 +543,12 @@ export async function buildAgentSetup(
         // hasNewsletterV2Setup), so `ready` answers with both or it would offer
         // a run the server refuses.
         //
-        // Unless the engine owns setup for this client, the carve-out the
-        // reputation card below already makes: on that path the issue index is
-        // the engine's own to stand up and the `newsletterAgentState` row this
-        // reads is never written, so `ready` would stay false forever.
+        // Unless the engine owns setup for this client — the carve-out the
+        // reputation card below already makes, though for a plainer reason than
+        // reputation's documented `00-roster-setup`: the `newsletterAgentState`
+        // row this reads has had no writer since agent-service was deleted and
+        // `karos-newsletter-setup-v2` has no engine route, so the press this
+        // card would ask for cannot land and `ready` would stay false forever.
         const [hasIntake, indexOnFile, engineOwns] = await Promise.all([
           hasNewsletterAgentIntake(clientId),
           hasNewsletterV2Setup(clientId),
@@ -584,9 +586,9 @@ export async function buildAgentSetup(
         // charged for and dies. The submit core gates on both, so a one-rung
         // answer here would offer a run the server refuses.
         //
-        // With the same engine carve-out as the newsletter above: the post
-        // index is the engine's to stand up, and the `blogAgentState` row this
-        // reads has had no writer since agent-service was deleted.
+        // With the same engine carve-out as the newsletter above, and for the
+        // same reason: the `blogAgentState` row this reads has had no writer
+        // since agent-service was deleted, and no press can produce one.
         const [hasIntake, indexOnFile, engineOwns] = await Promise.all([
           hasBlogAgentIntake(clientId),
           hasBlogV2Setup(clientId),

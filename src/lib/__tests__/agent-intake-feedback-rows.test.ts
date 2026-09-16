@@ -13,6 +13,9 @@ const D = vi.hoisted(() => ({
   getCustomAgentByKey: vi.fn(),
   listAgentIntake: vi.fn(),
   listClientSeats: vi.fn(),
+  // The LinkedIn builder asks which of this client's LinkedIn agents are
+  // engine-routed when the caller names none — see `engineOwnsLinkedInSetup`.
+  listCustomAgents: vi.fn(),
   listJobs: vi.fn(),
   listLiDraftFeedback: vi.fn(),
   listLiDirectionRequests: vi.fn(),
@@ -121,6 +124,7 @@ beforeEach(() => {
   D.getCustomAgentByKey.mockResolvedValue(null);
   D.listAgentIntake.mockResolvedValue([]);
   D.listClientSeats.mockResolvedValue([]);
+  D.listCustomAgents.mockResolvedValue([]);
   D.listJobs.mockResolvedValue([]);
   D.listLiDraftFeedback.mockResolvedValue([]);
   D.listLiDirectionRequests.mockResolvedValue([]);

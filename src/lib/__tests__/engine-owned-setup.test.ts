@@ -33,6 +33,7 @@ const {
   hasXAgentIntakeMock,
   hasLinkedInAgentIntakeMock,
   hasLinkedInV2SetupMock,
+  listLinkedInReadySeatIdsMock,
   hasRedditAgentIntakeMock,
   hasNewsletterAgentIntakeMock,
   hasNewsletterV2SetupMock,
@@ -42,6 +43,7 @@ const {
   hasXAgentIntakeMock: vi.fn(async () => true),
   hasLinkedInAgentIntakeMock: vi.fn(async () => true),
   hasLinkedInV2SetupMock: vi.fn(async () => false),
+  listLinkedInReadySeatIdsMock: vi.fn(async (): Promise<string[]> => []),
   hasRedditAgentIntakeMock: vi.fn(async () => true),
   hasNewsletterAgentIntakeMock: vi.fn(async () => true),
   hasNewsletterV2SetupMock: vi.fn(async () => false),
@@ -60,6 +62,7 @@ vi.mock("@/lib/agent-service/linkedin-agent-context", async (original) => ({
   ...(await original<typeof import("@/lib/agent-service/linkedin-agent-context")>()),
   hasLinkedInAgentIntake: hasLinkedInAgentIntakeMock,
   hasLinkedInV2Setup: hasLinkedInV2SetupMock,
+  listLinkedInReadySeatIds: listLinkedInReadySeatIdsMock,
 }));
 vi.mock("@/lib/agent-service/reddit-agent-context", async (original) => ({
   ...(await original<typeof import("@/lib/agent-service/reddit-agent-context")>()),
@@ -78,6 +81,8 @@ vi.mock("@/lib/agent-service/blog-agent-context", async (original) => ({
 
 const { unfireableScheduleReason } = await import("@/lib/jobs/schedule-gate");
 const { buildAgentSetup } = await import("@/lib/client-agent-rows");
+const { buildBlogAgentIntakeView, buildLinkedInAgentIntakeView, buildNewsletterAgentIntakeView } =
+  await import("@/lib/agent-intake-views");
 
 const client = (overrides: Partial<Client> = {}): Client =>
   ({ id: "c1", name: "Acme", agentsRepoSlug: "acme", ...overrides }) as Client;
@@ -93,6 +98,7 @@ beforeEach(() => {
   hasNewsletterV2SetupMock.mockResolvedValue(false);
   hasBlogAgentIntakeMock.mockResolvedValue(true);
   hasBlogV2SetupMock.mockResolvedValue(false);
+  listLinkedInReadySeatIdsMock.mockResolvedValue([]);
 });
 
 describe("engineOwnsSetup — the shared question, asked the way the submit core asks it", () => {
@@ -187,6 +193,131 @@ describe("the client's agent cards", () => {
   });
 });
 
+describe("the intake pages", () => {
+  /**
+   * ASKED OF THE BUILDERS, not of the file's text. The two flips with the
+   * largest client-visible consequence live here — the setup band's copy and
+   * which seats the run dialog may offer — and a source-string assertion passes
+   * whatever feeds them.
+   *
+   * Everything these builders read that is not about setup is seeded empty, so
+   * the setup state is the only thing that varies.
+   */
+  beforeEach(() => {
+    vi.mocked(data.listClientSeats).mockResolvedValue([]);
+    vi.mocked(data.listAgentIntake).mockResolvedValue([]);
+    vi.mocked(data.listCustomAgents).mockResolvedValue([]);
+    vi.mocked(data.listXNewsUpdates).mockResolvedValue([]);
+    vi.mocked(data.listLiDraftFeedback).mockResolvedValue([]);
+    vi.mocked(data.listLiDirectionRequests).mockResolvedValue([]);
+    vi.mocked(data.listNewsletterDraftFeedback).mockResolvedValue([]);
+    vi.mocked(data.listJobs).mockResolvedValue([]);
+    vi.mocked(data.getAgentIntake).mockResolvedValue(null);
+    vi.mocked(data.getCustomAgentByKey).mockResolvedValue(null);
+  });
+
+  const linkedin = (agentKey?: string) =>
+    buildLinkedInAgentIntakeView("c1", { isStaff: false, ...(agentKey ? { agentKey } : {}) });
+
+  it("stops asking an engine-routed client for a stand-up nothing can produce", async () => {
+    expect((await linkedin(LINKEDIN_WRITER)).isSetUp).toBe(true);
+    expect((await buildNewsletterAgentIntakeView("c1", { isStaff: false })).isSetUp).toBe(true);
+    expect((await buildBlogAgentIntakeView("c1", { isStaff: false })).isSetUp).toBe(true);
+  });
+
+  it("still asks a client whose runs do not reach the engine, exactly as before", async () => {
+    vi.mocked(data.getClient).mockResolvedValue(client({ agentsRepoSlug: undefined }));
+    expect((await linkedin(LINKEDIN_WRITER)).isSetUp).toBe(false);
+    expect((await buildNewsletterAgentIntakeView("c1", { isStaff: false })).isSetUp).toBe(false);
+    expect((await buildBlogAgentIntakeView("c1", { isStaff: false })).isSetUp).toBe(false);
+  });
+
+  it("asks of the LinkedIn agent the pane is about, not of a fixed key", async () => {
+    // The family has four keys and only the two v2 ones route to the engine, so
+    // a client whose only LinkedIn agent is an e10 instance must keep the
+    // stand-up that is still the portal's to fire.
+    expect((await linkedin("karos-linkedin-company-acme")).isSetUp).toBe(false);
+    expect((await linkedin("karos-linkedin-agent")).isSetUp).toBe(false);
+  });
+
+  it("resolves the family page's question from the agents this client holds", async () => {
+    // That page names no agent. With only the e10 instance granted there is
+    // nothing engine-routed to carve out for...
+    vi.mocked(data.listCustomAgents).mockResolvedValue([
+      { id: "a1", key: "karos-linkedin-company-acme", enabled: true },
+    ] as CustomAgent[]);
+    vi.mocked(data.getClient).mockResolvedValue(client({ customAgentIds: ["a1"] }));
+    expect((await linkedin()).isSetUp).toBe(false);
+    // ...and with the v2 writer granted there is.
+    vi.mocked(data.listCustomAgents).mockResolvedValue([
+      { id: "a2", key: LINKEDIN_WRITER, enabled: true },
+    ] as CustomAgent[]);
+    vi.mocked(data.getClient).mockResolvedValue(client({ customAgentIds: ["a2"] }));
+    expect((await linkedin()).isSetUp).toBe(true);
+  });
+
+  it("offers a seat the client set up on LinkedIn, and never one they did not", async () => {
+    // Seats are SHARED across agents — one created for the X agent says nothing
+    // about LinkedIn — and `voiceReady` is what `withLinkedInIdentityOptions`
+    // filters the run dialog's "Post as" list by. Offering a seat with no
+    // LinkedIn form would dispatch `requestedExecutiveName` for a person this
+    // channel knows nothing about: a borrowed voice on a personal profile.
+    vi.mocked(data.listClientSeats).mockResolvedValue([
+      { id: "s1", clientId: "c1", name: "Albert Kattan", slug: "albert" },
+      { id: "s2", clientId: "c1", name: "Lola Tamman", slug: "lola" },
+    ] as Awaited<ReturnType<typeof data.listClientSeats>>);
+    vi.mocked(data.listAgentIntake).mockResolvedValue([
+      { id: "i1", clientId: "c1", agent: "linkedin", seatId: "s1", updatedAt: 1 },
+    ] as Awaited<ReturnType<typeof data.listAgentIntake>>);
+
+    const seats = (await linkedin(LINKEDIN_WRITER)).seats;
+    expect(seats.find((s) => s.id === "s1")?.voiceReady).toBe(true);
+    expect(seats.find((s) => s.id === "s2")?.voiceReady).toBe(false);
+    // And neither of them has a voice profile, which is the OTHER question the
+    // seat's status line speaks about.
+    expect(seats.every((s) => s.voiceOnFile === false)).toBe(true);
+  });
+
+  it("keeps offering a seat whose voice was built on the old path", async () => {
+    vi.mocked(data.getClient).mockResolvedValue(client({ agentsRepoSlug: undefined }));
+    vi.mocked(data.listClientSeats).mockResolvedValue([
+      { id: "s1", clientId: "c1", name: "Albert Kattan", slug: "albert" },
+    ] as Awaited<ReturnType<typeof data.listClientSeats>>);
+    listLinkedInReadySeatIdsMock.mockResolvedValue(["s1"]);
+    const [seat] = (await linkedin(LINKEDIN_WRITER)).seats;
+    expect(seat.voiceReady).toBe(true);
+    expect(seat.voiceOnFile).toBe(true);
+  });
+
+  it("turns the LinkedIn stand-up TRIGGERS off with the demand, which is intended", async () => {
+    // `isSetUp` is not only the band's copy. The company form fires the stand-up
+    // on save while it is false, and the manual "Set it up" button exists only
+    // in that branch — so an engine-routed client has neither. That is the
+    // intent, not a side effect: `karos-linkedin-setup-v2` routes to
+    // `linkedin-agent`, the DRAFTING agent, so a press there is a second charge
+    // for a post nobody asked for. Pinned here so bringing the press back is a
+    // deliberate edit rather than a quiet one.
+    expect((await linkedin(LINKEDIN_WRITER)).isSetUp).toBe(true);
+    const component = readFileSync(
+      join(process.cwd(), "src/components/linkedin-agent-intake.tsx"),
+      "utf8",
+    );
+    expect(component).toContain("if (isSetUp === false) {");
+    expect(component).toContain("const firesSetup = isSetUp === false;");
+    // The seat's own auto-fire is keyed the same way, so a seat with no
+    // LinkedIn form still fires its build on the save that creates one.
+    expect(component).toContain("if (!seat.voiceReady) {");
+  });
+
+  it("tells the band which kind of 'set up' it is looking at", async () => {
+    // Both paths are "no press to make" and only one of them has already read
+    // this company's material, so they cannot share a sentence.
+    expect((await linkedin(LINKEDIN_WRITER)).setupInlinedInRuns).toBe(true);
+    vi.mocked(data.getClient).mockResolvedValue(client({ agentsRepoSlug: undefined }));
+    expect((await linkedin(LINKEDIN_WRITER)).setupInlinedInRuns).toBe(false);
+  });
+});
+
 describe("the wiring that has to agree across modules", () => {
   const core = readFileSync(join(process.cwd(), "src/lib/jobs/submit-custom.ts"), "utf8");
   const gate = readFileSync(join(process.cwd(), "src/lib/jobs/schedule-gate.ts"), "utf8");
@@ -224,7 +355,9 @@ describe("the wiring that has to agree across modules", () => {
     // reputation's own name for it, which now delegates here.
     expect(gate).toContain("engineOwnsSetup(agent.key, client.agentsRepoSlug)");
     expect(rows).toContain("engineOwnsSetupForClient(clientId, agent.key)");
-    expect(views).toContain("engineOwnsSetupForClient(clientId, LINKEDIN_WRITER_V2_KEY)");
+    // LinkedIn asks through `engineOwnsLinkedInSetup`, which resolves WHICH of
+    // the family's four keys to ask with; the pane's behaviour is pinned above.
+    expect(views).toContain("engineOwnsSetupForClient(clientId, agentKey)");
     expect(views).toContain("engineOwnsSetupForClient(clientId, NEWSLETTER_WRITER_V2_KEY)");
     expect(views).toContain("engineOwnsSetupForClient(clientId, BLOG_WRITER_V2_KEY)");
     const reputation = readFileSync(
@@ -234,11 +367,4 @@ describe("the wiring that has to agree across modules", () => {
     expect(reputation).toContain("return engineOwnsSetupForClient(clientId, agentKey);");
   });
 
-  it("offers the seat in the run dialog that the submit core would now draft for", () => {
-    // `voiceReady` decides both the seat's status line and whether
-    // `withLinkedInIdentityOptions` offers the person at all — so a seat the
-    // core no longer refuses must not stay hidden behind a voice profile row
-    // the engine path never writes.
-    expect(views).toContain("voiceReady: ready.has(seat.id) || engineOwnsSetup");
-  });
 });
