@@ -59,7 +59,7 @@ The Craft pages (sourced, dated, hard rules separated from heuristics), the huma
 ## 4. What Albert adds
 
 - Examples on the agent pages: two or three target outputs per agent, and one "must never ship" example.
-- Decisions: the open items in 05 (AI-generated people, X pictures, default stage mix, Reddit policy line, Campaign, humanizer budget, question budget, client visibility of the strategy document and the craft pages, autopilot policy per platform).
+- Decisions: the five open items in 05. One is Albert's (the Campaign agent, O06), one is Albert with Tomer (O12), and three are Tomer and Shlomi's (O09, O10, O11).
 - Accounts and applications only the company can open: X developer account on pay-per-use with a spend cap; Meta Business Verification and App Review; LinkedIn Community Management (registered entity, business email, the Karos Page's super admin); TikTok developer verification and the Content Posting audit; Google Business Profile API access (Karos's own profile verified 60+ days). Details and order in 03 Connectors section 8.
 - Owners and sizes per item with Tomer and Shlomi; Jira tickets from the ids here.
 - Pilot clients per platform for the blind tests and the first client layers.

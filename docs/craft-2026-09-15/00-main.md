@@ -159,4 +159,4 @@ The SVG source is `flow.svg` in this folder.
 
 ## 10. Decisions
 
-O01 (the three-layer model), O02 (humanizer and budget), O03 (AI-generated people), O04 (default stage mix), O05 (Reddit AI-policy line), O07 (client visibility of overlays and pages) in 05 Decisions log. K11 (X text-only) is settled as D24.
+All settled in 05 Decisions log: D29 (the three-layer model), D30 (humanizer), D31 (AI imagery, never of real people), D32 (default stage mix), D33 (no Reddit policy line at setup), D34 (overlays and pages stay internal). K11 (X text-only) is D24. Still open: O12, whether the Craft writing rules become the agent's instructions or stay a checklist.

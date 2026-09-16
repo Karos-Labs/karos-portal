@@ -39,7 +39,7 @@ We do not sell Facebook (D26). "Meta" here means Instagram, which publishes and 
 - Formats: text (280 chars, more for Premium accounts), up to 4 images or 1 video, polls, replies; a thread is a chain of replies posted in sequence; quote posts require an Enterprise plan. Limits: 100 posts per 15 min per user, 10,000 per 24 h per app. No scheduling: our cron.
 - Metrics: public impressions, likes, reposts, replies, quotes, bookmarks; non-public link clicks, profile clicks, engagements (owner only, last 30 days); followers, following, post count. Billed as reads.
 - Policy: automated posting is allowed, but OAuth alone "does not by itself constitute sufficient consent to take automated actions": describe the actions, obtain express consent, honour opt-out. AI reply bots need X's prior written approval; keyword-triggered replies are banned; no near-duplicate posts across accounts; no automated likes or follows.
-- Posture: connect for posting and metrics. Autopilot after a separate consent screen with an always-on opt-out. Never auto-reply, auto-mention or bulk-quote. X's per-use fee is Karos's cost, not the client's; the client is charged credits per published post (O16).
+- Posture: connect for posting and metrics. Autopilot after a separate consent screen with an always-on opt-out. Never auto-reply, auto-mention or bulk-quote. X's per-use fee is Karos's cost, not the client's; the client is charged, in credits, exactly what the post cost us (D39).
 
 **TikTok**
 - Post via API: yes, Content Posting API. Direct Post publishes; Upload to inbox leaves the video in the client's TikTok inbox to tap Post. Client: any account via Login Kit; a Business Account for deep insights.
@@ -71,7 +71,7 @@ We do not sell Facebook (D26). "Meta" here means Instagram, which publishes and 
 
 **Pinterest**: yes (pins, carousels up to 5 images, video); Karos needs a business account, Trial access (sandbox only) then Standard (screen recording of the OAuth flow, 2+ weeks reported); no scheduling and "the end user must choose each Pin to be published"; metrics impressions, saves, clicks, video views over a rolling 90 days, no caching of API data. Not now; no Pinterest agent.
 
-Who pays what: the client pays credits only. Platform API costs are Karos's, on Karos's developer accounts. X bills Karos per use (a post $0.015, a post with a link $0.20, a read $0.005; no subscription tiers since the legacy Basic and Pro plans were migrated in June and September 2026), so Karos's cost of publishing an X post is cents and is no reason to stay draft-only. Meta, TikTok, LinkedIn, Google and Pinterest charge nothing; their cost is approvals and engineering. A published post can carry its own credit charge, higher on autopilot; that price is a decision (O16) and belongs in 07 Pricing model, alongside the two plans (D27).
+Who pays what: the client pays credits only. Platform API costs are Karos's, on Karos's developer accounts. X bills Karos per use (a post $0.015, a post with a link $0.20, a read $0.005; no subscription tiers since the legacy Basic and Pro plans were migrated in June and September 2026), so Karos's cost of publishing an X post is cents and is no reason to stay draft-only. Meta, TikTok, LinkedIn, Google and Pinterest charge nothing; their cost is approvals and engineering. A published post is charged exactly what it cost us, in credits, with no separate price and no autopilot surcharge (D39). The two plans are in 07 Pricing model (D27).
 
 ## 3. What exists in the repo today
 
@@ -147,7 +147,7 @@ Engineering shape: a vendor publisher behind the existing `publishAssetToPlatfor
 
 ## 8. Decisions
 
-Open in 05: O08 (autopilot defaults), O13 (buy or build), O14 (accounts and applications), O15 (LinkedIn stays draft-only; staff never page admins).
+Settled in 05: D35 (autopilot per platform), D36 (build direct, Ayrshare as the fallback), D37 (Tomer opens the accounts and files the applications), D38 (LinkedIn draft-only; staff never page admins), D39 (a published post costs what it cost us).
 
 ## 9. Client data we hold per connector
 
