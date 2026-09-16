@@ -223,6 +223,12 @@ describe("xIntentUrl", () => {
  * about what the READER may print, which is what this classification decides.
  */
 describe("classifyXMetaBullet", () => {
+  /** What the reader prints for a bullet: its label, if any, then its words. */
+  const rendered = (bullet: string) => {
+    const meta = classifyXMetaBullet(bullet);
+    return (meta.label ? `${meta.label}: ` : "") + meta.text;
+  };
+
   it("keeps a labelled X post as the target it is, words and all", () => {
     const reply = classifyXMetaBullet("**In reply to:** https://x.com/patio11/status/1790000000000000001");
     expect(reply.kind).toBe("reply-target");
@@ -296,6 +302,90 @@ describe("classifyXMetaBullet", () => {
     expect(none.label).toBeUndefined();
   });
 
+  it("keeps a real X post named under a label that is not a target", () => {
+    // The deliberate pass-through: "first reply" names the draft's own second
+    // post, so it addresses nothing — but the link IS an X post, so the bullet's
+    // words are true and it is shown as written.
+    const meta = classifyXMetaBullet("**First reply:** https://x.com/acme/status/1790000000000000001");
+    expect(meta.kind).toBe("source");
+    expect(meta.label).toBeUndefined();
+    expect(meta.text).toBe("First reply: https://x.com/acme/status/1790000000000000001");
+  });
+
+  it("judges the URL the claim governs, not any X post further along", () => {
+    // The link under the reply label is the one that would read as the post
+    // this draft answers; an X post named later in the bullet cannot vouch for
+    // it.
+    const mixed = classifyXMetaBullet(
+      "**Reply:** https://example.com/a — quoted from https://x.com/a/status/12345",
+    );
+    expect(mixed.kind).toBe("source");
+    expect(mixed.url).toBe("https://example.com/a");
+    expect(mixed.label).toBe("Source");
+    expect(mixed.text).toBe("https://example.com/a — quoted from https://x.com/a/status/12345");
+
+    const notion = classifyXMetaBullet(
+      "**First reply:** https://www.notion.so/Launch-notes-2f41 (thread: https://x.com/acme/status/1790000000000000001)",
+    );
+    expect(notion.kind).toBe("source");
+    expect(notion.label).toBe("Source");
+    expect(notion.text).toBe(
+      "https://www.notion.so/Launch-notes-2f41 (thread: https://x.com/acme/status/1790000000000000001)",
+    );
+  });
+
+  it("catches reply wording that never reaches a colon", () => {
+    for (const bullet of ["First reply — https://www.notion.so/x", "Reply url https://www.notion.so/x"]) {
+      const meta = classifyXMetaBullet(bullet);
+      expect(meta.kind, bullet).toBe("source");
+      expect(meta.label, bullet).toBe("Source");
+      expect(meta.text, bullet).toBe("https://www.notion.so/x");
+    }
+  });
+
+  it("prints one label, never a Source over the bullet's own", () => {
+    // The label was honest and the reply wording is the sentence's, so both
+    // stay: a second label in front would read "Source: Source: …".
+    const source = rendered("**Source:** in reply to a thread at https://example.com/x");
+    expect(source).toBe("Source: in reply to a thread at https://example.com/x");
+    expect(source.match(/Source:/g)).toHaveLength(1);
+
+    expect(rendered("**Context:** replying to the launch thread — https://notion.so/launch")).toBe(
+      "Context: replying to the launch thread — https://notion.so/launch",
+    );
+  });
+
+  it("never cuts words out of a sentence to fix a label", () => {
+    // Wording mid-clause is the agent describing the draft. Deleting it leaves
+    // broken English in front of a client, which is worse than the label it was
+    // meant to fix.
+    const angle = classifyXMetaBullet(
+      "**Angle:** what to say when replying to critics, per https://notion.so/tone",
+    );
+    expect(angle.kind).toBe("source");
+    expect(angle.label).toBeUndefined();
+    expect(angle.text).toBe("Angle: what to say when replying to critics, per https://notion.so/tone");
+
+    expect(rendered("**Why now:** we are replying to https://example.com/story")).toBe(
+      "Why now: we are replying to https://example.com/story",
+    );
+  });
+
+  it("leaves a label that merely contains the word alone", () => {
+    // "Quote of the week" is not a quote target, and swapping it for "Source"
+    // would throw away the only words the bullet had.
+    for (const [bullet, shown] of [
+      ["**Quote of the week:** https://example.com/q", "Quote of the week: https://example.com/q"],
+      ["**Reply rate:** https://example.com/metrics", "Reply rate: https://example.com/metrics"],
+      ["**Replies to date:** https://example.com/metrics", "Replies to date: https://example.com/metrics"],
+    ]) {
+      const meta = classifyXMetaBullet(bullet);
+      expect(meta.kind, bullet).toBe("source");
+      expect(meta.label, bullet).toBeUndefined();
+      expect(rendered(bullet), bullet).toBe(shown);
+    }
+  });
+
   it("agrees with the parser: a mislabelled bullet addresses nothing", () => {
     const draft = draftWithMeta("**First reply:** https://www.notion.so/Launch-notes-2f41");
     expect(draft.replyToUrl).toBeUndefined();
@@ -325,6 +415,15 @@ describe("xThreadParts", () => {
     expect(xThreadParts("one\n\ntwo")).toEqual([]);
     expect(xThreadParts({ 0: "one" })).toEqual([]);
   });
+
+  it("de-marks each part exactly as the parser de-marks a post", () => {
+    // These render beside posts the parser produced and the clipboard hands
+    // them to X, where `**` is two asterisks in the client's post.
+    expect(xThreadParts(["**Part two.** stays bold", "   Part three.  "])).toEqual([
+      "Part two. stays bold",
+      "Part three.",
+    ]);
+  });
 });
 
 describe("xThreadReplies", () => {
@@ -348,6 +447,35 @@ describe("xThreadReplies", () => {
     ]);
     expect(xThreadReplies([], main)).toEqual([]);
     expect(xThreadReplies([main], main)).toEqual([]);
+  });
+
+  it("drops an opener that drifted rather than showing the post twice", () => {
+    // The engine's copy and the markdown's are the same post whenever one of
+    // them gained a full stop, a hashtag, a link or a normalized dash.
+    for (const opener of [
+      `${main} `,
+      "We shipped the drafts reader today",
+      `${main} #shipping`,
+      `${main} https://karoslabs.io/blog/x-reader`,
+      "We shipped the drafts reader today…",
+    ]) {
+      expect(xThreadReplies([opener, "Here is what changed."], main), opener).toEqual([
+        "Here is what changed.",
+      ]);
+    }
+    expect(
+      xThreadReplies(["Pricing — the tell", "And why."], "Pricing – the tell."),
+    ).toEqual(["And why."]);
+  });
+
+  it("keeps a reply that only opens with the post's words", () => {
+    // A duplicate is visible to the client; a reply quietly swallowed is not.
+    const echo = `${main} And here is the whole story of why we did it, at length and in detail.`;
+    expect(xThreadReplies([echo, "And why."], main)).toEqual([echo, "And why."]);
+    expect(xThreadReplies(["We shipped.", "And why."], "We shipped. Eventually.")).toEqual([
+      "We shipped.",
+      "And why.",
+    ]);
   });
 });
 
