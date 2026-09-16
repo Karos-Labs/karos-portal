@@ -28,9 +28,9 @@ Testers: 06, then the agent's page in 01. To test a run: sign in as staff, open 
 
 | Name | Role | Owns |
 |---|---|---|
-| Albert Kattan | Founder, product | The decisions, the Craft pages, and the Newsletter, Blog and Landing page agents. Accounts and platform applications |
+| Albert Kattan | Founder, product | The decisions, the Craft pages, and the Newsletter, Blog and Landing page agents |
 | Anna | Product, with Albert | Feedback directives in 06, agent pages in 01 |
-| Tomer Erel | Developer | Instagram agent, portal UI, the engine with Shlomi |
+| Tomer Erel | Developer | Instagram agent, portal UI, the engine with Shlomi. Opens the platform accounts and files the applications (D37) |
 | Shlomi Gueta | Developer | X, LinkedIn, Reddit and the three TikTok agents, the engine with Tomer |
 
 Merges to main deploy to prep automatically. Production is promoted by hand, by Tomer or Shlomi, and never as part of a doc change.
