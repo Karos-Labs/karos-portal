@@ -16,6 +16,10 @@ import { DEFAULT_PLATFORM_FOR_TYPE } from "@/lib/scheduling";
 import { blockingPredecessor } from "@/lib/post-chain";
 import { fetchPlatformMetrics, fetchSeatMetrics } from "@/lib/integrations/analytics-providers";
 import { TokenExpiredError } from "@/lib/integrations/publishers";
+import {
+  isIntegrationDeadError,
+  runWithFreshCredentials,
+} from "@/lib/integrations/token-refresh";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { logger } from "@/services/logger";
 
@@ -152,7 +156,14 @@ export async function GET(req: NextRequest) {
         assetsScanned++;
 
         try {
-          const measured = await fetchPlatformMetrics(platform, integration?.credentials ?? {}, asset);
+          // Refresh ahead of expiry (and once more on a 401) before reading
+          // metrics: this cron runs daily, so a Google or Reddit token is ALWAYS
+          // past its hour by the time it gets here.
+          const measured = integration
+            ? await runWithFreshCredentials(integration, (fresh) =>
+                fetchPlatformMetrics(platform, fresh.credentials, asset),
+              )
+            : await fetchPlatformMetrics(platform, {}, asset);
           // null = no live API could answer. Write nothing rather than a
           // stand-in; "not measured" is a state every reader already renders.
           if (!measured) {
@@ -182,7 +193,11 @@ export async function GET(req: NextRequest) {
           live++;
           results.push({ clientId: client.id, platform, assetId: asset.id, action: "written", source });
         } catch (e) {
-          if (e instanceof TokenExpiredError) {
+          // A refusal from the provider's token endpoint counts as dead here too
+          // — the stored refresh token no longer buys an access token, which is
+          // exactly "needs reconnecting". A token endpoint that is merely
+          // unreachable falls to the skipped branch and is retried tomorrow.
+          if (isIntegrationDeadError(e)) {
             await markIntegrationForReauth(client.id, platform).catch(() => {});
             logger.logError({
               clientId: client.id,
