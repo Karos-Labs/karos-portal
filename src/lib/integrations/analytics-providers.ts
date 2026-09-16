@@ -112,7 +112,6 @@ async function fetchTwitterRaw(token: string, postId: string): Promise<RawPlatfo
  * A Graph Insights payload holds one entry per (metric, period) pair.
  *
  * BOTH Meta fetchers below ask for lifetime figures, so one entry per metric is
- * what we expect and this picker is normally a no-op: `fetchFacebookRaw` pins
  * `period=lifetime` on its request, and Instagram's media insights are single
  * lifetime values that take no period at all.
  *
@@ -173,50 +172,6 @@ async function fetchInstagramRaw(token: string, mediaId: string): Promise<RawPla
   };
 }
 
-async function fetchFacebookRaw(token: string, postId: string): Promise<RawPlatformMetrics> {
-  const base = metaGraphUrl(encodeURIComponent(postId));
-  const [insightsRes, engagementRes] = await Promise.all([
-    // `period=lifetime` is pinned so this stays a life-of-post total — comparable with
-    // the lifetime `post_impressions` rows already in `clientMarketingAnalytics` and with
-    // the reactions/comments/shares totals fetched beside it. Both metrics support it
-    // (v25 reference: post_clicks lifetime; post_media_view lifetime / week / days_28).
-    // Unpinned, a decayed post could divide lifetime engagements by a rolling window and
-    // clamp engagementRate to 1.0, promoting stale posts as top performers.
-    fetch(
-      `${base}/insights?metric=post_media_view,post_clicks&period=lifetime&access_token=${encodeURIComponent(token)}`,
-    ),
-    fetch(`${base}?fields=reactions.summary(true),comments.summary(true),shares&access_token=${encodeURIComponent(token)}`),
-  ]);
-  assertNotExpired("facebook", insightsRes);
-  assertNotExpired("facebook", engagementRes);
-  if (!insightsRes.ok && !engagementRes.ok) throw new Error(`Facebook metrics failed: ${insightsRes.status}`);
-  const insights = insightsRes.ok
-    ? ((await insightsRes.json()) as { data?: GraphInsightEntry[] })
-    : { data: [] };
-  const engagement = engagementRes.ok
-    ? ((await engagementRes.json()) as {
-        reactions?: { summary?: { total_count?: number } };
-        comments?: { summary?: { total_count?: number } };
-        shares?: { count?: number };
-      })
-    : {};
-  const metric = (name: string) => insightValue(insights.data, name);
-  return {
-    // `post_impressions` is marked obsolete above Graph API v25; `post_media_view` — "the number
-    // of times your content was played or displayed" — is Meta's replacement for it. It feeds the
-    // same unified impressions field in normalizePlatformMetrics, so the raw key keeps its name.
-    //
-    // It is NOT the same measurement: plays/displays of the post's media is narrower than the
-    // post appearing on a screen, so a Facebook series steps at this cutover (2026-09, CN2).
-    // Rows are stamped with `metricsDefinitionVersion("facebook")` for exactly that reason —
-    // see `metricsDefinitionVersion` in analytics.ts for who reads the marker.
-    post_impressions: metric("post_media_view"),
-    post_clicks: metric("post_clicks"),
-    reactions: engagement.reactions?.summary?.total_count ?? 0,
-    comments: engagement.comments?.summary?.total_count ?? 0,
-    shares: engagement.shares?.count ?? 0,
-  };
-}
 
 async function fetchYouTubeRaw(token: string, videoId: string): Promise<RawPlatformMetrics> {
   // Data API statistics (public counts). Watch time needs the Analytics API +
@@ -284,7 +239,6 @@ async function fetchLiveRaw(
     case "linkedin":  return fetchLinkedInRaw(token, postId);
     case "twitter":   return fetchTwitterRaw(token, postId);
     case "instagram": return fetchInstagramRaw(token, postId);
-    case "facebook":  return fetchFacebookRaw(token, postId);
     case "youtube":   return fetchYouTubeRaw(token, postId);
     case "tiktok":    return fetchTikTokRaw(token, postId);
     default:          throw new MetricsUnavailableError(platform);
