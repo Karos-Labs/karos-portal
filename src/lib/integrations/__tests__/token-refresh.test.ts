@@ -1,4 +1,5 @@
 import { vi, describe, expect, it, beforeEach, afterEach } from "vitest";
+import { OAUTH_CONFIGS } from "@/lib/integrations/oauth";
 
 /**
  * CN1 — OAuth token refresh for connectors.
@@ -250,7 +251,10 @@ describe("refreshIntegrationCredentials — per provider", () => {
       const [rawUrl, init] = lastCall();
       const url = new URL(rawUrl);
       expect(init.method).toBe("GET");
-      expect(url.origin + url.pathname).toBe("https://graph.facebook.com/v20.0/oauth/access_token");
+      // Version-agnostic on purpose: the Graph version is pinned in ONE place
+      // (CN2's meta-graph module, read here through the OAuth config), so a
+      // version bump moves this assertion with it instead of breaking it.
+      expect(url.origin + url.pathname).toBe(new URL(OAUTH_CONFIGS[platform]!.tokenUrl).toString().split("?")[0]);
       expect(url.searchParams.get("grant_type")).toBe("fb_exchange_token");
       expect(url.searchParams.get("client_id")).toBe("fb-app-id");
       expect(url.searchParams.get("client_secret")).toBe("fb-app-secret");
