@@ -12,6 +12,7 @@
  */
 
 import { isInternalLine } from "@/lib/doc-render";
+import { splitMetaLinks } from "@/lib/draft-meta";
 
 export interface XParsedPost {
   text: string;
@@ -76,6 +77,135 @@ function metaTarget(label: string, meta: string): "reply" | "quote" | null {
   if (REPLY_PHRASE.test(meta)) return "reply";
   if (QUOTE_PHRASE.test(meta)) return "quote";
   return null;
+}
+
+/**
+ * Reply/quote WORDING, deliberately broader than the label patterns above and
+ * used for the opposite purpose: those decide what may be ADDRESSED, these
+ * decide what must NOT be printed as an address.
+ *
+ * "First reply" and "Reply URL" are the two the agent actually writes and
+ * neither is a target label — in a thread "first reply" names the draft's own
+ * second post, not somebody else's. Widening REPLY_LABEL to catch them would
+ * aim a client's reply at whatever URL followed, which is the one failure this
+ * module is written to avoid.
+ */
+const REPLY_ISH = /\brepl(?:y|ies|ying)\b/i;
+const QUOTE_ISH = /\bquot(?:e|es|ed|ing)\b/i;
+
+/**
+ * The bullet's own leading label, e.g. "First reply" in "First reply: <url>".
+ *
+ * A URL's scheme is not a label, so a colon followed by "//" does not end one —
+ * without that, "replying to https://…" reads as a label of "replying to https"
+ * and dropping it would take the scheme off the link with it.
+ */
+const META_LABEL = /^([^:]{1,40}):(?!\/\/)/;
+
+/** The target phrases as removable runs, for a bullet with no label to drop. */
+const TARGET_PHRASES = /\b(?:in reply to|replying to|reply target|quote source|quote target|quoted post)\b\s*/gi;
+
+/** One meta bullet, told apart by what its URL actually is. */
+export interface XMetaBullet {
+  /**
+   * The words to print. Identical to the bullet as parsed, EXCEPT when `label`
+   * is set — then the misleading label or phrase has been taken out of it.
+   */
+  text: string;
+  /**
+   * - `reply-target` / `quote-target`: an X status URL this draft addresses;
+   * - `source`: any other URL — something to read, never a target;
+   * - `note`: no URL at all.
+   */
+  kind: "reply-target" | "quote-target" | "source" | "note";
+  /** The bullet's URL, when it carries one. */
+  url?: string;
+  /**
+   * What the reader must print in front of the bullet INSTEAD of its own
+   * label. Set only when that label (or phrase) claims a reply or quote target
+   * the URL cannot be.
+   */
+  label?: string;
+}
+
+/**
+ * How a meta bullet may be shown.
+ *
+ * THE RULE THIS EXISTS FOR: a bullet labelled "First reply" carrying a page
+ * that is not an X post reads, once the reader links it, as the post the draft
+ * answers — a client was shown a Notion page that way (2026-09-15). Only an
+ * x.com/twitter.com STATUS url can be a reply or quote target; anything else is
+ * a source, and the wording that claimed otherwise is dropped rather than the
+ * bullet, so the link a client may want to read survives as "Source: <link>".
+ *
+ * Pure, so the reader component (which cannot be imported by a test — its
+ * server-action import pulls in the Admin SDK) is left with nothing to decide.
+ */
+export function classifyXMetaBullet(meta: string): XMetaBullet {
+  const text = stripBold(meta).trim();
+  const url = splitMetaLinks(text).find((seg) => seg.href)?.href;
+  if (!url) return { text, kind: "note" };
+
+  const label = text.match(META_LABEL)?.[1].trim() ?? "";
+  const statusUrl = text.match(STATUS_URL)?.[0];
+  if (statusUrl) {
+    // A real X post: the existing label/phrase rules decide, and a bullet that
+    // names one keeps its own words — they are true.
+    const target = metaTarget(label, text);
+    if (target === "reply") return { text, kind: "reply-target", url: statusUrl };
+    if (target === "quote") return { text, kind: "quote-target", url: statusUrl };
+    return { text, kind: "source", url: statusUrl };
+  }
+
+  const labelIsTargetish = REPLY_ISH.test(label) || QUOTE_ISH.test(label);
+  const phraseIsTargetish = REPLY_PHRASE.test(text) || QUOTE_PHRASE.test(text);
+  if (!labelIsTargetish && !phraseIsTargetish) return { text, kind: "source", url };
+
+  const withoutLabel = labelIsTargetish ? text.replace(META_LABEL, "").trim() : text;
+  const rest = withoutLabel.replace(TARGET_PHRASES, "").replace(/\s{2,}/g, " ").trim();
+  return { text: rest || url, kind: "source", url, label: "Source" };
+}
+
+/**
+ * The engine's `meta.thread` for an X asset, as post texts.
+ *
+ * The field is the agent-engine deliverable's own (materializeXPost carries it
+ * across verbatim) and its element shape is NOT pinned in this repo, so plain
+ * strings and `{ text }` / `{ post }` objects are read and anything else is
+ * ignored rather than guessed at. Text is left exactly as written: it is what
+ * the client posts.
+ */
+export function xThreadParts(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const parts: string[] = [];
+  for (const entry of value) {
+    const text =
+      typeof entry === "string"
+        ? entry
+        : entry && typeof entry === "object"
+          ? ["text", "post"]
+              .map((k) => (entry as Record<string, unknown>)[k])
+              .find((v): v is string => typeof v === "string")
+          : undefined;
+    if (text && text.trim()) parts.push(text);
+  }
+  return parts;
+}
+
+const sameBody = (a: string, b: string) =>
+  stripBold(a).replace(/\s+/g, " ").trim() === stripBold(b).replace(/\s+/g, " ").trim();
+
+/**
+ * The replies in an engine thread, given the post already on the card.
+ *
+ * A thread is ONE post with its replies, so the first part is dropped when it
+ * is that post restated (the engine sends the whole chain, the markdown holds
+ * the opener) — otherwise every part is a reply and nothing is lost.
+ */
+export function xThreadReplies(parts: readonly string[], mainText: string): string[] {
+  const rest = parts.filter((p) => p.trim().length > 0);
+  if (rest.length > 0 && sameBody(rest[0], mainText)) rest.shift();
+  return rest;
 }
 
 export function parseXDrafts(markdown: string): XParsedBatch | null {

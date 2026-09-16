@@ -13,7 +13,7 @@ import { parseLiDrafts } from "@/lib/li-drafts";
 import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
 import { isRedditV2Envelope, parseRedditDrafts } from "@/lib/reddit-drafts";
 import { RedditDraftsBatch } from "@/components/reddit-drafts-review";
-import { parseXDrafts } from "@/lib/x-drafts";
+import { parseXDrafts, xThreadParts } from "@/lib/x-drafts";
 import { draftsDisplayTitle, hasGeneratedTitle } from "@/lib/deliverable-titles";
 import { XDraftsBatch } from "@/components/x-drafts-review";
 import {
@@ -182,6 +182,13 @@ export function AssetDetailModal({
   const liMedia = useMemo<LiMediaFile[]>(
     () => (liBatch ? assetLiMedia(assetMeta) : []),
     [assetMeta, liBatch],
+  );
+  // The engine ships an X thread's parts as `meta.thread` (materializeXPost)
+  // whether or not the markdown spells them out - the reader hangs them under
+  // the post as its replies when the markdown holds the opener alone.
+  const xThread = useMemo(
+    () => (xBatch ? xThreadParts(assetMeta?.thread) : []),
+    [assetMeta, xBatch],
   );
 
   if (!asset) return null;
@@ -410,6 +417,7 @@ export function AssetDetailModal({
               {...(asset.jobId ? { jobId: asset.jobId } : {})}
               assetId={asset.id}
               accounts={xBatch.accounts}
+              {...(xThread.length > 0 ? { thread: xThread } : {})}
             />
           </div>
         ) : emailHtml ? (
