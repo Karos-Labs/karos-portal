@@ -27,8 +27,8 @@ import "server-only";
  */
 
 import { randomUUID } from "crypto";
-import { getAgentIntake, getClient, listReputationAgentState } from "@/lib/data";
-import { resolveDispatchedAgentEngineProductId } from "@/lib/agent-engine/health";
+import { getAgentIntake, listReputationAgentState } from "@/lib/data";
+import { engineOwnsSetupForClient } from "@/lib/agent-engine/setup-ownership";
 import { uploadBytes } from "@/lib/storage";
 import type { AgentServiceContextFile } from "@/lib/agent-service/types";
 import type { AgentIntake, ReputationAgentState } from "@/lib/types";
@@ -91,13 +91,17 @@ export function hasReputationAgentIntake(clientId: string): Promise<boolean> {
  * (`resolveDispatchedAgentEngineProductId`: dispatch flag, client lab slug,
  * agent map), so a card can never call setup "handled" for a client whose run
  * would in fact go nowhere.
+ *
+ * This family's name for the SHARED question — `engineOwnsSetupForClient`
+ * (agent-engine/setup-ownership.ts), which the LinkedIn, newsletter and blog
+ * surfaces now ask the same way. One definition rather than five copies of the
+ * same three-part gate: reputation was simply the first family to need it.
  */
-export async function isReputationSetupInlinedForClient(
+export function isReputationSetupInlinedForClient(
   clientId: string,
   agentKey: string = REPUTATION_RUNNER_KEY,
 ): Promise<boolean> {
-  const client = await getClient(clientId);
-  return resolveDispatchedAgentEngineProductId(agentKey, client?.agentsRepoSlug) !== undefined;
+  return engineOwnsSetupForClient(clientId, agentKey);
 }
 
 /**
