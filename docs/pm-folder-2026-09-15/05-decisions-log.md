@@ -34,24 +34,24 @@ Status: approved 2026-09-15 · Owner: Albert · Changes when: a decision is made
 | D26 | 2026-09-15 | We do not sell Facebook. Instagram is the Meta channel; its metrics were removed from the portal. Meta plumbing stays because Instagram publishes and reports through it | 03, portal |
 | D27 | 2026-09-15 | Two plans: Starter $29 a month for 200 credits with a $10 ceiling on our cost; Pro $299 a month for 2600 credits with a $130 ceiling. Both are $0.05 of our cost per credit, so a plan is only the client's monthly allowance and the engine needs no change | 07, portal (allowance per client) |
 | D28 | 2026-09-15 | A payment system is coming, and the client picks their plan as the last step of onboarding. Until both exist, the credits rework stays switched off: turning it on with no plan field grants every existing client the Pro allowance of 2600 credits, and a granted balance is never clawed back | 07, portal (onboarding, billing, credits flag) |
+| D29 | 2026-09-15 | Craft model approved as written in Craft 11: a global base per platform, a sector overlay on top, the client's own learned rules over both. Hard platform rules always win | Craft, N2, N3, N9 |
+| D30 | 2026-09-15 | Humanizer: Rephrasy behind a per-client flag, off by default, blind test on one pilot client. Tomer integrates it, or proposes an alternative if it does not fit | N8, K5, Tomer |
+| D31 | 2026-09-15 | AI-generated imagery is allowed. Not of real people: TikTok prohibits a real person's likeness and Instagram cuts reach on it, so that stays off limits everywhere. AI objects and scenes are fine, labelled where the platform requires it | Instagram and TikTok agents |
+| D32 | 2026-09-15 | Default stage mix until a client has performance data: three attention, two expertise, one decide per six posts | N4 |
+| D33 | 2026-09-15 | No Reddit AI-policy line at setup. The client posts the reply from their own account, so they read and own it by definition | Reddit setup copy |
+| D34 | 2026-09-15 | The sector overlay and the platform pages are internal. Clients do not see how we write for a platform | F1 |
+| D35 | 2026-09-15 | Autopilot: manual for every new client. Offered on Instagram, X (with the consent screen X requires) and TikTok after its Content Posting audit. Never on LinkedIn, Reddit, Google Business Profile or Pinterest. See 03 section 4 | CN7 |
+| D36 | 2026-09-15 | Ayrshare is the fallback for the visual and video platforms, not the plan. Tomer builds direct; if that proves too complicated, we buy Ayrshare instead. X, LinkedIn and Google stay direct either way | CN9, Tomer |
+| D37 | 2026-09-15 | Tomer owns opening the accounts and filing the platform applications listed in 03 section 8, in the order given there | CN2 to CN6 |
+| D38 | 2026-09-15 | LinkedIn stays draft-only for publishing; the person posts in one click. Karos staff never act as a client's page admin | CN5 |
+| D39 | 2026-09-15 | Every published post is charged exactly what it cost us, in credits. No separate per-post price, and no surcharge for autopilot | CN7, CN9, 07 |
 
 ## Open
 
 | Id | Question | Owner | Blocks | Proposed default until decided |
 |---|---|---|---|---|
-| O01 | Approve the three-layer craft model (global base, sector overlay, client layer) and its precedence | Albert | N2, N3, N9 | As written in Craft 11 |
-| O02 | Humanizer: Rephrasy behind a per-client flag, and the budget | Albert | N8, K5 | Flag off; blind test on one pilot client |
-| O03 | AI-generated people in images and video: the call allowed them; Instagram penalises reach on them and TikTok prohibits real-person likeness | Albert | Instagram and TikTok agents | No real people in AI imagery on any platform; AI objects and scenes allowed, labelled where required |
-| O04 | Default stage mix until a client has performance data | Albert | N4 | 3 attention : 2 expertise : 1 decide per six posts, logged as a default |
-| O05 | Reddit's May 2026 AI-content policy: tell the client at setup that a human must read, edit and own the reply | Albert | Reddit setup copy | One line at setup |
-| O06 | Campaign agent: keep, hide, or coming soon | Albert | F1 | Hide until decided |
-| O07 | Client visibility of the sector overlay and the platform pages ("how we write for X") | Albert | F1 | Internal |
-| O08 | Autopilot policy per platform | Albert | CN7 | Manual for every new client. Autopilot offered on Instagram, X (with the separate consent screen the X rules require) and, after the Content Posting audit, TikTok. Never on LinkedIn (self-serve API terms forbid automated posting), Reddit, Google Business Profile, Pinterest. See 03 section 4 |
-| O09 | Store for the subject table and logs: Firestore or Postgres | Tomer, Shlomi | B1, B2 | Firestore |
-| O10 | Scraping provider per platform for metrics and own-account reads | Tomer, Shlomi | N6 | Connectors first; scraping only where the client does not connect |
-| O11 | Owners and sizes for the build-plan items | Tomer, Shlomi | all items | tbd |
-| O12 | Copywriting stack beyond the lint and humanizer: prompt spec per platform | Albert with Tomer | K5 | The platform pages' writing rules as the spec |
-| O13 | Build or buy for the visual and video platforms | Albert | CN9 | Buy: Ayrshare Business, four-week paid pilot on three clients; keep X, LinkedIn and Google direct. See 03 section 5 |
-| O14 | Open the accounts and file the applications listed in 03 section 8 (X developer, Meta verification, LinkedIn Community Management, TikTok audit, Google Business Profile access) | Albert | CN2 to CN6 | File in that order; each is weeks |
-| O15 | LinkedIn stays draft-only for publishing (the person posts in one click); Karos staff never act as a client's page admin | Albert | CN5 | Yes |
-| O16 | Credits charged per published post, and the extra charge for autopilot (the plans themselves are settled, D27) | Albert | CN7, CN9, 07 | One credit line per published post; autopilot posts charged higher; add the rows to 07 |
+| O06 | The Campaign agent: keep it, hide it, or list it as coming soon. It is already built and every client has been granted it since 2026-09-07, but it is not in the catalog so nobody can run it. One brief becomes X, LinkedIn, Instagram, Reddit and blog drafts, all reviewed together in one go | Albert | F1 | Hidden until decided |
+| O09 | Where the subject table and the logs live. Firestore is the database the portal already runs on. Postgres would be a second one to run and pay for | Tomer, Shlomi | B1, B2 | Firestore |
+| O10 | How we read the numbers for a platform a client has not connected. A connected account gives us its own numbers; for the rest we would pay a scraping provider, and we have not picked one | Tomer, Shlomi | N6 | Connect where we can; scrape only what we cannot |
+| O11 | Who takes each item in 04, and how long each one is. Without it we cannot say what fits in a week | Tomer, Shlomi | all items | Not estimated yet |
+| O12 | Whether the writing rules on each Craft page become the actual instructions the agent writes with, or stay a checklist we grade the draft against afterwards | Albert with Tomer | K5 | The Craft rules are the instructions |

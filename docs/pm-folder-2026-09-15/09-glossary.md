@@ -19,5 +19,5 @@ Status: approved 2026-09-15 · Owner: Albert · Changes when: a term gains a sec
 - **Jira statuses**: To Do, In Progress, Code Review, Prep (merged, on prep), Done (in production).
 - **Feedback statuses (06)**: New (grey), To do, Done (yellow), Verified (green), Won't do.
 - **File statuses**: draft, approved, superseded (taken out of the folder; git history keeps it).
-- **Draft-only**: we prepare, the client posts. Always true for Reddit (D25) and LinkedIn publishing (O15).
+- **Draft-only**: we prepare, the client posts. Always true for Reddit (D25) and LinkedIn publishing (D38).
 - **Connected via partner**: a platform reached through a unified posting API (Ayrshare) rather than our own app.
