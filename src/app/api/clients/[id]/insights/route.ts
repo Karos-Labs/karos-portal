@@ -11,7 +11,7 @@ import {
   upsertClientInsightsCache,
 } from "@/lib/data";
 import { canViewClient } from "@/lib/client-visibility";
-import { engagementIsMockOrStale, rankByEngagement } from "@/lib/analytics";
+import { engagementIsMockOrStale, keepCurrentMetricDefinitions, rankByEngagement } from "@/lib/analytics";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { logger } from "@/services/logger";
 import { CREDIT_COSTS } from "@/lib/credits";
@@ -186,8 +186,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
    * 2026-08 (analytics-providers.ts), but everything written before that is
    * still there — which is why this filter is a permanent fixture and not a
    * migration step.
+   *
+   * `keepCurrentMetricDefinitions` fences the same digest against the OTHER way a
+   * number here can mislead (2026-09, CN2): this block averages per platform and
+   * computes a week-over-week delta, and both Meta platforms changed what
+   * `impressions` counts when Graph v25 retired the metrics behind it. A trend
+   * drawn across that cutover reports a definition change as a performance change.
+   * Per platform, so only the channels that actually changed lose their history.
    */
-  const measuredRecords = scopedRecords.filter((r) => r.source === "live");
+  const measuredRecords = keepCurrentMetricDefinitions(
+    scopedRecords.filter((r) => r.source === "live"),
+  );
 
   // QA F125: a "Demo data" badge does not offset paragraphs of specific, numbered budget
   // advice derived from invented figures. When every engagement row is mock, a client (or

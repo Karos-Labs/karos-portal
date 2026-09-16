@@ -10,6 +10,7 @@ import {
   updateAccessToken,
 } from "@/lib/data";
 import { PLATFORM_REGISTRY } from "@/lib/integrations/platforms";
+import { forgetRefreshedCredentials } from "@/lib/integrations/token-refresh";
 import { getCurrentUser } from "@/lib/auth";
 import { issueAccessToken } from "@/lib/tokens";
 import { autoCompleteTasksOnIntegrationConnect } from "@/lib/task-sync";
@@ -22,6 +23,15 @@ import { requireStaff } from "./_shared";
  * A blank password field means "keep the stored secret": secrets never reach the
  * browser, so the form cannot send back what it was not given, and the carry-over
  * happens here. The write is a full overwrite, hence the explicit re-merge.
+ *
+ * The carry-over list is NOT just the registry's password fields. `refreshToken`
+ * and `expiresAt` are OAuth bookkeeping the callback writes and no form renders:
+ * X, Instagram and LinkedIn declare only `accessToken`, and `expiresAt` is
+ * declared by nobody, so rebuilding the map from registry fields alone would
+ * drop them. Dropping them disables CN1's refresh for that channel — for Meta
+ * permanently, since the long-lived re-exchange is scheduled off `expiresAt` and
+ * a token with no expiry on record is never re-exchanged, so the 60-day token
+ * dies and the forced refresh at its 401 is already too late.
  */
 export async function saveIntegrationAction(
   clientId: string,
@@ -36,15 +46,17 @@ export async function saveIntegrationAction(
     if (v.trim()) cleaned[k] = v.trim();
   }
 
-  const secretKeys = (PLATFORM_REGISTRY.find((p) => p.id === platform)?.fields ?? [])
-    .filter((f) => f.type === "password")
-    .map((f) => f.key);
-  if (secretKeys.length > 0) {
-    const existing = (await listClientIntegrations(clientId)).find((i) => i.platform === platform);
-    for (const key of secretKeys) {
-      const stored = existing?.credentials?.[key];
-      if (!cleaned[key] && stored) cleaned[key] = stored;
-    }
+  const carriedKeys = new Set(
+    (PLATFORM_REGISTRY.find((p) => p.id === platform)?.fields ?? [])
+      .filter((f) => f.type === "password")
+      .map((f) => f.key),
+  );
+  carriedKeys.add("refreshToken");
+  carriedKeys.add("expiresAt");
+  const existing = (await listClientIntegrations(clientId)).find((i) => i.platform === platform);
+  for (const key of carriedKeys) {
+    const stored = existing?.credentials?.[key];
+    if (!cleaned[key] && stored) cleaned[key] = stored;
   }
 
   await upsertClientIntegration({
@@ -117,6 +129,10 @@ export async function deleteIntegrationAction(
       return { error: "Only your Karos team can disconnect a channel. Message us and we'll do it." };
     }
     await deleteClientIntegration(clientId, platform);
+    // Disconnecting has to mean the tokens are gone, not just the Firestore doc:
+    // the refresh path keeps a decrypted copy in memory to bridge a cron tick,
+    // and a long-lived instance would otherwise hold it past the disconnect.
+    forgetRefreshedCredentials(clientId, platform);
     revalidatePath(`/clients/${clientId}`);
     return { ok: true };
   } catch {

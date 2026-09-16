@@ -61,12 +61,23 @@ export interface LiSeatView {
   slug: string;
   intake: LiIntakeView | null;
   /**
-   * Has this person's voice been built (v2 seat setup)? Until it has, they are
-   * not a runnable identity: the agent refuses a seat run with no voice card
-   * rather than write on a personal profile in a borrowed voice, and both submit
-   * cores refuse it too. Absent on props built before seats were runnable.
+   * May this person be OFFERED as an identity? Two ways to be: their voice has
+   * been built (v2 seat setup), or the run itself reads how they write on an
+   * engine-routed client who has filled this seat's LinkedIn form. Until one of
+   * them holds they are not a runnable identity — the agent refuses a seat run
+   * it has nothing of theirs for rather than write on a personal profile in a
+   * borrowed voice, and both submit cores refuse it too. Absent on props built
+   * before seats were runnable.
    */
   voiceReady?: boolean;
+  /**
+   * Does a built voice profile actually exist for them? The narrower half of
+   * the question above, and the only one the status line may speak about: one
+   * flag answered both, so the card told a client a voice was built for a
+   * person nothing had read yet. Absent ⇒ the older payload, where being
+   * offered and having a voice on file were the same fact.
+   */
+  voiceOnFile?: boolean;
 }
 
 /**
@@ -383,6 +394,7 @@ function IdentityPicker({
 function SetupBand({
   clientId,
   isSetUp,
+  setupInlinedInRuns,
   companyOnFile,
   runInFlight,
   setupCost,
@@ -390,6 +402,13 @@ function SetupBand({
 }: {
   clientId: string;
   isSetUp: boolean;
+  /**
+   * Is this client past the band because the agent stands the channel up on
+   * the run itself, rather than because a stand-up has already happened? The
+   * two are both "no press to make" and only one of them has read this
+   * company's material, so they cannot share a sentence.
+   */
+  setupInlinedInRuns: boolean;
   companyOnFile: boolean;
   /**
    * Is a run of this family queued or working right now (server-answered, off
@@ -433,12 +452,13 @@ function SetupBand({
     return (
       <Card className="p-5">
         <div className="flex items-center justify-between gap-3">
-          <CardTitle>LinkedIn is set up</CardTitle>
+          <CardTitle>{setupInlinedInRuns ? "LinkedIn is ready to run" : "LinkedIn is set up"}</CardTitle>
           <Badge tone="success">Ready</Badge>
         </div>
         <p className="mt-1 text-sm text-muted">
-          The lanes, the voice and the topic list are in place. Every post run reads them, and your
-          answers below keep steering them.
+          {setupInlinedInRuns
+            ? "There is no separate setup step for this agent. The first run works out which kinds of post this company makes, how it sounds and the first list of subjects, from your answers below and the material you already gave us, and then drafts from them. Nothing posts."
+            : "The lanes, the voice and the topic list are in place. Every post run reads them, and your answers below keep steering them."}
         </p>
       </Card>
     );
@@ -543,7 +563,9 @@ function SeatSetup({
   if (seat.voiceReady) {
     return (
       <p className="mt-3 border-t border-border pt-3 text-xs text-muted">
-        Their voice is built, so {seat.name.split(" ")[0]} can be chosen when you run the agent.
+        {seat.voiceOnFile === false
+          ? `${seat.name.split(" ")[0]} can be chosen when you run the agent. The run reads how they actually write, from the details above, before it drafts anything for them.`
+          : `Their voice is built, so ${seat.name.split(" ")[0]} can be chosen when you run the agent.`}
       </p>
     );
   }
@@ -1224,6 +1246,7 @@ export function LinkedInAgentIntake({
   news,
   directionRequests,
   isSetUp,
+  setupInlinedInRuns = false,
   feedback,
   runs,
   runInFlight,
@@ -1246,6 +1269,12 @@ export function LinkedInAgentIntake({
    * older caller never shows a client a step that is not theirs to take.
    */
   isSetUp?: boolean;
+  /**
+   * Set up by WHAT — see SetupBand. Absent ⇒ false, the portal's own stand-up,
+   * which is what every payload built before agent-engine owned a channel's
+   * setup meant.
+   */
+  setupInlinedInRuns?: boolean;
   feedback: LiFeedbackRowView[];
   runs: LiRunRowView[];
   /**
@@ -1285,6 +1314,7 @@ export function LinkedInAgentIntake({
       <SetupBand
         clientId={clientId}
         isSetUp={isSetUp ?? true}
+        setupInlinedInRuns={setupInlinedInRuns}
         companyOnFile={company !== null}
         runInFlight={runInFlight}
         setupCost={setupCost}

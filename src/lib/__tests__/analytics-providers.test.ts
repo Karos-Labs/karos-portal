@@ -4,6 +4,7 @@ vi.mock("server-only", () => ({}));
 
 import { fetchPlatformMetrics, MetricsUnavailableError } from "@/lib/integrations/analytics-providers";
 import { TokenExpiredError } from "@/lib/integrations/publishers";
+import { META_GRAPH_VERSION } from "@/lib/integrations/meta-graph";
 import type { Asset } from "@/lib/types";
 
 function credentials(patch: Record<string, string> = { accessToken: "tok" }): Record<string, string> {
@@ -120,6 +121,50 @@ describe("fetchPlatformMetrics — live success", () => {
     expect(res!.metrics.impressions).toBe(5000);
     expect(res!.metrics.engagementRate).toBeCloseTo(0.024); // (100+20)/5000
   });
+});
+
+/**
+ * Meta insights on the pinned Graph version (CN2, 2026-09). Instagram's
+ * `impressions` metric is gone for media created after 2024-07-02 and `views`
+ * replaced it; the Page post metric `post_impressions` is obsolete above v25 and
+ * `post_media_view` replaced it. Both fetchers must request the current names
+ * and land them in the unified `impressions` field — before this, the whole
+ * insights call 400'd on the dead metric and was swallowed to zeros.
+ */
+describe("fetchPlatformMetrics — Meta insights on the pinned Graph version", () => {
+  function urlsFetched(): string[] {
+    return fetchMock.mock.calls.map((c) => String(c[0]));
+  }
+
+  it("Instagram: requests views/reach/saved/shares (never impressions) and maps views → impressions", async () => {
+    fetchMock.mockImplementation(async (url: string) =>
+      url.includes("/insights")
+        ? jsonResponse({
+            data: [
+              { name: "views", values: [{ value: 1200 }] },
+              { name: "reach", values: [{ value: 900 }] },
+              { name: "saved", values: [{ value: 30 }] },
+              { name: "shares", values: [{ value: 6 }] },
+            ],
+          })
+        : jsonResponse({ like_count: 50, comments_count: 10 }),
+    );
+    const res = await fetchPlatformMetrics("instagram", credentials(), asset({ platformPostId: "media123" }));
+    expect(res).not.toBeNull();
+    expect(res!.metrics.impressions).toBe(1200);
+    // likes + comments + saves + shares over views — shares used to be a hard 0.
+    expect(res!.metrics.engagementRate).toBeCloseTo((50 + 10 + 30 + 6) / 1200);
+
+    const insightsUrl = urlsFetched().find((u) => u.includes("/insights"));
+    expect(insightsUrl).toBe(
+      `https://graph.facebook.com/${META_GRAPH_VERSION}/media123/insights?metric=views,reach,saved,shares&access_token=tok`,
+    );
+    expect(insightsUrl).not.toMatch(/metric=[^&]*impressions/);
+    for (const u of urlsFetched()) expect(u).toContain(`https://graph.facebook.com/${META_GRAPH_VERSION}/`);
+  });
+
+
+
 });
 
 describe("fetchPlatformMetrics — resilience", () => {

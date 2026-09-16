@@ -23,7 +23,14 @@ import { laneLabel } from "@/lib/draft-lane-label";
 import { stripInlineMarkdown } from "@/lib/doc-render";
 import { normalizeDashes } from "@/lib/text-utils";
 import { splitMetaLinks } from "@/lib/draft-meta";
-import { xIntentUrl, type XParsedAccount, type XParsedDraft } from "@/lib/x-drafts";
+import {
+  classifyXMetaBullet,
+  xIntentUrl,
+  xThreadReplies,
+  type XParsedAccount,
+  type XParsedDraft,
+  type XParsedPost,
+} from "@/lib/x-drafts";
 
 type SentState = "posted" | "posted_with_edits" | "not_posted";
 
@@ -59,12 +66,15 @@ function DraftCard({
   assetId,
   accountTitle,
   draft,
+  thread,
 }: {
   clientId: string;
   jobId?: string;
   assetId: string;
   accountTitle: string;
   draft: XParsedDraft;
+  /** The engine's own chain (asset meta.thread), for a draft written as one post. */
+  thread?: readonly string[];
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -78,8 +88,24 @@ function DraftCard({
   const [reason, setReason] = useState("");
 
   const draftRef = `${accountTitle} · ${draft.avenue}`;
-  const isThread = draft.posts.length > 1;
-  const fullText = draft.posts.map((p) => p.text).join("\n\n");
+  // A THREAD IS ONE POST WITH ITS REPLIES (product ruling, 2026-09-15) - so the
+  // opener is the post and the rest hang under it as a chain, rather than N
+  // equal cards a reader has to renumber in their head.
+  //
+  // The chain comes from the markdown when the deliverable wrote it out, and
+  // otherwise from the engine's own `meta.thread` (passed down only for a
+  // single-draft batch, which is every run since one run = one post). Never
+  // both: a deliverable that spelled the thread out is the one that shipped.
+  const mainPost = draft.posts[0];
+  const replies: XParsedPost[] =
+    draft.posts.length > 1
+      ? draft.posts.slice(1)
+      : thread && mainPost
+        ? xThreadReplies(thread, mainPost.text).map((text) => ({ text }))
+        : [];
+  const isThread = replies.length > 0;
+  const chain = mainPost ? [mainPost, ...replies] : [];
+  const fullText = chain.map((p) => p.text).join("\n\n");
 
   async function send(action: SentState, textUsed?: string) {
     setError(null);
@@ -91,8 +117,10 @@ function DraftCard({
     // must NOT open a second compose.
     if (action !== "not_posted" && !handedOff) {
       const text = textUsed ?? fullText;
+      // Post 1 only, deliberately: X's compose takes one post, and the replies
+      // ride the clipboard. `mainPost` is the same post the card leads with.
       const composeText =
-        textUsed !== undefined ? (isThread ? textUsed.split(/\n{2,}/)[0] : textUsed) : draft.posts[0].text;
+        textUsed !== undefined ? (isThread ? textUsed.split(/\n{2,}/)[0] : textUsed) : (mainPost?.text ?? "");
       // Long-form posts make intent URLs unreliable; open a blank compose and
       // let the copied text carry the post.
       const url =
@@ -140,12 +168,14 @@ function DraftCard({
         <p className="text-sm font-medium">{laneLabel(draft.avenue)}</p>
         <div className="flex items-center gap-2">
           {isThread ? (
-            <span title="A connected thread, written to post in order.">
-              <Badge>{draft.posts.length}-post thread</Badge>
+            <span title="One post with its replies, written to go up in order.">
+              <Badge>
+                {replies.length === 1 ? "Post + 1 reply" : `Post + ${replies.length} replies`}
+              </Badge>
             </span>
-          ) : charLabel(draft.posts[0]?.chars) ? (
+          ) : charLabel(mainPost?.chars) ? (
             <span title="Character count. Standard X posts cap at 280; long-form needs X Premium.">
-              <Badge>{charLabel(draft.posts[0]?.chars)}</Badge>
+              <Badge>{charLabel(mainPost?.chars)}</Badge>
             </span>
           ) : null}
           {sent ? (
@@ -161,47 +191,75 @@ function DraftCard({
         </p>
       ) : null}
 
-      <div className="mt-3 space-y-2">
-        {draft.posts.map((post, i) => (
-          <div key={i} className="rounded-md border border-border bg-background p-4">
-            {post.marker ? (
-              <p className="mb-1.5 font-label text-[10px] uppercase tracking-wider text-muted">{post.marker}</p>
-            ) : null}
-            <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">{post.text}</p>
-            {post.marker && charLabel(post.chars) ? (
+      {/* The post, then its replies indented on one chain - the shape X itself
+          shows, instead of the lab's "1/3" numbering on equal cards. */}
+      <div className="mt-3">
+        {mainPost ? (
+          <div className="rounded-md border border-border bg-background p-4">
+            <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">{mainPost.text}</p>
+            {isThread && charLabel(mainPost.chars) ? (
               <p
                 className="mt-2 text-right font-mono text-[10px] text-muted-2"
                 title="Character count. X's limit per post is 280."
               >
-                {charLabel(post.chars)}
+                {charLabel(mainPost.chars)}
               </p>
             ) : null}
           </div>
-        ))}
+        ) : null}
+        {isThread ? (
+          <div className="ml-4 space-y-2 border-l border-border pl-4 pt-2">
+            {replies.map((post, i) => (
+              <div key={i} className="rounded-md border border-border bg-background p-4">
+                <p className="mb-1.5 flex items-center gap-1 font-label text-[10px] uppercase tracking-wider text-muted">
+                  <Icon name="CornerDownRight" className="h-3 w-3" />
+                  Reply {i + 1}
+                </p>
+                <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">{post.text}</p>
+                {charLabel(post.chars) ? (
+                  <p
+                    className="mt-2 text-right font-mono text-[10px] text-muted-2"
+                    title="Character count. X's limit per post is 280."
+                  >
+                    {charLabel(post.chars)}
+                  </p>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       {draft.meta.length > 0 ? (
         <ul className="mt-2 space-y-0.5">
-          {draft.meta.map((m, i) => (
-            <li key={i} className="break-words text-xs text-muted">
-              {/* Link runs verbatim, prose runs de-marked (F70). */}
-              {splitMetaLinks(m).map((seg, j) =>
-                seg.href ? (
-                  <a
-                    key={j}
-                    href={seg.href}
-                    target="_blank"
-                    rel="noopener"
-                    className="underline hover:text-foreground"
-                  >
-                    {seg.text}
-                  </a>
-                ) : (
-                  <span key={j}>{normalizeDashes(stripInlineMarkdown(seg.text))}</span>
-                ),
-              )}
-            </li>
-          ))}
+          {draft.meta.map((m, i) => {
+            // A bullet only keeps its own label when that label tells the truth
+            // about its URL. "First reply: <a page that is not an X post>" gets
+            // the label taken off and reads as the source it is - linked, so a
+            // client can still open it, never as the post this draft answers.
+            const bullet = classifyXMetaBullet(m);
+            return (
+              <li key={i} className="break-words text-xs text-muted">
+                {bullet.label ? <span>{bullet.label}: </span> : null}
+                {/* Link runs verbatim, prose runs de-marked (F70). */}
+                {splitMetaLinks(bullet.text).map((seg, j) =>
+                  seg.href ? (
+                    <a
+                      key={j}
+                      href={seg.href}
+                      target="_blank"
+                      rel="noopener"
+                      className="underline hover:text-foreground"
+                    >
+                      {seg.text}
+                    </a>
+                  ) : (
+                    <span key={j}>{normalizeDashes(stripInlineMarkdown(seg.text))}</span>
+                  ),
+                )}
+              </li>
+            );
+          })}
         </ul>
       ) : null}
 
@@ -288,7 +346,9 @@ function DraftCard({
                 {draft.replyToUrl ? ", already addressed to the post it answers" : ""}
                 {draft.quoteUrl ? ", with the quoted post attached" : ""}
                 {isThread
-                  ? `. Threads: X opens with post 1 of ${draft.posts.length}; we copy the full thread for pasting the rest`
+                  ? `. X opens with the post itself; the ${
+                      replies.length === 1 ? "reply is" : `${replies.length} replies are`
+                    } on your clipboard to paste after it`
                   : ""}
                 . You press Post.
               </p>
@@ -321,13 +381,24 @@ export function XDraftsBatch({
   jobId,
   assetId,
   accounts,
+  thread,
 }: {
   clientId: string;
   jobId?: string;
   assetId: string;
   accounts: XParsedAccount[];
+  /**
+   * The run's own thread parts (`asset.meta.thread`, as the engine sent them),
+   * for a deliverable whose markdown holds the opener alone.
+   */
+  thread?: readonly string[];
 }) {
   const totalDrafts = accounts.reduce((n, a) => n + a.drafts.length, 0);
+  // The chain belongs to ONE post, and the asset names no draft - so it is only
+  // safe to hang it under a draft when there is exactly one, which is every run
+  // since "one run produces one post" (docs/x-agent-portal.md). An older
+  // multi-draft batch in the archive keeps the markdown's own threads.
+  const chain = totalDrafts === 1 && thread && thread.length > 0 ? thread : undefined;
   return (
     <div className="space-y-5">
       {/* A3/A4: this used to open "About a week of posting to choose from" and
@@ -367,6 +438,7 @@ export function XDraftsBatch({
                   assetId={assetId}
                   accountTitle={acc.title}
                   draft={draft}
+                  {...(chain ? { thread: chain } : {})}
                 />
               ))}
             </div>

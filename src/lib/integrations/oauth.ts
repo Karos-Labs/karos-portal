@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHmac, randomBytes, createHash, timingSafeEqual } from "crypto";
 import { appLinkBase } from "@/lib/app-origin";
+import { META_OAUTH_DIALOG_URL, META_OAUTH_TOKEN_URL } from "@/lib/integrations/meta-graph";
 
 /**
  * HMAC key for the OAuth `state` token. Falls back to a dev-only constant, but
@@ -199,8 +200,8 @@ export const OAUTH_CONFIGS: Record<string, OAuthPlatformConfig> = {
   facebook: {
     envClientId: "FACEBOOK_APP_ID",
     envClientSecret: "FACEBOOK_APP_SECRET",
-    authUrl: "https://www.facebook.com/v20.0/dialog/oauth",
-    tokenUrl: "https://graph.facebook.com/v20.0/oauth/access_token",
+    authUrl: META_OAUTH_DIALOG_URL,
+    tokenUrl: META_OAUTH_TOKEN_URL,
     scopes: ["pages_manage_posts", "pages_read_engagement", "publish_video"],
     requiresLongLivedExchange: true,
     // Comments/mentions read (pages_read_user_content) and page-list discovery
@@ -214,8 +215,8 @@ export const OAUTH_CONFIGS: Record<string, OAuthPlatformConfig> = {
     // Instagram business publishing uses Meta's Graph API (same app credentials as Facebook)
     envClientId: "FACEBOOK_APP_ID",
     envClientSecret: "FACEBOOK_APP_SECRET",
-    authUrl: "https://www.facebook.com/v20.0/dialog/oauth",
-    tokenUrl: "https://graph.facebook.com/v20.0/oauth/access_token",
+    authUrl: META_OAUTH_DIALOG_URL,
+    tokenUrl: META_OAUTH_TOKEN_URL,
     scopes: [
       "instagram_content_publish",
       // Audience demographics + comments-read for OWN posts are already covered by

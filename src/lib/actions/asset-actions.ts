@@ -22,11 +22,12 @@ import {
 import { getCurrentUser } from "@/lib/auth";
 import { requireStaff } from "./_shared";
 import { trackUserAction } from "@/lib/telemetry/bi-tracker";
+import { inferPlatform, publishAssetToPlatform } from "@/lib/integrations/publishers";
 import {
-  TokenExpiredError,
-  inferPlatform,
-  publishAssetToPlatform,
-} from "@/lib/integrations/publishers";
+  integrationMayBeRevivable,
+  isIntegrationDeadError,
+  runWithFreshCredentials,
+} from "@/lib/integrations/token-refresh";
 import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { recommendPublishTimeWithDensity, sameLocalDay } from "@/lib/scheduling";
@@ -600,7 +601,10 @@ export async function publishAssetNowAction(
   if (block) return { ok: false, error: PUBLISH_REFUSAL[block] };
 
   const integrations = await listClientIntegrations(asset.clientId);
-  const valid = integrations.filter((i) => integrationIsUsable(i));
+  // A channel flagged expired that still holds a refresh token is worth one
+  // forced exchange rather than a "re-connect it first" refusal: the flag came
+  // from a 401 on the access token (integrationMayBeRevivable).
+  const valid = integrations.filter((i) => integrationIsUsable(i) || integrationMayBeRevivable(i));
   const target =
     platform ??
     asset.scheduledPlatform ??
@@ -623,7 +627,13 @@ export async function publishAssetNowAction(
 
   let publishResult: { postId: string | null };
   try {
-    publishResult = await publishAssetToPlatform(target, integration, asset);
+    // Same freshness rule as the cron: refresh ahead of expiry, and force one
+    // refresh + retry if the platform 401s anyway. An operator clicking this
+    // hours after the channel was connected must not be told to reconnect a
+    // channel whose refresh token is sitting right there.
+    publishResult = await runWithFreshCredentials(integration, (fresh) =>
+      publishAssetToPlatform(target, fresh, asset),
+    );
   } catch (e) {
     await releaseAssetPublishClaim(id).catch(() => {});
     // STORED RAW, ON PURPOSE, and this is the note that stops the next reader
@@ -638,7 +648,7 @@ export async function publishAssetNowAction(
     // The returned copy is raw for the same reason and is safe for a different
     // one: this action is `requireStaff()`, so only an operator ever reads it.
     const message = e instanceof Error ? e.message : "Unknown error";
-    if (e instanceof TokenExpiredError) {
+    if (isIntegrationDeadError(e)) {
       await markIntegrationExpired(asset.clientId, target).catch(() => {});
     }
     await updateAsset(id, { publishError: message, updatedAt: Date.now() }).catch(() => {});

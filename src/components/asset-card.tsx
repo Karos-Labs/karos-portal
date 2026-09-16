@@ -28,7 +28,7 @@ import { PostManagementRow } from "@/components/post-management-row";
 import { ApprovePanel } from "@/components/approve-panel";
 import { AgentMark, SocialPlatformMark, platformForIntegrationId } from "@/components/agent-identity";
 import { agentLabelForAsset, templateForAsset } from "@/lib/post-chain";
-import { parseXDrafts } from "@/lib/x-drafts";
+import { parseXDrafts, xThreadParts } from "@/lib/x-drafts";
 import { XDraftsBatch } from "@/components/x-drafts-review";
 import { parseLiDrafts } from "@/lib/li-drafts";
 import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
@@ -237,6 +237,13 @@ export function AssetCard({
     [asset.content, liBatch, redditBatch],
   );
   const xDraftCount = xBatch ? xBatch.accounts.reduce((n, a) => n + a.drafts.length, 0) : 0;
+  // The engine ships an X thread's parts as `meta.thread` (materializeXPost)
+  // whether or not the markdown spells them out - the reader hangs them under
+  // the post as its replies when the markdown holds the opener alone.
+  const xThread = useMemo(
+    () => (xBatch ? xThreadParts(asset.meta?.thread) : []),
+    [asset.meta, xBatch],
+  );
   const liDraftCount = liBatch ? liBatch.accounts.reduce((n, a) => n + a.drafts.length, 0) : 0;
   const redditDraftCount = redditBatch
     ? redditBatch.accounts.reduce((n, a) => n + a.drafts.length, 0)
@@ -522,6 +529,7 @@ export function AssetCard({
                   {...(asset.jobId ? { jobId: asset.jobId } : {})}
                   assetId={asset.id}
                   accounts={xBatch.accounts}
+                  {...(xThread.length > 0 ? { thread: xThread } : {})}
                 />
               </div>
             ) : (
