@@ -16,6 +16,7 @@ import "server-only";
 import type { Asset, EmployeeSeat, MarketingMetrics } from "@/lib/types";
 import { normalizePlatformMetrics, type RawPlatformMetrics } from "@/lib/analytics";
 import { TokenExpiredError } from "@/lib/integrations/publishers";
+import { metaGraphUrl } from "@/lib/integrations/meta-graph";
 
 /** Thrown when a platform's Insights API isn't wired up yet — triggers the mock fallback. */
 export class MetricsUnavailableError extends Error {
@@ -107,11 +108,39 @@ async function fetchTwitterRaw(token: string, postId: string): Promise<RawPlatfo
   };
 }
 
+/**
+ * A Graph Insights payload holds one entry per (metric, period) pair.
+ *
+ * `post_impressions` was lifetime-only, so a bare name lookup was unambiguous.
+ * Its v25 replacement `post_media_view` reports windowed periods instead
+ * (day / week / days_28), which would let a single day's bucket be reported as
+ * the post's total. Prefer the widest window Meta returned, then the most
+ * recent bucket inside it. Instagram's metrics are single lifetime values, so
+ * this is a no-op for them.
+ */
+interface GraphInsightEntry {
+  name: string;
+  period?: string;
+  values?: Array<{ value?: number }>;
+}
+
+const INSIGHT_PERIOD_RANK: Record<string, number> = { day: 1, week: 2, days_28: 3, lifetime: 4 };
+
+function insightValue(data: GraphInsightEntry[] | undefined, name: string): number {
+  const entries = (data ?? []).filter((d) => d.name === name);
+  if (entries.length === 0) return 0;
+  const widest = entries.reduce((a, b) =>
+    (INSIGHT_PERIOD_RANK[b.period ?? ""] ?? 0) > (INSIGHT_PERIOD_RANK[a.period ?? ""] ?? 0) ? b : a,
+  );
+  const values = widest.values ?? [];
+  return values[values.length - 1]?.value ?? 0;
+}
+
 async function fetchInstagramRaw(token: string, mediaId: string): Promise<RawPlatformMetrics> {
-  const base = `https://graph.facebook.com/v20.0/${encodeURIComponent(mediaId)}`;
+  const base = metaGraphUrl(encodeURIComponent(mediaId));
   const [countsRes, insightsRes] = await Promise.all([
     fetch(`${base}?fields=like_count,comments_count&access_token=${encodeURIComponent(token)}`),
-    fetch(`${base}/insights?metric=impressions,reach,saved&access_token=${encodeURIComponent(token)}`),
+    fetch(`${base}/insights?metric=views,reach,saved,shares&access_token=${encodeURIComponent(token)}`),
   ]);
   assertNotExpired("instagram", countsRes);
   assertNotExpired("instagram", insightsRes);
@@ -119,32 +148,33 @@ async function fetchInstagramRaw(token: string, mediaId: string): Promise<RawPla
   const counts = (await countsRes.json()) as { like_count?: number; comments_count?: number };
   // Insights can be permission-gated; treat a failure as "pull what you can" (zeros).
   const insights = insightsRes.ok
-    ? ((await insightsRes.json()) as { data?: Array<{ name: string; values?: Array<{ value?: number }> }> })
+    ? ((await insightsRes.json()) as { data?: GraphInsightEntry[] })
     : { data: [] };
-  const metric = (name: string) =>
-    insights.data?.find((d) => d.name === name)?.values?.[0]?.value ?? 0;
+  const metric = (name: string) => insightValue(insights.data, name);
   return {
-    impressions: metric("impressions"),
+    // `views` is what Meta reports since 2025-04-21 — it replaced `impressions`, which is
+    // unavailable for media created after 2024-07-02. The unified field stays `impressions`.
+    impressions: metric("views"),
     likes: counts.like_count ?? 0,
     comments: counts.comments_count ?? 0,
     saves: metric("saved"),
-    shares: 0,
+    shares: metric("shares"),
     website_clicks: 0,
     profile_visits: 0,
   };
 }
 
 async function fetchFacebookRaw(token: string, postId: string): Promise<RawPlatformMetrics> {
-  const base = `https://graph.facebook.com/v20.0/${encodeURIComponent(postId)}`;
+  const base = metaGraphUrl(encodeURIComponent(postId));
   const [insightsRes, engagementRes] = await Promise.all([
-    fetch(`${base}/insights?metric=post_impressions,post_clicks&access_token=${encodeURIComponent(token)}`),
+    fetch(`${base}/insights?metric=post_media_view,post_clicks&access_token=${encodeURIComponent(token)}`),
     fetch(`${base}?fields=reactions.summary(true),comments.summary(true),shares&access_token=${encodeURIComponent(token)}`),
   ]);
   assertNotExpired("facebook", insightsRes);
   assertNotExpired("facebook", engagementRes);
   if (!insightsRes.ok && !engagementRes.ok) throw new Error(`Facebook metrics failed: ${insightsRes.status}`);
   const insights = insightsRes.ok
-    ? ((await insightsRes.json()) as { data?: Array<{ name: string; values?: Array<{ value?: number }> }> })
+    ? ((await insightsRes.json()) as { data?: GraphInsightEntry[] })
     : { data: [] };
   const engagement = engagementRes.ok
     ? ((await engagementRes.json()) as {
@@ -153,9 +183,12 @@ async function fetchFacebookRaw(token: string, postId: string): Promise<RawPlatf
         shares?: { count?: number };
       })
     : {};
-  const metric = (name: string) => insights.data?.find((d) => d.name === name)?.values?.[0]?.value ?? 0;
+  const metric = (name: string) => insightValue(insights.data, name);
   return {
-    post_impressions: metric("post_impressions"),
+    // `post_impressions` is marked obsolete above Graph API v25; `post_media_view` — "the number
+    // of times your content was played or displayed" — is Meta's replacement for it. It feeds the
+    // same unified impressions field in normalizePlatformMetrics, so the raw key keeps its name.
+    post_impressions: metric("post_media_view"),
     post_clicks: metric("post_clicks"),
     reactions: engagement.reactions?.summary?.total_count ?? 0,
     comments: engagement.comments?.summary?.total_count ?? 0,
@@ -275,7 +308,7 @@ export interface InstagramAudience {
  *  existing `instagram_manage_insights` scope, no extra approval needed. */
 export async function fetchInstagramAudience(token: string, igUserId: string): Promise<InstagramAudience> {
   const res = await fetch(
-    `https://graph.facebook.com/v20.0/${encodeURIComponent(igUserId)}/insights` +
+    metaGraphUrl(`${encodeURIComponent(igUserId)}/insights`) +
       `?metric=follower_demographics&period=lifetime&metric_type=total_value` +
       `&breakdown=age,gender&access_token=${encodeURIComponent(token)}`,
   );
@@ -305,7 +338,7 @@ export interface PlatformComment {
 /** Comments on one IG media object — for drafting replies. Existing scope. */
 export async function fetchInstagramComments(token: string, mediaId: string): Promise<PlatformComment[]> {
   const res = await fetch(
-    `https://graph.facebook.com/v20.0/${encodeURIComponent(mediaId)}/comments` +
+    metaGraphUrl(`${encodeURIComponent(mediaId)}/comments`) +
       `?fields=id,text,username,timestamp&access_token=${encodeURIComponent(token)}`,
   );
   assertNotExpired("instagram", res);
@@ -433,7 +466,7 @@ export async function fetchLinkedInOrgFollowers(token: string, organizationUrn: 
 export async function fetchMetaMentions(token: string, pageOrIgId: string): Promise<PlatformComment[]> {
   assertExtendedAccessApproved("facebook", "META_ADVANCED_ACCESS_APPROVED");
   const res = await fetch(
-    `https://graph.facebook.com/v20.0/${encodeURIComponent(pageOrIgId)}/tagged` +
+    metaGraphUrl(`${encodeURIComponent(pageOrIgId)}/tagged`) +
       `?fields=id,message,from,created_time&access_token=${encodeURIComponent(token)}`,
   );
   assertNotExpired("facebook", res);

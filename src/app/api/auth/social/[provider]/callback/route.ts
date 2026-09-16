@@ -9,6 +9,7 @@ import {
   getAppOrigin,
   getRequestedScopes,
 } from "@/lib/integrations/oauth";
+import { metaGraphUrl } from "@/lib/integrations/meta-graph";
 import { GOOGLE_UNIFIED_SUB_PLATFORM_IDS } from "@/lib/integrations/platforms";
 import {
   errorPage,
@@ -198,7 +199,9 @@ async function fetchAccountName(provider: string, accessToken: string): Promise<
     }
     if (provider === "facebook" || provider === "instagram") {
       const res = await fetch(
-        `https://graph.facebook.com/me?fields=name&access_token=${accessToken}`,
+        // Versioned like every other Graph call: an unversioned URL silently
+        // falls to the app's oldest available version.
+        metaGraphUrl(`me?fields=name&access_token=${accessToken}`),
       );
       if (res.ok) {
         const d = (await res.json()) as { name?: string };
