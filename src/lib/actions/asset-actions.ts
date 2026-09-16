@@ -24,6 +24,7 @@ import { requireStaff } from "./_shared";
 import { trackUserAction } from "@/lib/telemetry/bi-tracker";
 import { inferPlatform, publishAssetToPlatform } from "@/lib/integrations/publishers";
 import {
+  integrationMayBeRevivable,
   isIntegrationDeadError,
   runWithFreshCredentials,
 } from "@/lib/integrations/token-refresh";
@@ -600,7 +601,10 @@ export async function publishAssetNowAction(
   if (block) return { ok: false, error: PUBLISH_REFUSAL[block] };
 
   const integrations = await listClientIntegrations(asset.clientId);
-  const valid = integrations.filter((i) => integrationIsUsable(i));
+  // A channel flagged expired that still holds a refresh token is worth one
+  // forced exchange rather than a "re-connect it first" refusal: the flag came
+  // from a 401 on the access token (integrationMayBeRevivable).
+  const valid = integrations.filter((i) => integrationIsUsable(i) || integrationMayBeRevivable(i));
   const target =
     platform ??
     asset.scheduledPlatform ??

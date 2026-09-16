@@ -5,6 +5,7 @@ import { isInClientArchive } from "@/lib/asset-visibility";
 import { blockingPredecessor } from "@/lib/post-chain";
 import { inferPlatform, publishAssetToPlatform } from "@/lib/integrations/publishers";
 import {
+  integrationMayBeRevivable,
   isIntegrationDeadError,
   runWithFreshCredentials,
 } from "@/lib/integrations/token-refresh";
@@ -107,10 +108,19 @@ export async function GET(req: NextRequest) {
       }
 
       const integrations = integrationsByClient.get(asset.clientId) ?? [];
-      // Auto-eligible = valid token AND the client hasn't turned off auto-publish
-      // for that platform (absent flag = enabled, for pre-toggle integrations).
+      // Auto-eligible = a token we can still use AND the client hasn't turned off
+      // auto-publish for that platform (absent flag = enabled, for pre-toggle
+      // integrations).
+      //
+      // "Still usable" now includes a channel already flagged expired whose
+      // refresh token is on record (integrationMayBeRevivable): that flag was set
+      // by a 401 on the ACCESS token, and before CN1 every short-lived channel
+      // earned it on its first tick. Gating the refresh behind the flag the
+      // missing refresh produced would leave the whole existing fleet waiting on
+      // a manual reconnect. runWithFreshCredentials forces the exchange for those;
+      // a refusal re-marks the channel, so a genuinely dead one costs one request.
       const autoEligible = integrations.filter(
-        (i) => integrationIsUsable(i) && i.autoPublish !== false,
+        (i) => (integrationIsUsable(i) || integrationMayBeRevivable(i)) && i.autoPublish !== false,
       );
       const connectedPlatforms = autoEligible.map((i) => i.platform);
 

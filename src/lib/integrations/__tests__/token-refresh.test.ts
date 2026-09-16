@@ -42,7 +42,9 @@ import {
   TokenRefreshError,
   credentialExpiresAt,
   expiresAtFromExpiresIn,
+  forgetRefreshedCredentials,
   getFreshIntegrationCredentials,
+  integrationMayBeRevivable,
   isIntegrationDeadError,
   isRefreshablePlatform,
   needsRefresh,
@@ -325,6 +327,74 @@ describe("refreshIntegrationCredentials — per provider", () => {
     expect((down as TokenRefreshError).code).toBe("unavailable");
     expect((down as TokenRefreshError).permanent).toBe(false);
   });
+
+  /**
+   * A refusal that is about OUR app or OUR request rate is not a dead client
+   * token, and calling it one is worse than doing nothing: the failure is the
+   * same for every client at once, so a rotated app secret or a rate-limited
+   * window would mark every Google or X integration expired in one cron tick —
+   * and a reconnect could not fix it either, since the authorization_code
+   * exchange uses that same app secret.
+   */
+  it.each([
+    ["X rate-limits us", "twitter", 429, "rate_limit_exceeded"],
+    ["Google's refresh-token quota", "youtube", 403, "rate_limit_exceeded"],
+    ["this app's client secret is stale", "youtube", 401, "invalid_client"],
+    ["the endpoint asks us to slow down", "reddit", 429, undefined],
+    ["a request timeout", "reddit", 408, undefined],
+  ])("treats %s as try-again, not as a dead token", async (_case, platform, status, error) => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status,
+      json: async () => (error ? { error } : {}),
+    });
+
+    const failure = await refreshIntegrationCredentials(
+      { platform, credentials: { refreshToken: "a-refresh" } },
+      { now: NOW },
+    ).catch((e: unknown) => e as TokenRefreshError);
+
+    expect((failure as TokenRefreshError).code).toBe("unavailable");
+    expect((failure as TokenRefreshError).permanent).toBe(false);
+    expect(isIntegrationDeadError(failure)).toBe(false);
+  });
+
+  it("treats a body that is not JSON at all as try-again — a proxy page is not a refusal", async () => {
+    // An interstitial or a captive proxy can answer 200 with HTML. Reading that
+    // as "the provider refused this grant" kills a working connection.
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError("Unexpected token <");
+      },
+    });
+
+    const failure = await refreshIntegrationCredentials(
+      { platform: "twitter", credentials: { refreshToken: "x-refresh" } },
+      { now: NOW },
+    ).catch((e: unknown) => e as TokenRefreshError);
+
+    expect((failure as TokenRefreshError).code).toBe("unavailable");
+    expect((failure as TokenRefreshError).permanent).toBe(false);
+  });
+
+  it("still reads TikTok's HTTP 200 refusal as a dead token", async () => {
+    // TikTok answers some refusals 200 with an `error` field and no token.
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ error: "invalid_grant", error_description: "Refresh token is invalid" }),
+    });
+
+    const failure = await refreshIntegrationCredentials(
+      { platform: "tiktok", credentials: { refreshToken: "tt-refresh" } },
+      { now: NOW },
+    ).catch((e: unknown) => e as TokenRefreshError);
+
+    expect((failure as TokenRefreshError).code).toBe("rejected");
+    expect((failure as TokenRefreshError).permanent).toBe(true);
+  });
 });
 
 /* ── When a refresh happens ─────────────────────────────────────────── */
@@ -498,6 +568,141 @@ describe("getFreshIntegrationCredentials", () => {
     expect(markIntegrationExpiredMock).not.toHaveBeenCalled();
   });
 
+  it("waits for the winner's write before condemning a channel it may have just renewed", async () => {
+    // The loser of a rotation race can be REFUSED before the winner's Firestore
+    // write lands (~100-500 ms). A single read inside that window sees the OLD
+    // token, and marking expired there kills a channel whose token is fine —
+    // permanently, since every consumer then skips it and it never gets another
+    // refresh attempt.
+    fetchMock.mockResolvedValue(refusal());
+    getClientIntegrationMock
+      .mockResolvedValueOnce({
+        id: "c1_twitter",
+        clientId: "c1",
+        platform: "twitter",
+        credentials: { accessToken: "x-old", refreshToken: "x-refresh" },
+        updatedAt: NOW - DAY,
+      })
+      .mockResolvedValue({
+        id: "c1_twitter",
+        clientId: "c1",
+        platform: "twitter",
+        credentials: { accessToken: "x-from-other-process", refreshToken: "x-rotated-elsewhere" },
+        updatedAt: NOW,
+      });
+
+    const out = await getFreshIntegrationCredentials(
+      integration({
+        platform: "twitter",
+        credentials: { accessToken: "x-old", refreshToken: "x-refresh" },
+      }),
+      { now: NOW },
+    );
+
+    expect(getClientIntegrationMock.mock.calls.length).toBeGreaterThan(1);
+    expect(out.accessToken).toBe("x-from-other-process");
+    expect(markIntegrationExpiredMock).not.toHaveBeenCalled();
+  });
+
+  it("still condemns a rotating channel nothing renewed", async () => {
+    fetchMock.mockResolvedValue(refusal());
+    getClientIntegrationMock.mockResolvedValue({
+      id: "c1_twitter",
+      clientId: "c1",
+      platform: "twitter",
+      credentials: { accessToken: "x-old", refreshToken: "x-refresh" },
+      updatedAt: NOW - DAY,
+    });
+
+    await getFreshIntegrationCredentials(
+      integration({
+        platform: "twitter",
+        credentials: { accessToken: "x-old", refreshToken: "x-refresh" },
+      }),
+      { now: NOW },
+    ).catch(() => {});
+
+    expect(markIntegrationExpiredMock).toHaveBeenCalledWith("c1", "twitter");
+  });
+
+  it("re-tests a channel already flagged expired whose refresh token is still on record", async () => {
+    // Before CN1 every short-lived channel 401'd into `expired` on its first
+    // cron tick. Honouring that flag would mean this module never reaches the
+    // connections it was written for.
+    fetchMock.mockResolvedValue(tokenResponse({ access_token: "r-new", expires_in: 3600 }));
+    const dead = integration({
+      platform: "reddit",
+      status: "expired",
+      credentials: {
+        accessToken: "r-old",
+        refreshToken: "r-refresh",
+        expiresAt: String(NOW + HOUR),
+      },
+    });
+    expect(integrationMayBeRevivable(dead)).toBe(true);
+
+    const out = await getFreshIntegrationCredentials(dead, { now: NOW });
+
+    expect(out.accessToken).toBe("r-new");
+    // The persist clears status/expiredAt, so the flag does not survive.
+    expect(updateCredentialsMock).toHaveBeenCalledTimes(1);
+
+    // And it does not re-exchange on every later post of the same tick: the
+    // caller's copy still says "expired", but this process knows better.
+    const again = await getFreshIntegrationCredentials(dead, { now: NOW + MINUTE });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(again.accessToken).toBe("r-new");
+  });
+
+  it("does not re-test a flagged channel with nothing to refresh with", () => {
+    // A hand-pasted access token, or LinkedIn, where re-consent is the only path.
+    expect(
+      integrationMayBeRevivable(
+        integration({ platform: "twitter", status: "expired", credentials: { accessToken: "x" } }),
+      ),
+    ).toBe(false);
+    expect(
+      integrationMayBeRevivable(
+        integration({
+          platform: "linkedin",
+          status: "reauthenticate",
+          credentials: { accessToken: "li", refreshToken: "li-r" },
+        }),
+      ),
+    ).toBe(false);
+    // And an integration nobody flagged is not "revivable" — it is just fine.
+    expect(
+      integrationMayBeRevivable(
+        integration({ platform: "reddit", credentials: { refreshToken: "r-refresh" } }),
+      ),
+    ).toBe(false);
+  });
+
+  it("forgets a disconnected channel's decrypted tokens, and expires the rest by itself", async () => {
+    // The map holds PLAINTEXT tokens. It is a bridge across one cron tick, not a
+    // pile of every client this revision ever published for, and "disconnect
+    // this channel" has to mean the tokens are gone from the process too.
+    fetchMock.mockResolvedValue(
+      tokenResponse({ access_token: "x-new", refresh_token: "x-rotated", expires_in: 7200 }),
+    );
+    const stale = integration({
+      platform: "twitter",
+      credentials: { accessToken: "x-old", refreshToken: "x-refresh", expiresAt: String(NOW + DAY) },
+      updatedAt: NOW - DAY,
+    });
+    await getFreshIntegrationCredentials(stale, { now: NOW, force: true });
+    expect((await getFreshIntegrationCredentials(stale, { now: NOW })).accessToken).toBe("x-new");
+
+    // Well past the bridge's life: the in-memory copy is dropped, not served.
+    expect(
+      (await getFreshIntegrationCredentials(stale, { now: NOW + 11 * MINUTE })).accessToken,
+    ).toBe("x-old");
+
+    await getFreshIntegrationCredentials(stale, { now: NOW, force: true });
+    forgetRefreshedCredentials("c1", "twitter");
+    expect((await getFreshIntegrationCredentials(stale, { now: NOW })).accessToken).toBe("x-old");
+  });
+
   it("spends a rotating refresh token once, however many callers ask at once", async () => {
     // The publish cron runs a client's due posts concurrently. Two POSTs of the
     // same X refresh token means the second gets invalid_grant and the channel
@@ -644,6 +849,38 @@ describe("runWithFreshCredentials", () => {
     expect(run).toHaveBeenCalledTimes(1);
     expect(error).toBeInstanceOf(TokenExpiredError);
     expect(markIntegrationExpiredMock).toHaveBeenCalledWith("c1", "reddit");
+  });
+
+  it("does NOT condemn the channel when the forced refresh only found the endpoint down", async () => {
+    // An X access token expires between ticks and X's token endpoint 503s in the
+    // same tick. The refresh token is perfectly good and the next tick recovers
+    // it — rethrowing the platform's 401 here would send every consumer down its
+    // dead-token branch and ask the client to reconnect a healthy channel.
+    fetchMock.mockResolvedValue({ ok: false, status: 503, json: async () => ({}) });
+    const run = vi.fn(async () => {
+      throw new TokenExpiredError("twitter", 401);
+    });
+
+    const error = await runWithFreshCredentials(
+      integration({
+        platform: "twitter",
+        credentials: {
+          accessToken: "x-old",
+          refreshToken: "x-refresh",
+          expiresAt: String(NOW + HOUR),
+        },
+      }),
+      run,
+      { now: NOW },
+    ).catch((e: unknown) => e);
+
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(error).toBeInstanceOf(TokenRefreshError);
+    expect((error as TokenRefreshError).code).toBe("unavailable");
+    // The one assertion that matters: nothing was marked dead, so the asset
+    // stays scheduled and the next tick tries again.
+    expect(isIntegrationDeadError(error)).toBe(false);
+    expect(markIntegrationExpiredMock).not.toHaveBeenCalled();
   });
 
   it("forces LinkedIn nowhere: the 401 stands and the client re-consents", async () => {
