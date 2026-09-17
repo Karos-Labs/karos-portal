@@ -128,6 +128,30 @@ describe("no collateral scope drift on other providers", () => {
     });
   });
 
+  it("instagram requests base scopes only until Meta advanced access is approved", () => {
+    withEnv("META_ADVANCED_ACCESS_APPROVED", undefined, () => {
+      expect(getRequestedScopes("instagram")).toEqual([
+        "instagram_content_publish",
+        "instagram_manage_insights",
+        "pages_read_engagement",
+        "pages_manage_posts",
+      ]);
+    });
+  });
+
+  it("instagram adds business_management alongside pages_read_user_content once Meta approval is flagged", () => {
+    withEnv("META_ADVANCED_ACCESS_APPROVED", "1", () => {
+      expect(getRequestedScopes("instagram")).toEqual([
+        "instagram_content_publish",
+        "instagram_manage_insights",
+        "pages_read_engagement",
+        "pages_manage_posts",
+        "pages_read_user_content",
+        "business_management",
+      ]);
+    });
+  });
+
   it("the standalone google_business_profile connector still requests business.manage ungated", () => {
     // This connector exists precisely to request that scope. It is honestly
     // broken until Google approves — that is not the unified button's bug.

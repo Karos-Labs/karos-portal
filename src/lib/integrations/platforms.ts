@@ -72,6 +72,7 @@ export const OAUTH_SUPPORTED_PLATFORM_IDS = new Set<string>([
   "linkedin",
   "linkedin_community",
   "instagram",
+  "instagram_business",
   "twitter",
   "youtube",
   "tiktok",
@@ -93,6 +94,7 @@ export const READ_ONLY_PLATFORM_IDS = new Set<string>([
   "google_analytics",
   "google_business_profile",
   "instagram_insights",
+  "instagram_business",
 ]);
 
 /**
@@ -151,6 +153,7 @@ export const PUBLISHABLE_PLATFORMS: Record<string, string[]> = {
  */
 export const PLATFORM_LABELS: Record<string, string> = {
   instagram: "Instagram",
+  instagram_business: "Instagram (direct login)",
   facebook: "Facebook",
   linkedin: "LinkedIn",
   linkedin_community: "LinkedIn Company Page",
@@ -220,6 +223,36 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
       },
     ],
     category: "publishing",
+  },
+  /**
+   * A SECOND, independent connection to the same platform — not a variant of
+   * the card above. "instagram" above goes through Facebook Login and needs
+   * the client's Instagram professional account linked to a Facebook Page;
+   * this goes through Meta's newer Instagram Login directly, so it also works
+   * for a client whose Instagram account has no linked Page. Read-only here
+   * (category "analytics") — the agents' publish path stays on "instagram"
+   * above; this exists for the extra account data ("instagram_business_basic",
+   * "instagram_business_manage_insights") only the Instagram Login product
+   * grants, which agent-engine's Instagram agent will read from once it has a
+   * genuine use for the Graph API (Albert, 2026-09-17).
+   */
+  {
+    id: "instagram_business",
+    name: "Instagram (direct login)",
+    icon: "Camera",
+    color: "#E1306C",
+    description:
+      "An additional Instagram connection for deeper account insights. Works even without a linked Facebook Page.",
+    fields: [
+      {
+        key: "accessToken",
+        label: "Instagram access token",
+        type: "password",
+        required: true,
+        hint: "Long-lived token from Meta for Developers → Instagram API setup with Instagram login",
+      },
+    ],
+    category: "analytics",
   },
   /* NO FACEBOOK ENTRY (portal feedback round 2, 2026-09: "throughout it all we
      can remove Facebook, we don't work with Facebook"). This array IS the

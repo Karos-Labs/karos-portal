@@ -11,7 +11,11 @@ import {
   saveIntegrationAction,
   deleteIntegrationAction,
   setIntegrationAutoPublishAction,
+  fetchClientBusinessInfoAction,
+  fetchClientInstagramBusinessInsightsAction,
 } from "@/lib/actions";
+import type { MetaBusinessAccount } from "@/lib/integrations/meta-business";
+import type { InstagramBusinessAccountInsights } from "@/lib/integrations/instagram-business-graph";
 import {
   PLATFORM_REGISTRY,
   OAUTH_SUPPORTED_PLATFORM_IDS,
@@ -72,6 +76,9 @@ function GoogleLogo() {
  */
 const CONNECT_STYLE: Record<string, { background: string; ring?: boolean }> = {
   instagram: { background: "linear-gradient(45deg, #F58529 0%, #DD2A7B 55%, #8134AF 100%)" },
+  // Same brand gradient as "instagram" above — this is Instagram's OTHER
+  // login product, not a different platform.
+  instagram_business: { background: "linear-gradient(45deg, #F58529 0%, #DD2A7B 55%, #8134AF 100%)" },
   /* No facebook row — this map is keyed by PLATFORM_REGISTRY id and Facebook
      left that registry (portal feedback round 2, 2026-09), so the entry could
      only ever be dead style. */
@@ -325,6 +332,14 @@ function PlatformCard({
    */
   const [actionError, setActionError] = useState<string | null>(null);
   const [seatsOpen, setSeatsOpen] = useState(false);
+  const [businessInfoOpen, setBusinessInfoOpen] = useState(false);
+  const [businessInfoLoading, setBusinessInfoLoading] = useState(false);
+  const [businessInfoError, setBusinessInfoError] = useState<string | null>(null);
+  const [businessAccounts, setBusinessAccounts] = useState<MetaBusinessAccount[] | null>(null);
+  const [igInsightsOpen, setIgInsightsOpen] = useState(false);
+  const [igInsightsLoading, setIgInsightsLoading] = useState(false);
+  const [igInsightsError, setIgInsightsError] = useState<string | null>(null);
+  const [igInsights, setIgInsights] = useState<InstagramBusinessAccountInsights | null>(null);
   const [accountName, setAccountName] = useState(integration?.accountName ?? "");
   const [fields, setFields] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
@@ -369,6 +384,40 @@ function PlatformCard({
       setFormError(e instanceof Error ? e.message : "Save failed. Please try again.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  /** Fetches on first open only — reopening the modal reuses what's already loaded. */
+  async function handleOpenBusinessInfo() {
+    setBusinessInfoOpen(true);
+    if (businessAccounts !== null || businessInfoLoading) return;
+    setBusinessInfoLoading(true);
+    setBusinessInfoError(null);
+    try {
+      const res = await fetchClientBusinessInfoAction(clientId);
+      if ("error" in res) setBusinessInfoError(res.error);
+      else setBusinessAccounts(res.accounts);
+    } catch {
+      setBusinessInfoError("Couldn't load business info. Please try again.");
+    } finally {
+      setBusinessInfoLoading(false);
+    }
+  }
+
+  /** Fetches on first open only — reopening the modal reuses what's already loaded. */
+  async function handleOpenIgInsights() {
+    setIgInsightsOpen(true);
+    if (igInsights !== null || igInsightsLoading) return;
+    setIgInsightsLoading(true);
+    setIgInsightsError(null);
+    try {
+      const res = await fetchClientInstagramBusinessInsightsAction(clientId);
+      if ("error" in res) setIgInsightsError(res.error);
+      else setIgInsights(res.insights);
+    } catch {
+      setIgInsightsError("Couldn't load insights. Please try again.");
+    } finally {
+      setIgInsightsLoading(false);
     }
   }
 
@@ -629,6 +678,25 @@ function PlatformCard({
           </Button>
         )}
 
+        {/* Business Manager accounts this connection can see (business_management) -
+            same modal-not-inline reasoning as the LinkedIn seats button above. */}
+        {platform.id === "instagram" && isConnected && (
+          <Button size="sm" variant="outline" className="w-full" onClick={handleOpenBusinessInfo}>
+            <Icon name="Building2" className="h-3.5 w-3.5" />
+            View business info
+          </Button>
+        )}
+
+        {/* instagram_business_manage_insights, via this card's own
+            Instagram-Login token (graph.instagram.com) - separate connection
+            from "instagram" above, same modal-not-inline reasoning. */}
+        {platform.id === "instagram_business" && isConnected && (
+          <Button size="sm" variant="outline" className="w-full" onClick={handleOpenIgInsights}>
+            <Icon name="TrendingUp" className="h-3.5 w-3.5" />
+            View insights
+          </Button>
+        )}
+
         {/* Admin-only: manual credentials toggle */}
         {isAdmin && (
           <button
@@ -737,6 +805,104 @@ function PlatformCard({
             seatLimit={seatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT}
             seatCost={seatCost ?? CREDIT_COSTS.employeeSeat}
           />
+        </Modal>
+      )}
+
+      {/* Business info modal - read-only, same card-height reasoning as the
+          LinkedIn seats modal above. Reuses the card's own Instagram mark in
+          the header rather than a generic icon, so it reads as part of this
+          connection and not a separate, unbranded feature. */}
+      {platform.id === "instagram" && isConnected && (
+        <Modal
+          open={businessInfoOpen}
+          onClose={() => setBusinessInfoOpen(false)}
+          title="Business info"
+          description="Business Manager accounts your connected Instagram login has access to."
+          className="max-w-md"
+        >
+          <div className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-2">
+            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+              <PlatformMark id="instagram" className="h-3.5 w-3.5" />
+            </div>
+            Instagram
+          </div>
+          {businessInfoLoading && (
+            <p className="flex items-center gap-2 py-4 text-sm text-muted">
+              <Icon name="Loader" className="h-4 w-4 animate-spin" />
+              Loading...
+            </p>
+          )}
+          {!businessInfoLoading && businessInfoError && (
+            <p className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+              {businessInfoError}
+            </p>
+          )}
+          {!businessInfoLoading && !businessInfoError && businessAccounts && businessAccounts.length === 0 && (
+            <p className="py-4 text-sm text-muted-2">
+              No Business Manager accounts found for this connection.
+            </p>
+          )}
+          {!businessInfoLoading && !businessInfoError && businessAccounts && businessAccounts.length > 0 && (
+            <ul className="space-y-2">
+              {businessAccounts.map((b) => (
+                <li
+                  key={b.id}
+                  className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2.5"
+                >
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+                    <Icon name="Building2" className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium leading-none">{b.name}</p>
+                    <p className="mt-1 truncate text-[11px] text-muted-2">{b.id}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Modal>
+      )}
+
+      {/* Insights modal for the Instagram-Login connection - reuses the same
+          Instagram mark as the business-info modal above: same brand, second
+          login product, no separate unbranded icon. */}
+      {platform.id === "instagram_business" && isConnected && (
+        <Modal
+          open={igInsightsOpen}
+          onClose={() => setIgInsightsOpen(false)}
+          title="Account insights"
+          description="Reach and profile views for the connected Instagram account, last full day."
+          className="max-w-md"
+        >
+          <div className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-2">
+            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+              <PlatformMark id="instagram_business" className="h-3.5 w-3.5" />
+            </div>
+            Instagram
+          </div>
+          {igInsightsLoading && (
+            <p className="flex items-center gap-2 py-4 text-sm text-muted">
+              <Icon name="Loader" className="h-4 w-4 animate-spin" />
+              Loading...
+            </p>
+          )}
+          {!igInsightsLoading && igInsightsError && (
+            <p className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+              {igInsightsError}
+            </p>
+          )}
+          {!igInsightsLoading && !igInsightsError && igInsights && (
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-md border border-border px-3 py-2.5">
+                <p className="text-[11px] text-muted-2">Reach</p>
+                <p className="text-lg font-semibold leading-tight">{igInsights.reach ?? "—"}</p>
+              </div>
+              <div className="rounded-md border border-border px-3 py-2.5">
+                <p className="text-[11px] text-muted-2">Profile views</p>
+                <p className="text-lg font-semibold leading-tight">{igInsights.profileViews ?? "—"}</p>
+              </div>
+            </div>
+          )}
         </Modal>
       )}
     </div>
