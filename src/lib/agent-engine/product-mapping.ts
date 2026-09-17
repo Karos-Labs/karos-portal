@@ -202,7 +202,40 @@ const ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY: Readonly<Record<string, EngineProductW
   // tempting shortcut while no tiktok-agent existed, would have quietly run a
   // different product for the client.
   "karos-tiktok-agent": "tiktok-agent",
+  // The campaign: one brief, every channel, one review (agent-engine's
+  // campaign-orchestrator fans out into the X, LinkedIn, Instagram, Reddit and
+  // blog workflows and brings the bundle to a single `13-campaign-review`
+  // gate). Routed 2026-09-07 so that every engine product a client can be
+  // given is one the roster can show — until then this was the one drafting
+  // product with a materializer (`campaign-bundle`) and no way to ask for it.
+  "karos-campaign-orchestrator": "campaign-orchestrator",
 };
+
+/**
+ * The engine products whose workflows read `mediaAssets` off the run.
+ *
+ * ONE set, used by two decisions that must agree: whether the run dialog and
+ * the engine card offer an attach control at all
+ * (`agentEngineProductAcceptsMediaAssets` in custom-agent-launch.ts), and
+ * where `toEngineRunInput` sends a dialog's link lists (`sources`,
+ * `references`, `source_url`). For a product in this set a URL is an asset;
+ * for every other product it is a reference the drafting model should READ,
+ * so it folds into `customPrompt` prose instead of into a field the workflow
+ * never opens (landing-builder's `references` and blog's `sources` used to
+ * vanish exactly that way — see engine-field-contract.ts's `mediaAssets` row).
+ *
+ * Verified against agent-engine's workflows: x-agent/linkedin-agent
+ * (analyzeAttachedMedia + resolveSocialMedia), instagram-agent (Tier 0),
+ * tiktok-agent (firstAsset source), branded-shorts-agent (an attached source
+ * video is the footage, 2026-09-06).
+ */
+export const ENGINE_PRODUCTS_READING_MEDIA_ASSETS = new Set<string>([
+  "x-agent",
+  "linkedin-agent",
+  "instagram-agent",
+  "tiktok-agent",
+  "branded-shorts-agent",
+]);
 
 export function resolveAgentEngineProductIdForCustomAgent(agentKey: string): string | undefined {
   return ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY[agentKey];
@@ -377,6 +410,10 @@ export const DEDICATED_FIELDS = [
 export const SPECIAL_CASED_WIRE_KEYS = [
   "customPrompt",
   "mediaAssets",
+  // `media_source` → `mediaSource`, validated to its two legal values rather
+  // than passed through: an unknown value must read engine-side as the
+  // default ("system"), never as a third mode nobody defined.
+  "mediaSource",
   "requestedTopic",
   "targetDate",
   "requestedIdentityScope",
@@ -487,6 +524,8 @@ function normalizeTargetDate(raw: string): string | undefined {
 export function toEngineRunInput(
   briefValues: Record<string, string> | undefined,
   engineProductId?: string,
+  /** The agent's `request` box is its run direction (`requestSteersRun`, custom-agent-launch). */
+  opts: { requestSteersRun?: boolean } = {},
 ): Record<string, unknown> {
   if (!briefValues) return {};
 
@@ -508,6 +547,9 @@ export function toEngineRunInput(
       promptParts.push(`Business goal or question\n${request}`);
     } else {
       input.requestedTopic = request;
+      // One box on screen, both fields on the wire: a run's steer can be a
+      // topic or a direction, so the engine gets it as both.
+      if (opts.requestSteersRun && request !== base) promptParts.push(request);
     }
   }
 
@@ -555,12 +597,21 @@ export function toEngineRunInput(
   // engine-side surprise on a run someone is waiting for.
   const mediaAssets = parseMediaAssets(briefValues["mediaAssets"]);
 
+  // A link is an ASSET only for a product whose workflow opens `mediaAssets`;
+  // for every other product it is a reference for the drafting model to read,
+  // so it stays with the words around it in `customPrompt`. Without this
+  // branch landing-builder's "Reference URLs" and blog's "Required sources"
+  // reached the wire under a key those two workflows never read (the
+  // `sentButUnread` finding in engine-field-contract.ts) — a question asked of
+  // a client and dropped. With no product named (the legacy path) the old
+  // behaviour stands.
+  const linksAreAssets = engineProductId === undefined || ENGINE_PRODUCTS_READING_MEDIA_ASSETS.has(engineProductId);
   for (const [dialogKey, role, label] of FOLDED_INTO_MEDIA) {
     const value = at(dialogKey);
     if (!value) continue;
     const leftovers: string[] = [];
     for (const line of splitList(value, false)) {
-      if (line.startsWith("gs://") || line.startsWith("https://")) {
+      if (linksAreAssets && (line.startsWith("gs://") || line.startsWith("https://"))) {
         mediaAssets.push({ uri: line, role });
       } else {
         leftovers.push(line);
@@ -569,6 +620,12 @@ export function toEngineRunInput(
     if (leftovers.length > 0) promptParts.push(`${label}\n${leftovers.join("\n")}`);
   }
   if (mediaAssets.length > 0) input.mediaAssets = mediaAssets;
+
+  // Where a media agent's visuals come from (custom-agent-launch.ts's
+  // MEDIA_SOURCE_FIELD_KEY). Only the two legal values travel; anything else
+  // is omitted so the engine applies its own default rather than a guess.
+  const mediaSource = at("media_source");
+  if (mediaSource === "system" || mediaSource === "client") input.mediaSource = mediaSource;
 
   for (const [dialogKey, label] of FOLDED_INTO_CUSTOM_PROMPT) {
     const value = at(dialogKey);
@@ -622,44 +679,3 @@ export function parseMediaAssets(raw: string | undefined): Array<Record<string, 
   return out;
 }
 
-/**
- * Which clients may have their custom-agent jobs routed to agent-engine.
- *
- * Per-agent routing alone is not enough to cut over safely, and production
- * shows why: all seven clients are granted the X agent, but only one has an
- * `xHandle` in the engine's workspace store. Routing on the agent key alone
- * would send six clients' X jobs to `blocked_intake`.
- *
- * That sentence used to end "— work that succeeds on agent-service today", and
- * it does not any more: agent-service was deleted on 2026-09-02 (see
- * `ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY`'s note above). The trade this allowlist
- * was protecting has therefore inverted. It was "do not break six clients whose
- * work succeeds elsewhere"; it is now "six clients have no working route
- * either way, and opening the allowlist without filling in their engine-side
- * context only changes the error they get." Verified live 2026-09-02: seven
- * active clients in each of prep and prod, and this allowlist naming exactly
- * one (`karoslabs`) in both.
- *
- * `AGENT_ENGINE_CUSTOM_AGENT_CLIENTS` is a comma-separated list of
- * `agentsRepoSlug` values, or `*` for all. Unset means NOBODY, so deploying
- * this code changes nothing until someone names a client — which is what lets
- * the build ship to production ahead of the cutover decision.
- *
- * A client is added once its engine-side context is in place and one real run
- * has been verified. That is the unit of this drain: not "the X agent is
- * migrated" but "this client's X agent is migrated".
- */
-export function isClientEnabledForEngineCustomAgents(
-  clientSlug: string | undefined,
-  env: Record<string, string | undefined> = process.env,
-): boolean {
-  if (!clientSlug) return false;
-  const raw = env.AGENT_ENGINE_CUSTOM_AGENT_CLIENTS?.trim();
-  if (!raw) return false;
-  if (raw === "*") return true;
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .includes(clientSlug);
-}

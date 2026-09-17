@@ -247,7 +247,8 @@ describe("isInClientArchive", () => {
 });
 
 /**
- * The client home's "Recent activity" list.
+ * The client home's recent list - "Generated today" for a client since
+ * SCRUM-417, "Recently generated" for staff since SCRUM-429.
  *
  * It listed every asset, drafts included, stamped `updatedAt ?? createdAt`. A
  * fire mints its drafts in one second and nothing moves them until a staff
@@ -303,9 +304,19 @@ describe("the client home's recent list", () => {
       "utf8",
     );
     expect(src).toMatch(/\.filter\(\(a\) => !viewerIsClient \|\| isInClientArchive\(a, now\)\)/);
-    expect(src).toMatch(
-      /viewerIsClient \? clientDeliveryStamp\(a\) : a\.updatedAt \?\? a\.createdAt/,
-    );
+    /**
+     * SCRUM-429: this used to pin the hand-written expression
+     * `viewerIsClient ? clientDeliveryStamp(a) : a.updatedAt ?? a.createdAt`,
+     * and pinning it is what kept it. That was the FOURTH derivation of the
+     * deliverable stamp and the one that disagreed: its staff branch said
+     * `updatedAt ?? createdAt` where archive-view, assets-view and the agent
+     * detail page all say `createdAt`, so one asset read "2 days ago" here and
+     * "1 month ago" in Assets. `deliverableStamp` IS both branches of the rule,
+     * so asking for the CALL is the stronger claim - it cannot silently
+     * disagree with the other three the way a copy can.
+     */
+    expect(src).toMatch(/deliverableStamp\(a, viewerIsClient\)/);
+    expect(src).not.toMatch(/a\.updatedAt \?\? a\.createdAt/);
     expect(src).toMatch(/relativeTime\(stampOf\(a\)\)/);
     // Staff pass nothing and keep the full list: the prop defaults to false.
     expect(src).toContain("viewerIsClient = false");

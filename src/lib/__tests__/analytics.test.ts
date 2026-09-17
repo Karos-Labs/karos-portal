@@ -5,6 +5,8 @@ import {
   engagementIsMockOrStale,
   engagementScore,
   hashSeed,
+  keepCurrentMetricDefinitions,
+  metricsDefinitionVersion,
   mulberry32,
   normalizePlatformMetrics,
   rankByEngagement,
@@ -133,11 +135,6 @@ describe("normalizePlatformMetrics", () => {
     expect(m.engagementRate).toBe(1);
   });
 
-  it("returns zeroes rather than NaN when impressions are absent", () => {
-    const m = normalizePlatformMetrics("facebook", { reactions: 5 });
-    expect(m.impressions).toBe(0);
-    expect(m.engagementRate).toBe(0);
-  });
 
   it("falls back to a generic mapping for an unknown platform", () => {
     const m = normalizePlatformMetrics("mastodon", {
@@ -197,14 +194,6 @@ function mockRawMetrics(platform: string, seedKey: string): RawPlatformMetrics {
         likes: Math.floor(engaged * 0.7),
         comments: Math.floor(engaged * 0.1),
         saves: Math.floor(engaged * 0.1),
-        shares: Math.floor(engaged * 0.1),
-      };
-    case "facebook":
-      return {
-        post_impressions: impressions,
-        post_clicks: clicks,
-        reactions: Math.floor(engaged * 0.75),
-        comments: Math.floor(engaged * 0.15),
         shares: Math.floor(engaged * 0.1),
       };
     case "twitter":
@@ -298,7 +287,58 @@ describe("engagementIsMockOrStale", () => {
   });
 
   it("holds when every row belongs to stale channels, live or not", () => {
-    const records = [row("linkedin", "live"), row("facebook", "mock")];
-    expect(engagementIsMockOrStale(records, ["linkedin", "facebook"])).toBe(true);
+    const records = [row("linkedin", "live"), row("tiktok", "mock")];
+    expect(engagementIsMockOrStale(records, ["linkedin", "tiktok"])).toBe(true);
+  });
+});
+
+
+/**
+ * CN2 (2026-09): Graph v25 retired the two metrics `MarketingMetrics.impressions`
+ * was built from on Meta — IG `impressions` → `views`, Page `post_impressions` →
+ * `post_media_view` — so rows from either side of that cutover count different
+ * things while `engagementRate` divides by exactly this field. The marker is what
+ * keeps the two definitions from being ranked, averaged or trended together.
+ */
+describe("metric definition versions", () => {
+  const row = (platform: string, metricsVersion?: number) => ({ platform, metricsVersion });
+
+  it("marks Instagram as redefined and leaves every other channel at 1", () => {
+    expect(metricsDefinitionVersion("instagram")).toBe(2);
+    for (const p of ["linkedin", "twitter", "youtube", "tiktok", "unknown"]) {
+      expect(metricsDefinitionVersion(p)).toBe(1);
+    }
+  });
+
+  it("keeps only the newest definition of a platform that changed", () => {
+    const kept = keepCurrentMetricDefinitions([row("instagram"), row("instagram", 2), row("instagram", 1)]);
+    expect(kept).toEqual([row("instagram", 2)]);
+  });
+
+  it("treats a row written before the marker existed as version 1", () => {
+    // An unstamped row is pre-2026-09, i.e. the OLD definition — not an unknown one.
+    // Nothing newer exists for either platform in this set, so both survive:
+    // the unstamped row is read as 1, not as "unknown, discard".
+    expect(keepCurrentMetricDefinitions([row("instagram"), row("twitter", 1)])).toEqual([
+      row("instagram"),
+      row("twitter", 1),
+    ]);
+  });
+
+  it("does not let a Meta cutover discard a platform whose metrics never changed", () => {
+    // The whole reason the filter is per platform rather than global.
+    const kept = keepCurrentMetricDefinitions([
+      row("linkedin", 1),
+      row("linkedin"),
+      row("instagram", 1),
+      row("instagram", 2),
+    ]);
+    expect(kept).toEqual([row("linkedin", 1), row("linkedin"), row("instagram", 2)]);
+  });
+
+  it("is a no-op on an empty set and on one consistent definition", () => {
+    expect(keepCurrentMetricDefinitions([])).toEqual([]);
+    const consistent = [row("tiktok", 1), row("tiktok", 1)];
+    expect(keepCurrentMetricDefinitions(consistent)).toEqual(consistent);
   });
 });

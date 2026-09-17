@@ -1,18 +1,22 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { AgentIdentity } from "@/components/agent-identity";
+import {
+  archiveGroupFor,
+  archiveGroupLogoSlug,
+  orderArchiveGroups,
+} from "@/lib/archive-grouping";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { Badge, EmptyState } from "@/components/ui";
-import { Icon } from "@/components/icon";
+import { Icon, PlatformLogo } from "@/components/icon";
 import { assetImages, assetVideos } from "@/lib/asset-images";
 // The client's vocabulary for a stored status ("published" reads as "Posted")
 // used to be a local const here. It is shared now because the publish cron's
 // ordering-hold message interpolated the RAW enum into a sentence a client
 // reads, and one map is the only way those two agree.
 import { CLIENT_ASSET_STATUS_LABEL, clientAssetStatusLabel } from "@/lib/asset-status-copy";
-import { clientDeliveryStamp } from "@/lib/asset-visibility";
+import { deliverableStamp } from "@/lib/asset-visibility";
 import { offeredStatesFor } from "@/lib/client-state-domain";
 import { agentLabelForAsset, templateForAsset } from "@/lib/post-chain";
 import { cn, relativeTime } from "@/lib/utils";
@@ -26,8 +30,16 @@ const STATUS_TONE: Record<Asset["status"], "neutral" | "success" | "warning" | "
   delivered: "success",
 };
 
+/**
+ * One archive section. Keyed by PLATFORM since SCRUM-428 - see
+ * lib/archive-grouping.ts for why it used to be keyed by agent and what that
+ * cost. The name is kept generic rather than renamed to `platform` because one
+ * section is deliberately not a platform: the "Other content" pile.
+ */
 interface AgentGroup {
   name: string;
+  /** `PlatformLogo` slug for the heading, or null for the not-a-platform pile. */
+  logoSlug: string | null;
   assets: Asset[];
   latestAt: number;
   /** Distinct template streams in this group, most-used first (F148). */
@@ -140,6 +152,8 @@ export function ArchiveView({
   search,
   onFiltersChange,
   agentsHref,
+  initialAssetId,
+  onAssetOpened,
 }: {
   assets: Asset[];
   /**
@@ -189,8 +203,35 @@ export function ArchiveView({
    * carries no action rather than a link to a page that does not exist.
    */
   agentsHref?: string;
+  /**
+   * THE ITEM THIS PAGE WAS OPENED FOR (portal feedback round 6, decision 8).
+   *
+   * `/calendar?view=archive&asset={id}` — validated and threaded down by the
+   * host, and read ONCE, into this state's initial value: the archive is where
+   * a client's finished work lives, and until this existed no single deliverable
+   * had a URL, so the setup ladder's "Open your first post" and any future "your
+   * post is ready" row could only point at the list.
+   *
+   * An id this list does not hold simply opens nothing — the modal's asset is a
+   * lookup, and the archive's own projection (drafts, future-dated posts and
+   * anything past 30 days are not in it) is the authority on what it can show.
+   * And it reports nothing either: see `onAssetOpened`.
+   */
+  initialAssetId?: string;
+  /**
+   * Fired when a deliverable is actually OPEN — a click or the seed above, and
+   * only once the id has resolved to an asset this list holds (round 6 review,
+   * D2). An `?asset=` id the archive cannot show fires nothing.
+   *
+   * The host does two things with it: it drops `?asset=` from the URL (the modal
+   * is a gesture, not a view Back should restore) and, for a client, it writes
+   * action 05 — "See your first output", which was proxied by "an output
+   * exists" until this event existed to record.
+   */
+  onAssetOpened?: (assetId: string) => void;
 }) {
-  const [openAssetId, setOpenAssetId] = useState<string | null>(null);
+  const [openAssetId, setOpenAssetId] = useState<string | null>(initialAssetId ?? null);
+  const handleOpenAsset = useCallback((assetId: string) => setOpenAssetId(assetId), []);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
@@ -218,27 +259,49 @@ export function ArchiveView({
 
   const groups = useMemo<AgentGroup[]>(() => {
     const query = search.trim().toLowerCase();
-    const byAgent = new Map<string, Asset[]>();
+    // BY PLATFORM, not by agent (SCRUM-428). The key comes from
+    // `archiveGroupFor`, which asks the same `platformForAsset` the asset
+    // card's platform badge asks - so this page and the Assets page cannot
+    // come to disagree about what platform a post is for, which is the bug
+    // this one would otherwise turn into.
+    //
+    // THE AGENT DID NOT DISAPPEAR. It is still the secondary filter below and
+    // it is now printed on every tile, which is the trade this makes: the
+    // reader gets one Instagram section, and the agent that produced each post
+    // is a fact on the row rather than the name of a pile.
+    const byPlatform = new Map<string, Asset[]>();
     for (const asset of assets) {
       if (status !== "all" && asset.status !== status) continue;
       if (query && !asset.title.toLowerCase().includes(query)) continue;
-      const name = agentNameFor(asset);
-      if (agent !== "all" && name !== agent) continue;
-      (byAgent.get(name) ?? byAgent.set(name, []).get(name)!).push(asset);
+      // The agent filter now narrows WITHIN the platform sections rather than
+      // choosing them. It reads `agentNameFor`, which is what its own option
+      // list is built from - keying it off the group name would have silently
+      // stopped matching the moment the group stopped being the agent.
+      if (agent !== "all" && agentNameFor(asset) !== agent) continue;
+      const name = archiveGroupFor(asset);
+      (byPlatform.get(name) ?? byPlatform.set(name, []).get(name)!).push(asset);
     }
     // A3/A4: a client's rows are ordered - and stamped - by when the work
     // reached them, not by when it was generated. Ordering by `createdAt` while
     // printing the delivery time would also leave the tiles visibly out of
     // sequence with their own timestamps.
-    const stampOf = (a: Asset) => (viewerIsClient ? clientDeliveryStamp(a) : a.createdAt);
-    return [...byAgent.entries()]
-      .map(([name, list]) => ({
+    // `deliverableStamp` IS this rule, exported and documented. It was
+    // re-derived here (and once more below, and a third time in
+    // agent-detail-archetypes), which is how assets-view came to sort by a
+    // fourth thing nobody printed. One caller each now.
+    const stampOf = (a: Asset) => deliverableStamp(a, viewerIsClient);
+    return orderArchiveGroups(
+      [...byPlatform.entries()].map(([name, list]) => ({
         name,
+        // Off the first asset in the section: every asset in it resolved to the
+        // same platform, so any of them answers, and the pile with no platform
+        // answers null - which is the heading that draws no mark.
+        logoSlug: archiveGroupLogoSlug(list[0]!),
         assets: [...list].sort((a, b) => stampOf(b) - stampOf(a)),
         latestAt: Math.max(...list.map(stampOf)),
         templates: templatesOf(list),
-      }))
-      .sort((a, b) => b.latestAt - a.latestAt);
+      })),
+    );
   }, [agent, agentNameFor, assets, search, status, viewerIsClient]);
 
   function toggleGroup(name: string) {
@@ -252,6 +315,26 @@ export function ArchiveView({
 
   const openAsset = openAssetId ? assets.find((a) => a.id === openAssetId) ?? null : null;
 
+  /**
+   * "A DELIVERABLE WAS OPENED" MEANS THE MODAL HAS ONE (round 6 review, D2).
+   *
+   * Keyed on the RESOLVED asset, which is the only thing that can answer the
+   * question the event claims to answer. It used to be two channels: the click
+   * handler fired it, and a second effect fired it on mount for `initialAssetId`
+   * — blindly, before the lookup, so a stale or hand-typed `?asset=` id opened
+   * nothing at all and still told the host a deliverable had been read (a
+   * Firestore write for action 05, on a modal with no asset in it).
+   *
+   * One effect covers both routes because both end in the same place: a click
+   * sets the state, a deep link seeds it, and either way this fires exactly
+   * once per id that actually resolves to an asset in the list.
+   */
+  const openedAssetId = openAsset?.id ?? null;
+  useEffect(() => {
+    if (!openedAssetId) return;
+    onAssetOpened?.(openedAssetId);
+  }, [openedAssetId, onAssetOpened]);
+
   if (assets.length === 0) {
     return (
       <EmptyState
@@ -259,7 +342,7 @@ export function ArchiveView({
         title={viewerIsClient ? "Nothing here yet" : "Nothing archived yet"}
         description={
           viewerIsClient
-            ? "Work your Karos team has approved shows up here, and stays for 30 days after you mark it posted."
+            ? "Finished work shows up here, and stays for 30 days after you mark it posted."
             : "Everything the agents produce lands here, organized per agent."
         }
         // R9: an empty region should offer the control that starts the task
@@ -285,11 +368,17 @@ export function ArchiveView({
     );
   }
 
+  // `space-y-6`, was `space-y-8` (SCRUM-425: "try removing blank spaces between
+  // widgets, there is a lot and it's unaesthetic"). 2rem between collapsible
+  // groups reads as a missing section rather than as a boundary, and every group
+  // already announces itself with an identity, a heading and a count. Taken off
+  // the scale rather than with per-section margins so the rhythm stays one
+  // number.
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Same control strip the staff assets list has had all along. */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-2 p-2">
-        <span className="px-1 text-[10px] font-mono font-medium uppercase tracking-[0.12em] text-muted-2">
+        <span className="px-1 text-[10px] font-label font-medium uppercase tracking-[0.12em] text-muted-2">
           Filter
         </span>
         <select
@@ -358,13 +447,38 @@ export function ArchiveView({
           const hidden = group.assets.length - visible.length;
           return (
             <section key={group.name}>
+              {/* IT ALREADY TOGGLED, AND ALREADY ROTATED ITS CHEVRON, and it
+                  was still reported as hard to find (SCRUM-425: "expand and
+                  collapse button on each widget should be more visible"). The
+                  function was never the problem: a full-width button with no
+                  hover state, no focus ring and a `text-muted-2` glyph does not
+                  read as pressable, so the only reader who discovers it is one
+                  who clicks the heading on a hunch.
+
+                  `group` + `focus-ring` rather than a bespoke treatment, so the
+                  chevron below can respond to the row and keyboard focus lands
+                  the way it does everywhere else in this app. */}
               <button
                 type="button"
                 onClick={() => toggleGroup(group.name)}
                 aria-expanded={!isCollapsed}
-                className="mb-3 flex w-full items-center gap-3 text-left"
+                className="focus-ring group mb-3 -mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-md px-2 py-1 text-left transition-colors hover:bg-surface-2"
               >
-                <AgentIdentity identity={group.name} size="sm" />
+                {/* THE PLATFORM'S OWN MARK, not an agent avatar (SCRUM-428).
+                    `PlatformLogo` keys off a slug prefix, so the pile with no
+                    platform falls back to a neutral glyph rather than drawing
+                    somebody else's logo. */}
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-surface-2">
+                  {group.logoSlug ? (
+                    <PlatformLogo
+                      slug={group.logoSlug}
+                      className="h-3.5 w-3.5"
+                      fallback={<Icon name="FileText" className="h-3.5 w-3.5 text-muted-2" />}
+                    />
+                  ) : (
+                    <Icon name="FileText" className="h-3.5 w-3.5 text-muted-2" />
+                  )}
+                </span>
                 <h3 className="min-w-0 shrink-0 truncate text-base font-medium text-foreground">
                   {group.name}
                 </h3>
@@ -394,7 +508,7 @@ export function ArchiveView({
                 <Icon
                   name="ChevronDown"
                   className={cn(
-                    "ml-auto h-4 w-4 shrink-0 text-muted-2 transition-transform",
+                    "ml-auto h-4 w-4 shrink-0 text-muted-2 transition-all group-hover:text-foreground",
                     isCollapsed && "-rotate-90",
                   )}
                 />
@@ -406,8 +520,9 @@ export function ArchiveView({
                       <ArchiveTile
                         key={asset.id}
                         asset={asset}
+                        agentName={agentNameFor(asset)}
                         viewerIsClient={viewerIsClient}
-                        onOpen={() => setOpenAssetId(asset.id)}
+                        onOpen={() => handleOpenAsset(asset.id)}
                       />
                     ))}
                   </div>
@@ -460,10 +575,19 @@ export function ArchiveView({
 
 function ArchiveTile({
   asset,
+  agentName,
   viewerIsClient,
   onOpen,
 }: {
   asset: Asset;
+  /**
+   * Which agent produced this, printed on the tile since SCRUM-428.
+   *
+   * It used to be the section heading. Grouping moved to the platform, so
+   * without this the agent that made a post would be visible nowhere on the
+   * page - and it is the fact a client asks about when a post reads oddly.
+   */
+  agentName: string;
   /** Drives which moment the tile's timestamp names. */
   viewerIsClient: boolean;
   onOpen: () => void;
@@ -476,12 +600,17 @@ function ArchiveTile({
     <button
       type="button"
       onClick={onOpen}
-      className="group flex flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-surface text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-lg"
+      /* round 6 (rule 3): a tile that opens something hovers with ONE fill
+         step and the accent hairline (`row-lift`), and does not move. It used
+         to rise 2px and bloom a shadow, so a grid of them rippled under the
+         cursor — in this brand the hover is a colour event. `focus-ring` is
+         the portal's one focus treatment (globals.css). */
+      className="focus-ring row-lift flex flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-surface text-left"
     >
       {thumb ? (
         <div className="relative aspect-[4/3] w-full overflow-hidden border-b border-border bg-surface-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={thumb.url} alt="" className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]" />
+          <img src={thumb.url} alt="" className="h-full w-full object-cover" />
           {hasVideo && (
             <span className="absolute inset-0 flex items-center justify-center bg-black/25 text-white">
               <Icon name="Play" className="h-8 w-8" />
@@ -495,6 +624,7 @@ function ArchiveTile({
       )}
       <div className="flex min-w-0 flex-1 flex-col gap-1 p-3">
         <p className="truncate text-sm font-medium text-foreground">{asset.title}</p>
+        <p className="truncate text-[11px] text-muted-2">{agentName}</p>
         <div className="mt-auto flex items-center justify-between gap-2">
           {/* `createdAt` is the GENERATION instant, and a whole week of
               "daily" posts shares one - so a client's archive printed five
@@ -503,7 +633,7 @@ function ArchiveTile({
               the moment it was approved; staff keep the generation stamp,
               which for them is the fact worth knowing. */}
           <span className="text-[11px] text-muted-2">
-            {relativeTime(viewerIsClient ? clientDeliveryStamp(asset) : asset.createdAt)}
+            {relativeTime(deliverableStamp(asset, viewerIsClient))}
           </span>
           <Badge tone={STATUS_TONE[asset.status]}>{clientAssetStatusLabel(asset.status)}</Badge>
         </div>

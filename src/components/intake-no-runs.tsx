@@ -2,6 +2,7 @@
 
 import { EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { CLIENT_ARCHIVE_NAME } from "@/lib/agent-intake-links";
 
 /**
  * "No runs yet", on an intake page — flow audit 2026-09, R9 · NN/g *Designing
@@ -37,11 +38,13 @@ export function IntakeNoRuns({
       <EmptyState
         icon={<Icon name="Clock" className="h-6 w-6" />}
         title="No runs yet"
-        description={`Nothing has run for you yet. When it does, the run shows up here and your ${noun} land in your archive.`}
+        description={`Nothing has run for you yet. When it does, the run shows up here and your ${noun} land in ${CLIENT_ARCHIVE_NAME}.`}
         action={
           <a
             href={`/clients/${clientId}/agents`}
-            className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-neon"
+            /* round 6 (rule 3): a quiet link hovers muted to foreground with
+               an underline. `hover:text-neon` is not a rule. */
+            className="focus-ring inline-flex items-center gap-1 rounded-md text-sm font-medium text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
           >
             See your agents
             <Icon name="ChevronRight" className="h-3.5 w-3.5" />

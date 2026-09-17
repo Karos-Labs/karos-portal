@@ -29,11 +29,24 @@ export function formatDateTime(value?: number | string | Date | null) {
   });
 }
 
-export function relativeTime(value?: number | string | Date | null) {
+/**
+ * "2d ago", falling back to the date past 30 days.
+ *
+ * `now` IS OPTIONAL AND EXISTS FOR SERVER COMPONENTS (round 6 review, E1). A
+ * server-rendered surface resolves one clock for the whole render and every
+ * answer on the page has to age against it — a stamp that read `Date.now()`
+ * itself would be a second instant beside the status word next to it. Omitted,
+ * it reads the clock, which is right inside the client components that own most
+ * of these stamps.
+ *
+ * `lib/client-agent-rows.ts` carried a second copy of this ladder
+ * (`rosterRelativeStamp`) for exactly that reason. One argument replaced it.
+ */
+export function relativeTime(value?: number | string | Date | null, now?: number) {
   if (!value) return "-";
   const d = new Date(value).getTime();
   if (Number.isNaN(d)) return "-";
-  const diff = Date.now() - d;
+  const diff = (now ?? Date.now()) - d;
   const mins = Math.round(diff / 60000);
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins}m ago`;

@@ -82,7 +82,7 @@ describe("logUsage on an inconsistent (vendor, model id) pair", () => {
 
     const row = usageRow();
     expect(row).toBeDefined();
-    // NOT 18 (the old `_default` answer) and NOT 4.8 (Haiku's real rate, which
+    // NOT 18 (the old `_default` answer) and NOT 6 (Haiku's real rate, which
     // this pair has not earned the right to be costed at).
     expect(row!["estimatedCostUsd"]).toBe(0);
 
@@ -111,7 +111,7 @@ describe("logUsage on an inconsistent (vendor, model id) pair", () => {
     });
     await settle();
 
-    expect(usageRow()!["estimatedCostUsd"]).toBe(4.8);
+    expect(usageRow()!["estimatedCostUsd"]).toBe(6);
     expect(usageRow()!["vendor"]).toBe("vertex");
     // Claude on Vertex is invoiced by Google, not Anthropic.
     expect(usageRow()!["provider"]).toBe("google");

@@ -60,8 +60,8 @@ export function isAgentEngineDispatchEnabled(): boolean {
  * enabled, needs nothing else (`isMiddlewareDispatchEnabled` already folds
  * in its own base-URL check); the direct-publish fallback needs
  * `AGENT_ENGINE_PUBSUB_TOPIC` (or the Pub/Sub emulator). A client whose
- * custom agents route to agent-engine (`isClientEnabledForEngineCustomAgents`
- * in `./product-mapping`) but whose transport is unconfigured gets exactly
+ * custom agents route to agent-engine (every client with a lab slug, since the
+ * 2026-09-06 allowlist removal — see `./health`) but whose transport is unconfigured gets exactly
  * the same class of silent failure agent-service clients already have a
  * banner for — this function is what lets a caller say so instead.
  */

@@ -26,14 +26,13 @@ import {
   type AnswerGridView,
   type EngineView,
   type MeasurementLineView,
-  type ScoreView,
   type TrackedCompetitorRef,
 } from "@/components/seo-geo/presenter";
 import { TONE_COLORS } from "@/components/seo-geo/tones";
 import { Disclosure } from "@/components/seo-geo/disclosure";
 import { FlagButton } from "@/components/seo-geo/flag-button";
 import { GapList } from "@/components/seo-geo/gap-list";
-import { ScorePopover } from "@/components/seo-geo/score-popover";
+import { InfoTip, Meter, PresenceTile, RosterShare, ScoreTile } from "@/components/seo-geo/tiles";
 import { SeoGeoActionPlan } from "@/components/seo-geo-action-plan";
 import { EngineLogo } from "@/components/engine-logo";
 import { StaffOnlySection } from "@/components/staff-only-section";
@@ -45,27 +44,6 @@ import { StaffOnlySection } from "@/components/staff-only-section";
  * reads is plain English by construction - internal run-record vocabulary is
  * mapped (never echoed) in seo-geo/presenter.ts, which is unit-tested for leaks.
  */
-
-/** CSS-only hover/focus explainer. Supplementary by design: everything vital is also visible text. */
-function InfoTip({ text }: { text: string }) {
-  return (
-    <span className="group relative inline-flex">
-      <button
-        type="button"
-        aria-label="What this means"
-        className="flex h-4 w-4 items-center justify-center rounded-full text-muted-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
-      >
-        <Icon name="Info" className="h-3 w-3" />
-      </button>
-      <span
-        role="tooltip"
-        className="pointer-events-none absolute bottom-full left-0 z-20 mb-2 w-56 rounded-md border border-border bg-surface-3 px-2.5 py-2 text-left font-sans text-[11px] font-normal normal-case leading-relaxed tracking-normal text-foreground opacity-0 shadow-lg transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 motion-reduce:transition-none"
-      >
-        {text}
-      </span>
-    </span>
-  );
-}
 
 /** One matrix cell: a dot carrying its plain-English outcome as accessible text. */
 function AnswerDot({ mark, tone, label }: { mark: AnswerCellView["mark"]; tone: string; label: string }) {
@@ -106,13 +84,13 @@ function AnswerGrid({ view }: { view: AnswerGridView }) {
         <table className="w-full min-w-[420px] border-collapse text-xs">
           <thead>
             <tr>
-              <th className="py-1.5 pr-3 text-left font-mono text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2">
+              <th className="py-1.5 pr-3 text-left font-label text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2">
                 Question
               </th>
               {view.engines.map((e) => (
                 <th
                   key={e.engine}
-                  className="px-2 py-1.5 text-center font-mono text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2"
+                  className="px-2 py-1.5 text-center font-label text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2"
                 >
                   {e.name}
                 </th>
@@ -127,7 +105,7 @@ function AnswerGrid({ view }: { view: AnswerGridView }) {
               <tr>
                 <th
                   colSpan={view.engines.length + 1}
-                  className="border-t border-border pb-1 pt-3 text-left font-mono text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2"
+                  className="border-t border-border pb-1 pt-3 text-left font-label text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2"
                 >
                   {group.intentLabel}
                   {/* CD-J1 bounce 2c: which side of the plan this block sits on.
@@ -165,92 +143,6 @@ function AnswerGrid({ view }: { view: AnswerGridView }) {
         </span>
       </div>
     </div>
-  );
-}
-
-function Meter({ pct, color, className }: { pct: number; color: string; className?: string }) {
-  return (
-    <div className={`h-1.5 w-full overflow-hidden rounded-full bg-surface-3 ${className ?? ""}`}>
-      <div
-        className="h-full rounded-full"
-        style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: color }}
-      />
-    </div>
-  );
-}
-
-/* ── 1 · Headline scores ─────────────────────────────────────────── */
-
-/**
- * ONE number treatment across the product (portal feedback round 4, 2026-09).
- *
- * These figures were mono at `text-2xl` while Home's "Your numbers" card renders
- * the SAME ScoreView at `text-3xl` in the sans face, so the two screens quoting
- * one snapshot disagreed about what a score looks like. Everything here now
- * matches home-kpis.tsx's `ScoreCell`: `.stat-number` for the face (sans +
- * tabular numerals, per globals.css), the same size/weight/tracking, the same
- * "/ 100" suffix, and the same meter — a band-tinted track at low alpha rather
- * than `surface-3`, which in light mode is a three-point step off the card and
- * left the unfilled half invisible.
- *
- * THE METER NOW DRAWS THE SCORE, not data coverage. Home's does, and a coverage
- * bar sitting where a reader expects the score is worse than no bar: coverage is
- * a caveat, and it keeps its sentence underneath, where it reads as one.
- */
-function ScoreTile({ view }: { view: ScoreView }) {
-  const color = TONE_COLORS[view.tone];
-  return (
-    <Card className="min-w-0">
-      <div className="flex items-center gap-1.5">
-        <p className="font-mono text-[10px] uppercase leading-snug tracking-[0.08em] text-muted [overflow-wrap:anywhere]">
-          {view.label}
-        </p>
-        <InfoTip text={view.explainer} />
-      </div>
-      {view.value === null ? (
-        <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-muted-2">
-          &ndash;
-        </p>
-      ) : (
-        <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight">
-          <span style={{ color }}>{view.value}</span>
-          <span className="ml-1 text-sm font-medium text-muted-2">/ 100</span>
-        </p>
-      )}
-      <p className="mt-1.5 text-[11px]" style={{ color }}>
-        {view.bandLabel}
-      </p>
-      <div className="mt-2.5">
-        <div
-          className="h-2 overflow-hidden rounded-full"
-          style={{ background: `color-mix(in srgb, ${color} 18%, transparent)` }}
-        >
-          <div
-            className="h-full rounded-full"
-            style={{ width: `${Math.min(100, Math.max(0, view.value ?? 0))}%`, background: color }}
-          />
-        </div>
-        <p className="mt-1.5 text-[11px] leading-snug text-muted-2">{view.coverageLine}</p>
-      </div>
-      {view.breakdown.length > 0 && (
-        <Disclosure summary={view.breakdownTitle} className="mt-3 border-t border-border pt-2.5">
-          <ul className="space-y-2">
-            {view.breakdown.map((row) => (
-              <li key={row.label}>
-                <div className="mb-0.5 flex items-baseline justify-between gap-2 text-[11px]">
-                  <span className="text-muted">
-                    {row.label}
-                    {row.note && <span className="text-muted-2"> · {row.note}</span>}
-                  </span>
-                  {row.pct !== null && <span className="stat-number text-foreground">{row.pct}%</span>}
-                </div>
-                <Meter pct={row.pct ?? 0} color="var(--foreground)" className="opacity-40" />
-              </li>
-            ))}
-          </ul>
-        </Disclosure>
-      )}
-    </Card>
   );
 }
 
@@ -334,6 +226,11 @@ function EngineCard({ view }: { view: EngineView }) {
                     className="h-full rounded-sm"
                     style={{
                       width: `${b.pctOfMax}%`,
+                      // Orange for you, slate for them (round 6, Albert
+                      // 2026-09-06). Round 6 made your bar ink to save the
+                      // screen's one accent; the ruling is that the ration
+                      // governs CONTROLS, and a bar is data. Orange is what
+                      // makes your bar findable among the roster's.
                       background: b.isClient ? "var(--neon)" : "var(--info)",
                       opacity: b.isClient ? 1 : 0.55,
                     }}
@@ -358,7 +255,7 @@ function EngineCard({ view }: { view: EngineView }) {
         ))}
       </div>
       {view.ghost && (
-        <div className="mt-2 inline-flex items-center gap-1 rounded-[4px] border border-warning/30 bg-warning/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em] text-warning">
+        <div className="mt-2 inline-flex items-center gap-1 rounded-[4px] border border-warning/30 bg-warning/10 px-2 py-1 font-label text-[10px] uppercase tracking-[0.08em] text-warning">
           {view.ghost.label}
           <InfoTip text={view.ghost.explainer} />
         </div>
@@ -414,12 +311,16 @@ export function SeoGeoScores({ insights }: { insights: SeoGeoInsights }) {
           <p className="mt-1 text-xs text-muted">{trust.description}</p>
         </div>
       )}
-      <MeasurementStamp view={measurement} />
       <div className="grid grid-cols-1 gap-4 @xl:grid-cols-2 @4xl:grid-cols-3">
         {scores.map((view) => (
           <ScoreTile key={view.key} view={view} />
         ))}
       </div>
+      {/* UNDER the tiles (round 6, think-reporting §3 · handoffs/E.md): it is
+          the caption of the numbers, not a preface to them. The legacy banner
+          above keeps its place, because it qualifies the numbers before they
+          are read. */}
+      <MeasurementStamp view={measurement} />
     </div>
   );
 }
@@ -652,7 +553,11 @@ export function SeoGeoPanel({
           {/* QA F20: an in-place refreshing state, so a stale snapshot never sits
               there looking current while a run is rewriting it. */}
           {strip.refreshing && (
-            <p className="inline-flex items-center gap-1.5 text-[11px] text-neon">
+            /* round 6 (ruling 2): `text-neon`. Orange never signals status —
+               "a run is rewriting these numbers" is a status, and the judgment
+               scale is the one that says it. The band two lines below already
+               reads `info` for the same class of fact. */
+            <p className="inline-flex items-center gap-1.5 text-[11px] text-info">
               <Icon name="Loader" className="h-3 w-3 animate-spin" />
               Refreshing this snapshot now. The numbers below are the previous run.
             </p>
@@ -686,8 +591,14 @@ export function SeoGeoPanel({
         </StaffOnlySection>
       )}
 
-      {/* 3 · Presence split: the branded-vs-category story + roster share */}
-      <Card>
+      {/* 3 · Presence split: the branded-vs-category story + roster share.
+
+          `id="presence"` and the `#share` anchor below are where Home's two SEO
+          cells land (round 6, home-standing.tsx): each cell opens the section
+          its own number is computed in, the same device `#visibility-scores`
+          already gave the KPI card's visibility cell. `scroll-mt-24` clears the
+          sticky chrome, as the other anchored sections do. */}
+      <Card id="presence" className="scroll-mt-24">
         <CardTitle className="mb-1">Do buyers find you?</CardTitle>
         <p className="mb-4 text-xs text-muted-2">
           Whether AI engines name you when buyers ask by name versus when they ask open category
@@ -695,52 +606,17 @@ export function SeoGeoPanel({
           comparison against competitors. Being named in a question about you isn&apos;t
           visibility.
         </p>
+        {/* The same tiles Home's SEO card draws (seo-geo/tiles.tsx), with the
+            popover this surface owns. */}
         <div className="grid gap-4 @xl:grid-cols-2">
           {[presence.brand, presence.category].map((tile) => (
-            <div key={tile.heading} className="rounded-md border border-border bg-surface-2 p-3">
-              <div className="flex items-center gap-1.5">
-                <p className="text-sm font-medium text-foreground">{tile.heading}</p>
-                <InfoTip text={tile.explainer} />
-              </div>
-              <p className="text-[11px] text-muted-2">{tile.caption}</p>
-              {/* CD-J1 directive 2: the headline is the percentage; the counts it
-                  was computed from are one click away, in sentences. */}
-              {tile.pctLabel ? (
-                <>
-                  <div className="mt-2">
-                    <ScorePopover
-                      value={tile.pctLabel}
-                      title={tile.detail.title}
-                      lines={tile.detail.lines}
-                      srLabel={`${tile.heading}: ${tile.pctLabel}. See how this was measured.`}
-                    />
-                  </div>
-                  <Meter pct={tile.pct ?? 0} color="var(--neon)" className="mt-1.5" />
-                </>
-              ) : (
-                <p className="mt-2 text-xs text-muted-2">{tile.emptyLine}</p>
-              )}
-            </div>
+            <PresenceTile key={tile.heading} tile={tile} />
           ))}
         </div>
         {presence.takeaway && <p className="mt-3 text-sm text-muted">{presence.takeaway}</p>}
         {presence.rosterShare && (
-          <div className="mt-4 border-t border-border pt-3">
-            <div className="flex items-center gap-1.5">
-              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-                Your share of the conversation
-              </p>
-              {/* Basis stated in the caption below and in this explainer: category
-                  questions only (CD-J1 directive 3). */}
-              <InfoTip text={presence.rosterShare.explainer} />
-            </div>
-            <div className="mt-1.5 flex items-center gap-3">
-              <span className="stat-number text-lg font-medium text-foreground">
-                {presence.rosterShare.value}
-              </span>
-              <Meter pct={presence.rosterShare.pct} color="var(--neon)" className="flex-1" />
-            </div>
-            <p className="mt-1 text-[11px] text-muted-2">{presence.rosterShare.caption}</p>
+          <div id="share" className="mt-4 scroll-mt-24 border-t border-border pt-3">
+            <RosterShare share={presence.rosterShare} />
           </div>
         )}
       </Card>
@@ -843,7 +719,7 @@ export function SeoGeoPanel({
               {promptGroups.map((group, gi) => (
                 <div key={group.intentLabel || `g-${gi}`}>
                   {group.intentLabel && (
-                    <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                    <p className="mb-1 font-label text-[10px] uppercase tracking-[0.08em] text-muted-2">
                       {group.intentLabel}
                       {group.basisLabel && (
                         <span className="ml-1.5 normal-case text-muted-3">· {group.basisLabel}</span>
@@ -855,7 +731,7 @@ export function SeoGeoPanel({
                       <li key={`q-${gi}-${i}`} className="flex items-center justify-between gap-2 text-xs">
                         <span className="text-muted">{formatPrompt(p.text)}</span>
                         {p.tagLabel && (
-                          <span className="inline-flex shrink-0 items-center gap-1 rounded-[4px] border border-border bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-[4px] border border-border bg-surface-3 px-1.5 py-0.5 font-label text-[10px] uppercase tracking-[0.08em] text-muted-2">
                             {p.tagLabel}
                             {p.tagExplainer && <InfoTip text={p.tagExplainer} />}
                           </span>

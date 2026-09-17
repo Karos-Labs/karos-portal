@@ -2,7 +2,7 @@
  * Resolving `?task=<id>` on an agent surface into the kickoff strip's view
  * (components/client-agents/task-kickoff-strip.tsx).
  *
- * PORTAL FEEDBACK ROUND 2, 2026-09. Home's "Let's do this" deep-links to the
+ * PORTAL FEEDBACK ROUND 2, 2026-09. Home's recommended-task press deep-links to the
  * agent page carrying the task id, and THREE surfaces have to answer that link
  * the same way: the agent detail page, and both branches of the agent roster.
  * The interesting part is not the fetch — it is the two rules that must not be

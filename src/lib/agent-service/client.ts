@@ -1,5 +1,6 @@
 import "server-only";
 
+import { mintIdToken } from "@/lib/gcp-id-token";
 import type { AgentServiceJobRequest, AgentServiceJobView } from "./types";
 
 /**
@@ -10,8 +11,6 @@ import type { AgentServiceJobRequest, AgentServiceJobView } from "./types";
 
 /** App token rides its own header so Authorization is free for the IAM ID token. */
 const SERVICE_TOKEN_HEADER = "x-karos-service-token";
-const METADATA_URL =
-  "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity";
 
 function config(): { baseUrl: string; token: string } {
   const baseUrl = process.env.AGENT_SERVICE_URL;
@@ -24,34 +23,49 @@ function config(): { baseUrl: string; token: string } {
   return { baseUrl: baseUrl.replace(/\/$/, ""), token: token.split(",")[0]!.trim() };
 }
 
-let idTokenCache: { audience: string; token: string; expiresAt: number } | null = null;
+/**
+ * Thrown when the agent service is IAM-protected (`AGENT_SERVICE_AUDIENCE` is
+ * set) but this process could not mint an ID token for it.
+ *
+ * THE MESSAGE IS CLIENT-SAFE, and that is why this class exists rather than
+ * reusing the reason string. `request` below notes that callers surface
+ * `e.message` straight to a CLIENT_USER in the run-job UI, so "metadata server
+ * returned 403" is the wrong sentence to put in it. The reason is logged
+ * server-side by the minter instead - one line, greppable, with the status in
+ * it.
+ */
+export class AgentServiceCredentialError extends Error {
+  constructor() {
+    super("Agent service request failed (credentials). Please try again or contact support.");
+    this.name = "AgentServiceCredentialError";
+  }
+}
 
 /**
  * Google-signed ID token for the IAM-protected agent service, from the Cloud
  * Run metadata server. AGENT_SERVICE_AUDIENCE is the service URL; unset (local
  * dev) → no IAM in front → skip. The platform's runtime service account needs
  * roles/run.invoker on the agent-service api.
+ *
+ * IT USED TO FAIL OPEN (SCRUM-330 / AU47, second pass). Three `return
+ * undefined` paths - a non-ok metadata response, an empty token, and a bare
+ * `catch` - each meant the request went out with NO `Authorization` header.
+ * The service does not check the header yet, so a portal that had never
+ * managed to mint a token looked completely healthy; the day IAM starts
+ * enforcing, a transient metadata blip stops being silent and becomes an
+ * outage nobody can explain.
+ *
+ * That ticket named `agent-engine/client.ts` and was fixed there. This is the
+ * file that one's docstring cites as the pattern it copied, so it had the same
+ * defect and no ticket of its own. The logic is shared now - see
+ * lib/gcp-id-token.ts.
  */
 async function iamIdToken(): Promise<string | undefined> {
-  const audience = process.env.AGENT_SERVICE_AUDIENCE;
-  if (!audience) return undefined;
-  const now = Date.now();
-  if (idTokenCache && idTokenCache.audience === audience && idTokenCache.expiresAt > now + 60_000) {
-    return idTokenCache.token;
-  }
-  try {
-    const res = await fetch(`${METADATA_URL}?audience=${encodeURIComponent(audience)}`, {
-      headers: { "Metadata-Flavor": "Google" },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return undefined;
-    const token = (await res.text()).trim();
-    if (!token) return undefined;
-    idTokenCache = { audience, token, expiresAt: now + 55 * 60 * 1000 };
-    return token;
-  } catch {
-    return undefined;
-  }
+  return mintIdToken({
+    audience: process.env.AGENT_SERVICE_AUDIENCE,
+    service: "agent-service",
+    credentialError: () => new AgentServiceCredentialError(),
+  });
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { ContentPlatformMark, SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
-import { Badge, Button } from "@/components/ui";
+import { Badge, Button, buttonClass } from "@/components/ui";
 import { jobStatusMeta } from "@/components/job-status";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
@@ -34,11 +34,14 @@ import {
 } from "@/components/pending-task-suggestions";
 import type { AssetImage } from "@/lib/asset-images";
 import {
+  ALL_CALENDAR_RUN_LEGEND_KEYS,
   calendarFilterKeyMatchable,
   calendarFilterLabel,
+  calendarRunLegendLabel,
   postKindLabel,
   type CalendarAssetKind,
   type CalendarFilterKey,
+  type CalendarRunLegendKey,
 } from "@/lib/calendar-kind";
 import type { Asset, AssetType, JobStatus, PlannedRunCadence } from "@/lib/types";
 
@@ -562,11 +565,13 @@ function ScheduledRunCard({
     <div className="rounded-lg border border-border bg-surface p-3">
       <div className="flex items-start gap-2.5">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+          {/* The run's agent, in its own colour (the chips above keep their tint). */}
           <ContentPlatformMark
             platform={run.platform}
             identity={run.productName}
             icon={run.productIcon}
             className="h-4 w-4"
+            tone="brand"
           />
         </div>
         <div className="min-w-0 flex-1">
@@ -831,7 +836,7 @@ function PausedScheduleStrip({
   if (schedules.length === 0) return null;
   return (
     <div className="rounded-[var(--radius)] border border-border bg-surface-2/30 px-4 py-3">
-      <p className="mb-2 text-[11px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
+      <p className="mb-2 text-[11px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">
         Paused schedules
       </p>
       <ul className="space-y-2">
@@ -1039,10 +1044,6 @@ function PausedRunNotice({ run, onDone }: { run: PausedRunMemo; onDone: () => vo
  */
 const NO_RUN_STATUS = { tone: "neutral" as const, label: "Done" };
 
-/** `Button` renders a <button>; an anchor can't nest one, so it borrows the look. */
-const REVIEW_BUTTON_CLASS =
-  "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border px-3 text-xs text-foreground transition-all duration-200 hover:border-foreground/30 hover:bg-foreground/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25";
-
 function PastRunCard({
   run,
   canOpenJob,
@@ -1076,7 +1077,7 @@ function PastRunCard({
   // `jobStatus: j.status` from a required field — but `CalendarRun` is shared with
   // the scheduled-run card, where the field genuinely is absent, so the branch
   // stays and says why.
-  const status = run.jobStatus ? jobStatusMeta(run.jobStatus) : NO_RUN_STATUS;
+  const status = run.jobStatus ? jobStatusMeta(run.jobStatus, viewerIsClient) : NO_RUN_STATUS;
   const inFlight = run.jobStatus === "queued" || run.jobStatus === "running";
 
   // Where "review this" actually goes. Staff get the run detail page the
@@ -1113,11 +1114,13 @@ function PastRunCard({
     <div className="rounded-lg border border-border bg-surface p-3" title={run.staffRef}>
       <div className="flex items-start gap-2.5">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+          {/* The run's agent, in its own colour (the chips above keep their tint). */}
           <ContentPlatformMark
             platform={run.platform}
             identity={run.productName}
             icon={run.productIcon}
             className="h-4 w-4"
+            tone="brand"
           />
         </div>
         <div className="min-w-0 flex-1">
@@ -1167,14 +1170,19 @@ function PastRunCard({
           {showReviewControl && (
             <div className="mt-2">
               {href ? (
-                <Link href={href} className={REVIEW_BUTTON_CLASS}>
+                /* round 6 (rule 2): no glyph after a button label. A trailing
+                   chevron belongs to a row that navigates, not to a control.
+                   round 6 review (E3): `Button` renders a <button> and an anchor
+                   cannot nest one, so it borrows the recipe rather than
+                   restating it — the `REVIEW_BUTTON_CLASS` const that used to
+                   live here had drifted to `transition-all` and its own
+                   focus-visible ring. */
+                <Link href={href} className={buttonClass({ variant: "outline", size: "sm" })}>
                   Review deliverable
-                  <Icon name="ArrowRight" className="h-3.5 w-3.5" />
                 </Link>
               ) : (
                 <Button size="sm" variant="outline" onClick={openAsset ?? undefined}>
                   Review deliverable
-                  <Icon name="ArrowRight" className="h-3.5 w-3.5" />
                 </Button>
               )}
             </div>
@@ -1415,11 +1423,24 @@ function WeekView({
           const dayPosts = postsByDay.get(key) ?? [];
           const daySuggestions = suggestionsByDay.get(key) ?? [];
           const dayCount = dayRuns.length + dayPosts.length + daySuggestions.length;
+          // SCRUM-421: the row selects the day and opens its detail. It said so
+          // nowhere — no selected look, and the detail opened below the whole
+          // calendar — so the arrow read as a dropdown that did nothing. The
+          // row now shows it is the open day, in the grid's own selected style.
+          const isSelected = key === selectedKey;
           return (
-            <li key={key} className={cn("px-3 py-2.5", isToday && "bg-foreground/[0.04]")}>
+            <li
+              key={key}
+              className={cn(
+                "px-3 py-2.5",
+                isToday && "bg-foreground/[0.04]",
+                isSelected && "bg-neon-soft/40 ring-1 ring-inset ring-neon/40",
+              )}
+            >
               <button
                 type="button"
                 onClick={() => onSelectDay(key)}
+                aria-pressed={isSelected}
                 className="mb-1.5 flex min-h-[24px] w-full items-center gap-2 text-left"
               >
                 <span className="text-xs font-semibold">{DAY_LABELS[d.getDay()]} {d.getDate()}</span>
@@ -1548,6 +1569,7 @@ export function RunCalendar({
   initialArchiveAgent,
   initialArchiveSearch,
   initialHiddenStatuses,
+  initialAssetId,
   suggestions = [],
   suggestionsClientId,
 }: {
@@ -1642,6 +1664,15 @@ export function RunCalendar({
    */
   initialHiddenStatuses?: readonly CalendarFilterKey[];
   /**
+   * ONE DELIVERABLE, OPENED ON LOAD, from `?asset=` (round 6, decision 8).
+   *
+   * Handed straight to the archive, which is the view that holds the tiles and
+   * the detail modal. The page validates nothing beyond its presence: what may
+   * be shown is `isInClientArchive`'s answer, and the archive already refuses an
+   * id it does not hold rather than opening an empty modal.
+   */
+  initialAssetId?: string;
+  /**
    * Task-Map proposals (pending, karos_managed/copilot), already carrying an
    * inferred `at` (lib/calendar-suggestion-placement.ts) — placed on their own
    * date, distinct from every real `CalendarAssetKind` (see SuggestionChip).
@@ -1691,6 +1722,14 @@ export function RunCalendar({
   const [weekAnchor, setWeekAnchor] = useState(() => startOfWeek(anchorDay));
   const [dayAnchor, setDayAnchor] = useState(() => startOfDay(anchorDay));
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  // Opening a day shows its detail BELOW the calendar, often off-screen, which
+  // is how pressing a day row came to look like nothing happened (SCRUM-421).
+  const dayDetailRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!selectedKey) return;
+    const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    dayDetailRef.current?.scrollIntoView({ block: "nearest", behavior: still ? "auto" : "smooth" });
+  }, [selectedKey]);
   /**
    * The archive's three filters, HELD HERE (review wave, 2026-09).
    *
@@ -1897,6 +1936,42 @@ export function RunCalendar({
       }, 300);
     },
     [writeCalendarQuery],
+  );
+
+  /**
+   * A DELIVERABLE WAS OPENED (round 6, decision 8).
+   *
+   * Two jobs, both of them the point of `?asset=`:
+   *
+   *  · The param leaves the URL, with `replaceState` like every other refinement
+   *    this component writes. The modal is a gesture rather than a view — Back
+   *    should step out of the archive, not reopen a post the reader has closed —
+   *    and a link that keeps reopening on reload is a link nobody can leave.
+   *  · Action 05 is written for a CLIENT. "See your first output" was proxied by
+   *    "an output exists", a fact about us; this is the event itself, recorded
+   *    the same way `12` is recorded above when a client opens their week.
+   *
+   * ONCE PER MOUNT (round 6, alignment fix 4). The row is a flag — "this client
+   * has opened a deliverable" — and it is an upsert, so firing it on the second
+   * and the ninetieth open of the archive buys nothing and costs a write each
+   * time. The ref is the whole gate: the state that would let this ask "is 05
+   * already done?" is not read by either calendar page, and adding a Firestore
+   * read to answer a question a boolean answers is the trade ruling 8 forbids.
+   */
+  const resultActionWritten = useRef(false);
+  const onArchiveAssetOpened = useCallback(
+    // round 6 review (D2): no parameter. Neither half of this needs to know
+    // WHICH deliverable was opened — the param comes off the URL wholesale and
+    // action 05 is a flag — and an unread argument only invites a reader to
+    // think one of them is keyed on it.
+    () => {
+      writeCalendarQuery({ asset: null }, "replace");
+      if (!viewerIsClient || !defaultClientId) return;
+      if (resultActionWritten.current) return;
+      resultActionWritten.current = true;
+      void markActionDoneAction(defaultClientId, "05");
+    },
+    [defaultClientId, viewerIsClient, writeCalendarQuery],
   );
 
   /**
@@ -2250,8 +2325,11 @@ export function RunCalendar({
             >
               <Icon name="Archive" className="h-3.5 w-3.5" />
               Archive
+              {/* SCRUM-426: for staff, Archive is "what the client sees" — the
+                  work queue with every status is Assets. A client reads the
+                  sentence that describes it from their side. */}
               <span className="hidden text-[11px] font-normal text-muted-2 sm:inline">
-                · everything we&apos;ve delivered
+                {viewerIsClient ? "· everything we've delivered" : "· what the client sees"}
               </span>
             </button>
           )}
@@ -2262,7 +2340,7 @@ export function RunCalendar({
         {/* Day-of-week header - seven columns need width to mean anything */}
         <div className="hidden grid-cols-7 border-b border-border sm:grid">
           {DAY_LABELS.map((d) => (
-            <div key={d} className="py-1.5 text-center text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">{d}</div>
+            <div key={d} className="py-1.5 text-center text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">{d}</div>
           ))}
         </div>
 
@@ -2371,11 +2449,21 @@ export function RunCalendar({
             agendaDays.map(({ key, day, runs: dayRuns, posts: dayPosts, suggestions: daySuggestions }) => {
               const isToday = isCurrentMonth && day === today.getDate();
               const dayCount = dayRuns.length + dayPosts.length + daySuggestions.length;
+              // Same as the week list (SCRUM-421): the open day looks open.
+              const isSelected = key === selectedKey;
               return (
-                <li key={key} className={cn("px-3 py-2.5", isToday && "bg-foreground/[0.04]")}>
+                <li
+                  key={key}
+                  className={cn(
+                    "px-3 py-2.5",
+                    isToday && "bg-foreground/[0.04]",
+                    isSelected && "bg-neon-soft/40 ring-1 ring-inset ring-neon/40",
+                  )}
+                >
                   <button
                     type="button"
                     onClick={() => setSelectedKey(key)}
+                    aria-pressed={isSelected}
                     className="mb-1.5 flex min-h-[24px] w-full items-center gap-2 text-left"
                   >
                     <span className="text-xs font-semibold">
@@ -2475,6 +2563,8 @@ export function RunCalendar({
                 // branch anyway.
                 {...(defaultClientId ? { agentsHref: `/clients/${defaultClientId}/agents` } : {})}
                 onFiltersChange={onArchiveFiltersChange}
+                {...(initialAssetId ? { initialAssetId } : {})}
+                onAssetOpened={onArchiveAssetOpened}
               />
             ) : (
               <p className="text-xs text-muted-2">Archive isn&apos;t available from this view.</p>
@@ -2487,9 +2577,38 @@ export function RunCalendar({
             R6): there is no grid there, so every chip in this row was a control
             that did nothing to what the reader was looking at. */}
         {viewMode !== "archive" && (
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border px-4 py-2">
-          <LegendDot className="border border-dashed border-foreground/40 bg-foreground/[0.03]" label="Scheduled run" />
-          <LegendDot className="bg-foreground/[0.07]" label="Completed run" />
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-border px-4 py-2">
+          {/* TWO REGISTERS, AND THE ROW NOW SAYS SO (SCRUM-422).
+
+              It was one flat row of nine words at one weight, and it was read
+              from outside as one taxonomy that repeated itself: "Scheduled run"
+              beside "Scheduled", "Completed run" beside "Published". They are
+              not repetitions — a run is a job the agent performed, a post is a
+              thing that job produced, and one completed run can leave a post
+              that is scheduled, waiting, or failed to publish. Deleting either
+              pair would have hidden a real state to fix a labelling problem.
+
+              So nothing is removed and the two halves are named instead. It
+              also fixes a second thing the flat row hid: the run dots are
+              LEGEND ONLY while the post words are FILTERS you can press, and at
+              equal weight in one row there was no way to tell that pressing
+              "Completed run" does nothing. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span className="text-[10px] font-label font-medium uppercase tracking-[0.12em] text-muted-2">
+              Runs
+            </span>
+            {ALL_CALENDAR_RUN_LEGEND_KEYS.map((key) => (
+              <LegendDot
+                key={key}
+                className={RUN_LEGEND_DOT_CLASS[key]}
+                label={calendarRunLegendLabel(key)}
+              />
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span className="text-[10px] font-label font-medium uppercase tracking-[0.12em] text-muted-2">
+              Posts
+            </span>
           {(Object.keys(STATUS_FILTER_CHIP_CLASS) as CalendarFilterKey[])
             // A filter this viewer's calendar can never make dim anything is not
             // offered at all — see calendarFilterKeyMatchable for which those are
@@ -2513,13 +2632,14 @@ export function RunCalendar({
                 onClick={() => toggleStatus(key)}
               />
             ))}
+          </div>
         </div>
         )}
       </div>
 
       {/* Day detail */}
       {selectedKey && (
-        <div className="rounded-[var(--radius)] border border-border bg-surface-2/40 p-4">
+        <div ref={dayDetailRef} className="rounded-[var(--radius)] border border-border bg-surface-2/40 p-4">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold">{selectedLabel}</h3>
             <button onClick={() => setSelectedKey(null)} className="rounded-md p-1 text-muted-2 hover:bg-surface-2 hover:text-foreground" aria-label="Close">
@@ -2642,6 +2762,17 @@ export function RunCalendar({
     </div>
   );
 }
+
+/**
+ * The run legend's SWATCHES, beside the filter chips' own map for the same
+ * reason: calendar-kind owns the words, this file owns how they look. A Record
+ * so a new `CalendarRunLegendKey` is a compile error here rather than a key the
+ * legend silently stops drawing.
+ */
+const RUN_LEGEND_DOT_CLASS: Record<CalendarRunLegendKey, string> = {
+  scheduledRun: "border border-dashed border-foreground/40 bg-foreground/[0.03]",
+  completedRun: "bg-foreground/[0.07]",
+};
 
 function LegendDot({ className, label }: { className: string; label: string }) {
   return (

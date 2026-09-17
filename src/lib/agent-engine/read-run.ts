@@ -131,3 +131,14 @@ export async function readAgentEngineRun(runId: string): Promise<AgentEngineRunV
 
   return { run, steps, ...(pendingGate ? { pendingGate } : {}) };
 }
+
+/**
+ * Just the run doc — for the client's progress poll, which reads it every four
+ * seconds per watched run. `readAgentEngineRun` also reads every step's
+ * `output` and the gate payload, which the poll never uses: its status
+ * predicates read `run` alone and the headline needs `run.currentStepId`.
+ */
+export async function readAgentEngineRunRecord(runId: string): Promise<AgentEngineRunRecord | undefined> {
+  const snap = await adminDb().collection("agentEngineRuns").doc(runId).get();
+  return snap.exists ? (snap.data() as AgentEngineRunRecord) : undefined;
+}

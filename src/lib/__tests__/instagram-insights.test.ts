@@ -8,6 +8,8 @@ import {
 } from "@/lib/integrations/instagram-insights";
 import { TokenExpiredError } from "@/lib/integrations/publishers";
 
+vi.mock("server-only", () => ({}));
+
 const TOKEN = "EAAtest-system-user-token";
 const PAGE_ID = "1234567890";
 const IG_USER_ID = "17841400000000000";

@@ -34,7 +34,7 @@ import { renderToStaticMarkup } from "react-dom/server";
  */
 
 vi.mock("server-only", () => ({}));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }), usePathname: () => "/" }));
 
 import { fireWindowExpired, SETUP_FIRE_GRACE_MS } from "@/components/setup-fire-window";
 import { BlogAgentIntake } from "@/components/blog-agent-intake";
@@ -201,7 +201,14 @@ describe("a seat's voice build is held by the press alone", () => {
     join(process.cwd(), "src/components/linkedin-agent-intake.tsx"),
     "utf8",
   );
-  const seatSetup = src.slice(src.indexOf("function SeatSetup"), src.indexOf("function RequiredMark"));
+  // SCRUM-412: this used to slice to `function RequiredMark`, which moved into
+  // components/intake-field.tsx. `indexOf` answered -1 and the slice quietly
+  // became the whole file, so every assertion below was reading the wrong text -
+  // one of them then failed on an unrelated `runInFlight`. Anchored on the next
+  // top-level declaration instead, found rather than named.
+  const seatSetupAt = src.indexOf("function SeatSetup");
+  const nextDecl = src.slice(seatSetupAt + 1).search(/\n(?:export )?(?:function|const) /);
+  const seatSetup = src.slice(seatSetupAt, seatSetupAt + 1 + nextDecl);
 
   it("uses the same window, so a failed voice run gives the button back", () => {
     expect(seatSetup).toContain("useSetupFireWindow(setupRunInFlight)");

@@ -8,9 +8,11 @@ import {
   bindTemplate,
   createPromptVersion,
   getActivePrompt,
+  getAgent,
   getRun,
   listAgents,
   listFeedback,
+  listModels,
   listTemplates,
   promoteFeedback,
   setAgentStatus,
@@ -85,6 +87,56 @@ describe("agents", () => {
     expect(page.hasMore).toBe(false);
     expect(page.total).toBe(1);
     expect(page.items[0]).not.toHaveProperty("agent_type");
+  });
+
+  it("carries each stage's engine facts (agent id, compiled default model, vendor) and a model's fallback", async () => {
+    // These are what let the Studio name the engine default per stage instead
+    // of one agent-wide "Sonnet", and what dispatch keys a stage override by.
+    capture(
+      json({
+        id: "newsletter-agent",
+        slug: "newsletter-agent",
+        name: "Newsletter",
+        status: "active",
+        stages: [
+          { id: "08b-plan-edition", label: "Plan", kind: "agent", skill_ref: "newsletter-plan@1", model_id: null, agent_id: "newsletter-plan", default_model: "claude-sonnet-4-6", vendor: "anthropic" },
+          { id: "09-draft-post", label: "Draft", kind: "agent", skill_ref: "newsletter-craft@6", model_id: "claude-opus-4-8-on-vertex", agent_id: "newsletter-draft", default_model: "claude-opus-4-8", vendor: "anthropic" },
+          { id: "10-verify-brand-compliance", label: "Verify", kind: "code" },
+        ],
+      }),
+    );
+    const agent = await getAgent("newsletter-agent");
+    expect(agent.stages[0]).toMatchObject({ agentId: "newsletter-plan", defaultModel: "claude-sonnet-4-6", vendor: "anthropic", modelId: null });
+    expect(agent.stages[1]).toMatchObject({ agentId: "newsletter-draft", defaultModel: "claude-opus-4-8", modelId: "claude-opus-4-8-on-vertex" });
+    // A code step, or a stage seeded before the fields existed, reads as null rather than as a guess.
+    expect(agent.stages[2]).toMatchObject({ kind: "code", agentId: null, defaultModel: null, vendor: null });
+
+    capture(
+      json({
+        items: [
+          { id: "gemini-2-5-pro", model_id: "gemini-2-5-pro", display_name: "Gemini 2.5 Pro", vendor: "google", availability: "available", provider_model_name: "gemini-2.5-pro", tiers: [], fallback: "None. Gemini is served by Vertex AI only." },
+          { id: "old-row", model_id: "old-row", display_name: "Seeded before the field", vendor: "anthropic", availability: "available", provider_model_name: "claude-3-haiku-20240307", tiers: [] },
+        ],
+        limit: 100,
+        offset: 0,
+        has_more: false,
+        total: 2,
+      }),
+    );
+    const models = await listModels();
+    expect(models.items[0]!.fallback).toBe("None. Gemini is served by Vertex AI only.");
+    expect(models.items[1]!.fallback).toBeNull();
+  });
+
+  it("sends a stage's engine facts back on an update, because the middleware replaces the stage list wholesale", async () => {
+    const sent = capture(json({ id: "x-agent", slug: "x-agent", name: "X", status: "active", stages: [] }));
+    await updateAgent("x-agent", {
+      stages: [
+        { id: "10-draft-post", label: "Draft", description: null, isGate: false, kind: "agent", skillRef: "x-craft@5", modelId: "claude-opus-4-8-on-vertex", agentId: "x-draft", defaultModel: "claude-sonnet-4-6", vendor: "anthropic" },
+      ],
+    });
+    const body = sent().body as { stages: Array<Record<string, unknown>> };
+    expect(body.stages[0]).toMatchObject({ id: "10-draft-post", model_id: "claude-opus-4-8-on-vertex", agent_id: "x-draft", default_model: "claude-sonnet-4-6", vendor: "anthropic" });
   });
 
   it("reports total as null when the backend cannot count cheaply", async () => {

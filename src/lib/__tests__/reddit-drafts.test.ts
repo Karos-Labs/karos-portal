@@ -391,26 +391,49 @@ describe("the Reddit intake follows them too", () => {
     join(process.cwd(), "src/components/reddit-agent-intake.tsx"),
     "utf8",
   );
+  /**
+   * SCRUM-412: the run row was written out once per intake family, six times,
+   * byte identical apart from the empty state's noun. It is now one component
+   * that all six mount, so the formatter pin below reads THAT - and the Reddit
+   * half of the claim is that Reddit still mounts it, asserted first.
+   */
+  const rows = readFileSync(
+    join(process.cwd(), "src/components/intake-run-rows.tsx"),
+    "utf8",
+  );
+
+  it("renders its run history through the one shared component", () => {
+    expect(intake).toContain("<IntakeRunRows");
+    expect(intake).toContain('family="reddit"');
+    // And not a second copy of it alongside.
+    expect(intake).not.toContain("Worked on your content");
+  });
 
   it("renders a run's state and date through the app's own helpers", () => {
-    expect(intake).toContain("<JobStatusBadge status={r.status} />");
+    expect(rows).toContain("<JobStatusBadge status={r.status} viewerIsClient={!isStaff} />");
     // Staff keep the generation date; a client gets the relative, outcome-worded
     // stamp instead (A3/A4 — four rows carrying one date is the batch tell).
     // intake-run-rows.test.ts owns that split; this pin only holds the
     // formatters, which is what it was written for.
-    expect(intake).toContain("`Run ${formatDate(r.createdAt)}`");
-    expect(intake).toContain("relativeTime(r.createdAt)");
-    // The raw database word and the ISO machine date, both gone.
-    expect(intake).not.toContain("· {r.status}");
-    expect(intake).not.toContain('new Date(r.createdAt).toISOString()');
+    expect(rows).toContain("`Run ${formatDate(r.createdAt)}`");
+    expect(rows).toContain("relativeTime(r.createdAt)");
+    // The raw database word and the ISO machine date, both gone - asked of the
+    // shared component AND of Reddit's own file, since a surface could always
+    // print the raw word again beside the shared rows.
+    for (const src of [rows, intake]) {
+      expect(src).not.toContain("· {r.status}");
+      expect(src).not.toContain('new Date(r.createdAt).toISOString()');
+    }
   });
 
   it("sends clients to the archive only for work that reaches it (F28)", () => {
     // F149 filters the client archive to approved, non-future items, so freshly
     // generated work is not there and a client sent looking for it finds an
-    // empty page. The copy names the approval step and links the destination —
-    // it no longer names the unit the work ships in.
-    expect(intake).toContain("Once your Karos team has approved the replies");
+    // empty page. The copy says the reply arrives there later and links the
+    // destination, without naming the approval step (a client is never told
+    // about it) or the unit the work ships in.
+    expect(intake.replace(/\s+/g, " ")).toContain("happens on the reply itself once it is in");
+    expect(intake).not.toContain("Karos team has approved");
     // The URL itself is no longer written here. This page is staff-reachable and
     // `?tab=` is read only by ProgressView, which TasksBody mounts only with a
     // client in scope — so a staff viewer at the flat /tasks got the

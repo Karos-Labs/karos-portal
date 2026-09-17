@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as data from "@/lib/data";
 import * as agentServiceClient from "@/lib/agent-service/client";

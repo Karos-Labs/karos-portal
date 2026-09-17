@@ -6,6 +6,8 @@ import { Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { AgentScheduleModal, CancelRunControl } from "@/components/custom-agents";
+import { AgentRunProgress } from "@/components/client-agents/run-progress";
+import { useRunWatch, useShowRunInPage } from "@/components/run-watch";
 import { ClientAgentFeedbackModal } from "./feedback-modal";
 import { OptionsRow, StaffSlotNotes, TemplateRows, WeekStrip } from "./live-card";
 import { SlotNoteModal } from "./slot-note-modal";
@@ -14,7 +16,7 @@ import { noRunnableTemplateReason, visibleTemplates } from "@/lib/client-agent-r
 import { runClientAgentTemplateAction } from "@/lib/actions/client-agent-run-actions";
 import { OUTPUT_NOUN, type AgentArchetype } from "@/lib/agent-archetype";
 import type { ClientAgentCardRow, TemplateDetail } from "./types";
-import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
+import { STAFF_RUN_PRICE_NOTE } from "@/lib/credits";
 
 
 /**
@@ -123,6 +125,23 @@ export function AgentDetailPanel({
     firstBlock?.reason ??
     noRunnableTemplateReason({ optionsMode: agent.optionsMode, hasTemplates: templates.length > 0 });
 
+  const { watch: watchRun } = useRunWatch();
+  // The run banner below is this page's view of the run; the dock skips it
+  // while the banner is up.
+  useShowRunInPage(agent.activeRun?.id ?? null);
+
+  // Into the same watch the run form uses, so the corner dock carries a run
+  // once the reader leaves; the banner below claims it while it is up. Both
+  // ways to run from this page (Create and a format's Run now) come here.
+  function watchStarted(jobId: string) {
+    watchRun({
+      jobId,
+      agentName: agent.displayName,
+      noun,
+      href: viewerIsClient ? `/clients/${agent.clientId}` : `/jobs/${jobId}`,
+    });
+  }
+
   function createPost() {
     if (!runnableTemplate) return;
     setError(null);
@@ -134,8 +153,12 @@ export function AgentDetailPanel({
         templateKey: runnableTemplate.key,
       });
       setRunning(false);
-      if (result.error) setError(result.error);
-      else router.refresh();
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      if (result.jobId) watchStarted(result.jobId);
+      router.refresh();
     });
   }
 
@@ -145,18 +168,13 @@ export function AgentDetailPanel({
           fires stay invisible - a "ran 2 hours ago · 7 drafts" line beside a
           week of daily slots is the tell that the days are a batch (§4.1). */}
       {agent.activeRun && (
-        <div className="rounded-[var(--radius)] border border-info/30 bg-info/10">
-          <div className="flex items-start gap-2 px-4 py-3">
-            <span
-              className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-info animate-pulse-neon"
-              aria-hidden="true"
-            />
-            <p className="text-xs text-info">
-              Making your {agent.activeRun.templateName ?? "next"} {noun} now. This takes{" "}
-              {RUN_ESTIMATE_SENTENCE}. Your Karos team reviews it when it lands, and finished work
-              appears in your Workspace once approved.
-            </p>
-          </div>
+        <div className="space-y-2">
+          {/* The same bar every run surface uses, so a run looks the same
+              wherever it is watched. */}
+          <AgentRunProgress
+            outcome="working"
+            headline={`Making your ${agent.activeRun.templateName ?? "next"} ${noun}`}
+          />
           {/* F30, restored. The cancel used to ride the generic run rows, and
               CD-G1 removed those from the client's branch - leaving a client
               who mis-fired a billable twenty-minute run with no way to stop it
@@ -177,7 +195,7 @@ export function AgentDetailPanel({
             <p className="text-sm text-foreground">Create a new {noun}</p>
             <p className="mt-0.5 text-xs text-muted-2">
               {runnableTemplate
-                ? `Makes one ${runnableTemplate.name} ${noun} now. It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews it before it reaches your Workspace.`
+                ? `Makes one ${runnableTemplate.name} ${noun} now.`
                 : `Making a ${noun} now is not available yet.`}
             </p>
             {/* Portal revamp, Surface 03: the cost is a step on the page, never
@@ -188,13 +206,15 @@ export function AgentDetailPanel({
                 {/* Two registers, one line (review wave, 2026-09). The line used
                     to be absent for staff, because the row carried no price for
                     them — so this card and LegacyAgentPanel, on the same page,
-                    disagreed about whether a run has a cost worth stating. The
-                    orange coin stays with the reader who is actually spending;
-                    the staff copy names whose credits move. */}
-                <Icon
-                  name="Coins"
-                  className={`h-3 w-3 ${viewerIsClient ? "text-neon" : "text-muted-2"}`}
-                />
+                    disagreed about whether a run has a cost worth stating. Only
+                    the copy differs now: the staff register names whose credits
+                    move.
+
+                    round 6 (ruling 2): the coin was `text-neon` for a client, a
+                    second orange inches from this card's one accent button, and
+                    an icon chip is ink or grey by rule. One class for both
+                    readers, so there is no per-viewer branch left to drift. */}
+                <Icon name="Coins" className="h-3 w-3 text-muted-2" />
                 {/* "About" only when the price is a hold that settles to real
                     usage (credits rework, 2026-09) — resolved on the server and
                     carried on the row, because a client component cannot read a
@@ -203,7 +223,7 @@ export function AgentDetailPanel({
                     way. */}
                 {agent.runCostIsEstimate ? "About" : "Costs"} {agent.runCost} credit
                 {agent.runCost === 1 ? "" : "s"}
-                {!viewerIsClient && " · billed to the client"}
+                {!viewerIsClient && STAFF_RUN_PRICE_NOTE}
               </p>
             )}
           </div>
@@ -213,7 +233,6 @@ export function AgentDetailPanel({
             loading={running}
             onClick={createPost}
           >
-            <Icon name="Sparkles" className="h-4 w-4" />
             {/* THE LABEL NAMES THE FORMAT (flow audit 2026-09, R15). Two
                 controls start a run on this page — this one and each format
                 row's "Run now" — and this one used to read "Create new post"
@@ -235,11 +254,13 @@ export function AgentDetailPanel({
             {/* The intake rung links the page that fixes it, the same way the
                 launch card does for its own intake block. */}
             {firstBlock?.code === "setup_missing" && agent.setupHref && (
+              // A quiet text link, and no arrow character after the label
+              // (round 6 rule 3).
               <a
                 href={agent.setupHref}
-                className="mt-1 inline-block text-xs text-neon hover:underline"
+                className="focus-ring mt-1 inline-block text-xs text-muted hover:text-foreground hover:underline"
               >
-                {agent.setupLabel ?? "Your agent details"} →
+                {agent.setupLabel ?? "Your agent details"}
               </a>
             )}
             {firstBlock?.code === "credits_short" && viewer && (
@@ -296,6 +317,7 @@ export function AgentDetailPanel({
               setFeedback({ scope: "template", key: template.key, name: template.name })
             }
             onError={setError}
+            onRunStarted={watchStarted}
           />
         )}
       </section>
@@ -386,7 +408,7 @@ export function AgentDetailPanel({
 function SectionHeading({ title, hint }: { title: string; hint?: string }) {
   return (
     <div className="mb-3">
-      <h2 className="font-mono text-sm uppercase tracking-[0.1em] text-muted">{title}</h2>
+      <h2 className="font-label text-sm uppercase tracking-[0.1em] text-muted">{title}</h2>
       {hint && <p className="mt-1 text-xs text-muted-2">{hint}</p>}
     </div>
   );

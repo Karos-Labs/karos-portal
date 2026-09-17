@@ -1,10 +1,17 @@
 import Link from "next/link";
-import { Card, CardTitle, Badge } from "@/components/ui";
+import { Badge, buttonClass, Card, CardTitle } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { relativeTime } from "@/lib/utils";
 import { assetStatusLabel } from "@/lib/asset-status-copy";
 import { ASSET_TYPE_LABEL } from "@/lib/asset-type-copy";
-import { clientDeliveryStamp, isInClientArchive } from "@/lib/asset-visibility";
+import { deliverableStamp, isInClientArchive } from "@/lib/asset-visibility";
+import {
+  GENERATED_TODAY_EMPTY_HINT,
+  GENERATED_TODAY_EMPTY_TITLE,
+  GENERATED_TODAY_EXPLAINER,
+  GENERATED_TODAY_TITLE,
+  generatedToday,
+} from "@/lib/generated-today";
 import { clientArchiveLink } from "@/lib/agent-intake-links";
 import { postKind } from "@/lib/calendar-kind";
 import { clientSafePublishError } from "@/lib/custom-agent-launch";
@@ -324,17 +331,20 @@ export function ClientHomeOverview({
   }
 
   if (deliverablesInReview.length > 0) {
+    const drafts = `${deliverablesInReview.length} deliverable${deliverablesInReview.length === 1 ? "" : "s"}`;
     items.push({
       key: "drafts",
       tone: "info",
       icon: "Sparkles",
-      label: `${deliverablesInReview.length} deliverable${deliverablesInReview.length === 1 ? "" : "s"} in review`,
+      label: viewerIsClient ? `${drafts} on the way` : `${drafts} in review`,
       // Approval is staff-only by design (approveAssetAction calls
       // requireStaff so a client can't approve and arm auto-publish),
       // so for a client this row reports status rather than asking for a
-      // sign-off, and carries no destination — see `draftsHref`.
+      // sign-off, and carries no destination — see `draftsHref`. It does not
+      // say who is checking them either: a client is never told about the
+      // review (the SOW rule Albert kept on 2026-09-10).
       hint: viewerIsClient
-        ? "Your Karos team is reviewing these. They'll appear in the archive when ready."
+        ? `They'll appear in ${archive.label} when ready.`
         : "Waiting on your approval before they can be scheduled.",
       ...(draftsHref ? { href: draftsHref, action: "Review drafts" } : {}),
     });
@@ -353,7 +363,23 @@ export function ClientHomeOverview({
 
   const [primary, ...rest] = items;
 
-  const stampOf = (a: Asset) => (viewerIsClient ? clientDeliveryStamp(a) : a.updatedAt ?? a.createdAt);
+  /**
+   * SCRUM-429. This was the FOURTH hand-derivation of the deliverable stamp,
+   * and the one that disagreed. `deliverableStamp`'s own docstring records the
+   * cleanup meant to end them - "three client components ... all three
+   * re-derived it by hand; two matched, assets-view did not" - and it missed
+   * this file, because this is a SERVER component and that sweep was looking at
+   * the client ones. It could have called the helper all along: asset-visibility
+   * is client-safe by design.
+   *
+   * The client branch matched. The STAFF branch did not: `updatedAt ??
+   * createdAt` here against `createdAt` in archive-view, assets-view and the
+   * agent detail page. So one asset read "2 days ago" on Home and "1 month ago"
+   * in Assets, to the same staff member about the same post - the defect
+   * SCRUM-424 fixed one surface over. The comment below already said "staff
+   * keep every asset, stamped at generation"; the code did not.
+   */
+  const stampOf = (a: Asset) => deliverableStamp(a, viewerIsClient);
   // A3/A4, the treatment its siblings already carry (archive-view, the agent
   // detail page). Two things were wrong with this list for a client.
   //
@@ -448,110 +474,175 @@ export function ClientHomeOverview({
         )}
       </Card>
 
-      {/* Recent activity */}
-      <Card className="flex min-w-0 flex-col">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <CardTitle className="flex min-w-0 items-center gap-2">
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon/10">
-              <Icon name="Activity" className="h-3.5 w-3.5 text-neon" />
-            </span>
-            Recent activity
-          </CardTitle>
-        </div>
+      {/* WHAT CAME OUT TODAY, or WHAT HAS BEEN DELIVERED - two questions, and
+          the reader decides which one this slot answers (SCRUM-417).
 
-        {recentAssets.length === 0 ? (
-          <div className="flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-3">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-3">
-              <Icon name="FolderOpen" className="h-4 w-4 text-muted-2" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-foreground">No deliverables yet</p>
-              <p className="text-xs text-muted-2">New assets will show up here as they land.</p>
-            </div>
+          A CLIENT gets "Generated today". Lola asked for it directly ("a widget
+          on the homepage where you can see everything you have generated that
+          day, after that it goes into the calendar") and the card that stood
+          here could not answer it: for a client, "Recent activity" is filtered
+          to `isInClientArchive` - approved, non-future, inside the 30-day
+          window - so a client who ran three agents this morning saw an EMPTY
+          card until a staff member approved the output, possibly tomorrow. That
+          card is not broken; it answers "what has been delivered", which is the
+          archive one screen over, and it was standing where the reader's actual
+          question goes.
+
+          STAFF KEEP THE SAME LIST, under the name it earns (SCRUM-429):
+          "Recently generated". Their set is every asset, stamped at generation,
+          which is genuinely the useful staff read and why it was not replaced
+          for both readers - that would have been a product change nobody asked
+          for. What changed for them is the title and the sort, both of which
+          used to describe something else.
+
+          ONE SLOT, not two cards side by side: Lola's word for this page was
+          "overwhelming", and two lists of assets that mostly disagree is how it
+          got that way. */}
+      {viewerIsClient ? (
+        <GeneratedTodayCard
+          assets={assets}
+          now={now}
+          agentLabelByAssetId={agentLabelByAssetId}
+          archiveHref={archive.href}
+          limit={recentActivityLimit}
+        />
+      ) : (
+        /* Recent activity */
+        <Card className="flex min-w-0 flex-col">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            {/* The orange chip stays (round 6, Albert 2026-09-06) — the third of
+                the three `bg-neon/10` heading chips Home carries. A heading glyph
+                is decoration; the accent ration is about CONTROLS. */}
+            <CardTitle className="flex min-w-0 items-center gap-2">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon/10">
+                <Icon name="Activity" className="h-3.5 w-3.5 text-neon" />
+              </span>
+              {/* SCRUM-429: "what is the point of this widget? It's unclear if
+                  it is showing recent posts or recent generations." For a
+                  client the answer was to replace it (SCRUM-417); for STAFF the
+                  honest answer is the title. This list is every asset, newest
+                  generation first, stamped at generation - so it says that.
+                  "Recent activity" is what a list is called when nobody has
+                  decided what it shows, and it was read exactly that way. */}
+              Recently generated
+            </CardTitle>
           </div>
-        ) : (
-          <ul className="mb-3 space-y-2">
-            {recentAssets.map((a) => {
-              // Same rule as the attention row above: a row links to the
-              // archive only when the archive would actually hold it, rather
-              // than landing the client on a screen that provably excludes the
-              // item they clicked. This used to test `status !== "draft"` - one
-              // of the archive's four rules - so a future-dated post, a launch
-              // deliverable, or a post already aged past the 30-day window all
-              // rendered as links to a list they are not in. One predicate,
-              // asked here instead of re-derived.
-              const inArchive = isInClientArchive(a, now);
-              const agentLabel = agentLabelByAssetId?.[a.id];
-              const body = (
-                <>
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-3">
-                    <Icon
-                      name={TYPE_ICON[a.type] ?? "FileText"}
-                      className="h-4 w-4 text-muted-2"
-                    />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-foreground">{a.title}</p>
-                    <p className="mt-0.5 text-xs text-muted-2">
-                      {agentLabel ? `${agentLabel} · ` : ""}
-                      {ASSET_TYPE_LABEL[a.type] ?? a.type} · {relativeTime(stampOf(a))}
-                    </p>
-                  </div>
-                  {/* The register, not the stored enum under CSS `capitalize` —
-                      which rendered "Published" to a client whose archive one
-                      click away said "Posted", and would have printed any new
-                      Firestore status verbatim. The tone map stays: a tone is
-                      presentation, a word is copy. */}
-                  <Badge tone={ASSET_STATUS_TONE[a.status] ?? "neutral"}>
-                    {assetStatusLabel(a.status, viewerIsClient)}
-                  </Badge>
-                </>
-              );
-              const base =
-                "flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2";
-              return (
-                <li key={a.id}>
-                  {inArchive ? (
-                    <Link href={archive.href} className={`${base} row-lift`}>
-                      {body}
-                    </Link>
-                  ) : (
-                    <div className={base}>{body}</div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
 
-        {/* The archive link, moved out of the header (2026-09).
-            It was a 12px link beside the heading — the least prominent thing on
-            the card and the only way off it — while the list silently stopped
-            at its limit with nothing saying more existed. At the foot of a list
-            it reads as the list's continuation, which is what it is, and it
-            names how many rows are behind it when it knows.
-            `mt-auto` so it sits at the bottom edge whichever card in the pair is
-            taller.
+          {recentAssets.length === 0 ? (
+            <div className="flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-3">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-3">
+                <Icon name="FolderOpen" className="h-4 w-4 text-muted-2" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground">No deliverables yet</p>
+                <p className="text-xs text-muted-2">New assets will show up here as they land.</p>
+              </div>
+            </div>
+          ) : (
+            <ul className="mb-3 space-y-2">
+              {recentAssets.map((a) => {
+                // Same rule as the attention row above: a row links to the
+                // archive only when the archive would actually hold it, rather
+                // than landing the client on a screen that provably excludes the
+                // item they clicked. This used to test `status !== "draft"` - one
+                // of the archive's four rules - so a future-dated post, a launch
+                // deliverable, or a post already aged past the 30-day window all
+                // rendered as links to a list they are not in. One predicate,
+                // asked here instead of re-derived.
+                const inArchive = isInClientArchive(a, now);
+                const agentLabel = agentLabelByAssetId?.[a.id];
+                const body = (
+                  <>
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-3">
+                      <Icon
+                        name={TYPE_ICON[a.type] ?? "FileText"}
+                        className="h-4 w-4 text-muted-2"
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-foreground">{a.title}</p>
+                      <p className="mt-0.5 text-xs text-muted-2">
+                        {agentLabel ? `${agentLabel} · ` : ""}
+                        {ASSET_TYPE_LABEL[a.type] ?? a.type} · {relativeTime(stampOf(a))}
+                      </p>
+                    </div>
+                    {/* The register, not the stored enum under CSS `capitalize` —
+                        which rendered "Published" to a client whose archive one
+                        click away said "Posted", and would have printed any new
+                        Firestore status verbatim. The tone map stays: a tone is
+                        presentation, a word is copy. */}
+                    <Badge tone={ASSET_STATUS_TONE[a.status] ?? "neutral"}>
+                      {assetStatusLabel(a.status, viewerIsClient)}
+                    </Badge>
+                  </>
+                );
+                /* TWO SHAPES, NOT ONE (round 6, rules 1 and 3). A row that opens
+                   the archive and a row that opens nothing wore the identical
+                   shell — border, `surface-2`, same padding — and the only
+                   difference was that one of them answered the mouse. The opener
+                   is now a full link row with the trailing chevron and
+                   `.focus-ring`; the inert row drops the border and the fill and
+                   sits on a divider, which is what rule 3 says a static box does
+                   when it cannot be a link. */
+                return (
+                  <li key={a.id}>
+                    {inArchive ? (
+                      <Link
+                        href={archive.href}
+                        className="row-lift focus-ring flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2"
+                      >
+                        {body}
+                        <Icon
+                          name="ChevronRight"
+                          className="h-3.5 w-3.5 shrink-0 text-muted-2"
+                          aria-hidden
+                        />
+                      </Link>
+                    ) : (
+                      <div className="flex items-center gap-3 border-b border-border px-3 py-2 last:border-b-0">
+                        {body}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
 
-            R7 (flow audit 2026-09): it said "See all activity", which is a
-            fifth name for the destination eight other controls call the
-            archive — and it goes to the same `/calendar?view=archive` as every
-            one of them. One vocabulary: `clientArchiveLink().linkLabel`.
-            R8: ChevronRight, the one trailing glyph a row that opens something
-            may carry. */}
-        <div className="mt-auto border-t border-border pt-3">
-          <Link
-            href={archive.href}
-            className="row-lift flex items-center justify-between gap-2 rounded-md border border-transparent px-3 py-2 text-xs font-medium text-muted hover:text-foreground"
-          >
-            <span className="min-w-0">
-              {archive.linkLabel}
-              {olderCount > 0 ? ` (${olderCount} more)` : ""}
-            </span>
-            <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0" />
-          </Link>
-        </div>
-      </Card>
+          {/* The archive link, moved out of the header (2026-09).
+              It was a 12px link beside the heading — the least prominent thing on
+              the card and the only way off it — while the list silently stopped
+              at its limit with nothing saying more existed. At the foot of a list
+              it reads as the list's continuation, which is what it is, and it
+              names how many rows are behind it when it knows.
+              `mt-auto` so it sits at the bottom edge whichever card in the pair is
+              taller.
+
+              R7 (flow audit 2026-09): it said "See all activity", which is a
+              fifth name for the destination eight other controls call the
+              archive — and it goes to the same `/calendar?view=archive` as every
+              one of them. One vocabulary: `clientArchiveLink().linkLabel`.
+              R8: ChevronRight, the one trailing glyph a row that opens something
+              may carry. */}
+          <div className="mt-auto border-t border-border pt-3">
+            {/* FILL-ONLY HOVER (round 6). It carried `row-lift`, whose whole job
+                is to lift a HAIRLINE to the accent — on a row whose border is
+                `transparent`, so the hover tinted a border that is not drawn and
+                the accent was spent on nothing. This row has no border, so its
+                hover is the fill step alone. */}
+            <Link
+              href={archive.href}
+              className="focus-ring flex items-center justify-between gap-2 rounded-md px-3 py-2 text-xs font-medium text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+            >
+              <span className="min-w-0">
+                {archive.linkLabel}
+                {olderCount > 0 ? ` (${olderCount} more)` : ""}
+              </span>
+              <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0" />
+            </Link>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
@@ -599,6 +690,13 @@ export function failedPublishText(asset: Asset, viewerIsClient: boolean): string
  * rows below, which is the hierarchy doing the work rather than the copy.
  *
  * The button renders only with a destination — see `AttentionItem.href`.
+ *
+ * IT IS AN `outline` CONTROL, WITH NO GLYPH (round 6, rule 2). It was a
+ * hand-rolled box whose border turned orange on hover, with an `ArrowRight`
+ * after its label — a third trailing glyph for one meaning, on a screen whose
+ * one orange belongs to the ladder's button. Home has no accent control once the
+ * ladder is done, and that is deliberate: nothing on this card is the step that
+ * moves the client forward.
  */
 function PrimaryAttention({ item }: { item: AttentionItem }) {
   const tone = TONE_CLASS[item.tone];
@@ -615,35 +713,39 @@ function PrimaryAttention({ item }: { item: AttentionItem }) {
         </div>
       </div>
       {item.href && item.action && (
-        <Link
-          href={item.href}
-          className={`mt-3 inline-flex items-center gap-1.5 rounded-md border ${tone.border} bg-surface px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-neon/50 hover:bg-surface-2`}
-        >
+        <Link href={item.href} className={`mt-3 ${OUTLINE_LINK_CLASS}`}>
           {item.action}
-          <Icon name="ArrowRight" className="h-3.5 w-3.5" />
         </Link>
       )}
     </div>
   );
 }
 
+/** `Button variant="outline"`'s own recipe on an anchor: `Button` is a real
+ *  <button> and an anchor cannot nest one. READ from `buttonClass` (round 6)
+ *  rather than restated. */
+const OUTLINE_LINK_CLASS = buttonClass({ variant: "outline", size: "sm" });
+
+/** The shell a row that OPENS something wears. A row that opens nothing does not
+ *  wear it — see `AttentionRow`. */
 const ATTENTION_ROW_BASE =
   "flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5";
 
 /**
- * A secondary attention item: one compact line, count first.
+ * A secondary attention item: the count, and the one line saying why.
  *
- * The HINT IS GONE from these rows (2026-09) and that is the "less text-heavy"
- * half of the pass. Below the primary panel the hints were four more sentences
- * of explanation for items the reader has already been told are not the urgent
- * one; the count and its icon are what a scan needs, and the full sentence
- * arrives when the item reaches the top slot. It is kept as the row's `title`
- * so it is still one hover away and reaches a screen reader.
+ * THE HINT IS RENDERED (round 6). It was moved into the row's `title` in
+ * 2026-09 to make the card less text-heavy, which is hover-only for anyone
+ * reading with their eyes on a mouse and invisible on a phone — and on the two
+ * rows that have NO destination it was the only thing on the card explaining
+ * why nothing happens when you press them. A row that reports has to say what
+ * it is reporting.
  *
  * `href` is still optional and still honest: a row whose items have no screen
- * this reader can open is a plain status line, with no arrow and no hover
- * affordance, so it does not promise a destination it cannot deliver
- * (F97 × F149).
+ * this reader can open is a plain status line, with no chevron and no hover
+ * affordance, and per rule 3 it does not wear the link's shell either — it
+ * drops the border and the fill and sits on a divider, so it does not promise a
+ * destination it cannot deliver (F97 × F149).
  */
 function AttentionRow({ item }: { item: AttentionItem }) {
   const tone = TONE_CLASS[item.tone];
@@ -652,7 +754,10 @@ function AttentionRow({ item }: { item: AttentionItem }) {
       <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${tone.chip}`}>
         <Icon name={item.icon} className={`h-3.5 w-3.5 ${tone.text}`} />
       </div>
-      <p className="min-w-0 flex-1 text-sm text-foreground">{item.label}</p>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm text-foreground">{item.label}</p>
+        <p className="mt-0.5 text-xs leading-relaxed text-muted-2">{item.hint}</p>
+      </div>
       {/* R8 (flow audit 2026-09): ChevronRight, not ArrowRight. The portal had
           three trailing glyphs for one meaning; a row that opens something now
           carries exactly one, and it is the chevron the action rows and the
@@ -664,14 +769,159 @@ function AttentionRow({ item }: { item: AttentionItem }) {
   return (
     <li>
       {item.href ? (
-        <Link href={item.href} title={item.hint} className={`${ATTENTION_ROW_BASE} row-lift`}>
+        <Link href={item.href} className={`${ATTENTION_ROW_BASE} row-lift focus-ring`}>
           {body}
         </Link>
       ) : (
-        <div title={item.hint} className={ATTENTION_ROW_BASE}>
+        <div className="flex items-center gap-3 border-b border-border px-3 py-2.5 last:border-b-0">
           {body}
         </div>
       )}
     </li>
+  );
+}
+
+/* ─────────────────────── "Generated today" (SCRUM-417) ─────────────────────── */
+
+/**
+ * The client's answer to "what did my agents make today", and the sentence that
+ * says where it goes next.
+ *
+ * WHY IT IS CLIENT-ONLY. Staff read every asset stamped at generation on the
+ * card this replaces, and that is the right staff read. This card exists
+ * because the CLIENT's version of that card was filtered to
+ * `isInClientArchive` and therefore could not contain anything made today.
+ *
+ * WHY DRAFTS APPEAR HERE, when A3/A4 deliberately removed them from "Recent
+ * activity". That ruling was about a list sorted by DELIVERY stamp: a draft's
+ * delivery stamp is the fire, so five drafts read "Untitled · 3 hours ago" and
+ * published the shape of the generation run as if it were delivered work. The
+ * frame here is different and stated in the heading - the reader asked what came
+ * out today - and every row carries its real status through `assetStatusLabel`,
+ * so nothing claims to be delivered. The other half of that ruling is KEPT: the
+ * list is capped and says how many rows are behind it, because a count is the
+ * honest way to report a batch.
+ *
+ * A ROW LINKS ONLY WHERE ITS DESTINATION HOLDS IT - `isInClientArchive`, the
+ * same predicate the sibling card uses, asked rather than re-derived. Today's
+ * drafts are exactly the rows that are NOT in the archive yet, so most of them
+ * are inert, and that is honest: the archive would provably exclude them. This
+ * is the phantom-destination rule the epic has now applied four times.
+ */
+function GeneratedTodayCard({
+  assets,
+  now,
+  agentLabelByAssetId,
+  archiveHref,
+  limit,
+}: {
+  assets: Asset[];
+  now: number;
+  agentLabelByAssetId?: Record<string, string>;
+  archiveHref: string;
+  limit: number;
+}) {
+  const today = generatedToday(assets, now);
+  const shown = today.slice(0, limit);
+  const hidden = today.length - shown.length;
+
+  return (
+    <Card className="flex min-w-0 flex-col">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <CardTitle className="flex min-w-0 items-center gap-2">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon/10">
+            <Icon name="Sparkles" className="h-3.5 w-3.5 text-neon" />
+          </span>
+          {GENERATED_TODAY_TITLE}
+        </CardTitle>
+        {today.length > 0 && <Badge tone="neutral">{today.length}</Badge>}
+      </div>
+
+      {/* THE ONE-LINE EXPLANATION Lola asked for, and the actual fix to her
+          confusion: it is what connects this widget, the calendar widget and
+          the assets page into one story instead of three lists. Above the list
+          rather than under it - a reader needs the frame before the rows, not
+          after. */}
+      <p className="mb-4 text-xs leading-relaxed text-muted">{GENERATED_TODAY_EXPLAINER}</p>
+
+      {shown.length === 0 ? (
+        <div className="flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-3">
+            <Icon name="Clock" className="h-4 w-4 text-muted-2" />
+          </div>
+          <div className="min-w-0">
+            {/* Not an error and not a scold: an agent on a weekly schedule
+                leaves this card empty five days out of seven, so it has to read
+                as normal on those days. */}
+            <p className="text-sm font-medium text-foreground">{GENERATED_TODAY_EMPTY_TITLE}</p>
+            <p className="text-xs text-muted-2">{GENERATED_TODAY_EMPTY_HINT}</p>
+          </div>
+        </div>
+      ) : (
+        <ul className="mb-3 space-y-2">
+          {shown.map((a) => {
+            const inArchive = isInClientArchive(a, now);
+            const agentLabel = agentLabelByAssetId?.[a.id];
+            const body = (
+              <>
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-3">
+                  <Icon name={TYPE_ICON[a.type] ?? "FileText"} className="h-4 w-4 text-muted-2" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-foreground">{a.title}</p>
+                  {/* `createdAt`, not the delivery stamp - see generated-today.ts.
+                      This is the one client-facing list that is about when the
+                      agent WORKED, which is what makes "today" mean anything. */}
+                  <p className="mt-0.5 text-xs text-muted-2">
+                    {agentLabel ? `${agentLabel} · ` : ""}
+                    {ASSET_TYPE_LABEL[a.type] ?? a.type} · {relativeTime(a.createdAt)}
+                  </p>
+                </div>
+                {/* The register, never the stored enum. `viewerIsClient` is
+                    hard-true here: this card has one reader. */}
+                <Badge tone={ASSET_STATUS_TONE[a.status] ?? "neutral"}>
+                  {assetStatusLabel(a.status, true)}
+                </Badge>
+              </>
+            );
+            /* Two shapes, round 6 rules 1 and 3, the same split the sibling
+               card makes: an opener is a full link row with the trailing
+               chevron, an inert row drops the border and the fill and sits on a
+               divider. */
+            return (
+              <li key={a.id}>
+                {inArchive ? (
+                  <Link
+                    href={archiveHref}
+                    className="row-lift focus-ring flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2"
+                  >
+                    {body}
+                    <Icon
+                      name="ChevronRight"
+                      className="h-3.5 w-3.5 shrink-0 text-muted-2"
+                      aria-hidden
+                    />
+                  </Link>
+                ) : (
+                  <div className="flex items-center gap-3 border-b border-border px-3 py-2 last:border-b-0">
+                    {body}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {/* The rest of the day as a COUNT, which is the half of the A3/A4 ruling
+          this card keeps: a list that silently stops at its limit states that
+          the limit is all there was. Not a link - the archive does not hold
+          today's drafts, so "see the rest" would go somewhere they are not. */}
+      {hidden > 0 && (
+        <p className="mt-auto border-t border-border px-3 pt-3 text-xs text-muted">
+          {`and ${hidden} more today`}
+        </p>
+      )}
+    </Card>
   );
 }

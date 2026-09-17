@@ -7,6 +7,7 @@ import { Icon } from "@/components/icon";
 import { normalizeDashes } from "@/lib/text-utils";
 import { resolveAgentEngineGateAction } from "@/lib/actions";
 import type { AgentEngineStyleEdit } from "@/lib/agent-engine/types";
+import { CLIP_REVIEW_KEYS, describeBudgetPlan, formatClipDuration, formatUsd, readClipReview, summarisePlateSources } from "@/lib/agent-engine/clip-review";
 
 /**
  * The human-approval action for an agent-engine run paused at
@@ -323,6 +324,13 @@ export function AgentEngineGateApproval({
   const renderTokens = readRenderTokens(fields["renderTokens"]);
   const styleDirectiveOutcome = readStyleDirectiveOutcome(fields["styleDirectiveOutcome"]);
   const styleVariation = readStyleVariation(fields["styleVariation"]);
+  /**
+   * A short-video gate (tiktok-agent's `11-clip-review`): the clip itself,
+   * its cost against the ceiling, where its footage came from, and the
+   * visual QA's read. Until 2026-09-09 the reviewer got `videoUrl` as a bare
+   * link and `plateSources`/`visualQa`/`script` as collapsed JSON.
+   */
+  const clip = readClipReview(fields);
 
   /** A typed-but-invalid hex in the Design block — blocks every decision until fixed or reset, rather than silently dropping the pick server-side. */
   const hasInvalidDesignInput = DESIGN_ROLES.some(({ key }) => {
@@ -428,6 +436,7 @@ export function AgentEngineGateApproval({
   const structured: Array<[string, unknown]> = [];
   for (const [key, value] of Object.entries(fields)) {
     if (SUPPRESSED_KEYS.has(key) || value === null || value === undefined) continue;
+    if (clip !== undefined && CLIP_REVIEW_KEYS.has(key)) continue;
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
       facts.push([labelForKey(key), String(value)]);
     } else {
@@ -461,8 +470,8 @@ export function AgentEngineGateApproval({
               .sort((a, b) => a.n - b.n)
               .map((image) =>
                 image.url?.startsWith("https://") ? (
-                  // eslint-disable-next-line @next/next/no-img-element -- a
-                  // signed GCS URL, re-signed per run; not a Next/Image asset.
+                  // A signed GCS URL, re-signed per run; not a Next/Image asset.
+                  // eslint-disable-next-line @next/next/no-img-element
                   <img
                     key={image.n}
                     src={image.url}
@@ -481,6 +490,139 @@ export function AgentEngineGateApproval({
                 ),
               )}
           </div>
+        </div>
+      )}
+
+      {/* A short-video gate: the clip, playable, first — the thing being
+          approved — then the facts a reviewer needs beside the play button:
+          what it cost against its ceiling and how the plan was kept under it,
+          which shots are real footage and which are generated stills, whether
+          there is a music bed, what the visual QA said, and the script. */}
+      {clip && (
+        <div className="space-y-2 rounded-md border border-border bg-surface p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Icon name="Video" className="h-4 w-4 shrink-0 text-muted" />
+            <span className="text-sm font-medium">
+              {clip.format === "commentary-clip" ? "Commentary clip" : clip.script?.format === "text-led" ? "Original short · text-led" : "Original short"}
+            </span>
+            {clip.durationSeconds !== undefined && <Badge tone="neutral">{formatClipDuration(clip.durationSeconds)}</Badge>}
+            {clip.voiceover !== undefined && <Badge tone="neutral">{clip.voiceover ? "Voiceover" : "Silent"}</Badge>}
+            {clip.sourceTier && <Badge tone="neutral">{labelForKey(clip.sourceTier)}</Badge>}
+            {clip.flagged && <Badge tone="warning">Flagged by visual QA</Badge>}
+          </div>
+          {clip.videoUrl ? (
+            // A signed GCS URL, re-signed per run; played in place so the
+            // reviewer never approves a clip sight-unseen.
+            <video controls preload="metadata" src={clip.videoUrl} className="mx-auto max-h-[560px] w-auto rounded-md border border-border bg-black" />
+          ) : (
+            <p className="text-xs text-muted-2">
+              The clip could not be uploaded for preview on this deploy. Do not approve it unwatched: open the run&apos;s files first.
+            </p>
+          )}
+          {(clip.costSoFarUsd !== undefined || clip.maxCostUsd !== undefined) && (
+            <p className="text-xs text-muted">
+              Cost so far {clip.costSoFarUsd !== undefined ? formatUsd(clip.costSoFarUsd) : "unknown"}
+              {clip.estimatedCostUsd !== undefined ? ` · estimated ${formatUsd(clip.estimatedCostUsd)}` : ""}
+              {clip.maxCostUsd !== undefined ? ` · ceiling ${formatUsd(clip.maxCostUsd)}` : ""}
+              {describeBudgetPlan(clip) !== undefined ? ` · ${describeBudgetPlan(clip)}` : ""}
+            </p>
+          )}
+          {(clip.plateSources !== undefined || clip.music !== undefined) && (
+            <p className="text-xs text-muted">
+              {clip.plateSources !== undefined ? `Footage: ${summarisePlateSources(clip.plateSources)} (${clip.plateSources.length} shot${clip.plateSources.length === 1 ? "" : "s"})` : ""}
+              {clip.plateSources !== undefined && clip.music !== undefined ? " · " : ""}
+              {clip.music !== undefined ? (clip.music.applied ? "Music bed laid" : `No music${clip.music.note ? ` (${normalizeDashes(clip.music.note)})` : ""}`) : ""}
+            </p>
+          )}
+          {/* Why this short is stock footage and not the client's own: what the
+              attached-media, owned-footage and web-harvest tiers each said. A
+              sourcePool naming a show that does not exist where the harvester
+              searches shows up here instead of as a silent fall to stock. */}
+          {clip.sourceNotes && clip.sourceNotes.length > 0 && (
+            <details className="text-xs text-muted">
+              <summary className="cursor-pointer">Why stock footage, not the client&apos;s own</summary>
+              <ul className="mt-1 space-y-0.5 pl-4">
+                {clip.sourceNotes.map((n) => (
+                  <li key={n}>{normalizeDashes(n)}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {/* What the engine already did about footage the QA disliked: which
+              beats it re-sourced and whether the re-render scored clean, so the
+              reviewer knows the swap happened and does not ask for it again. */}
+          {clip.repick !== undefined && (
+            <p className="text-xs text-muted">
+              {clip.repick.beats.length > 0 ? `Footage re-sourced after QA (beat ${clip.repick.beats.join(", ")}): ` : "Footage re-source after QA: "}
+              {normalizeDashes(clip.repick.note)}
+            </p>
+          )}
+          {/* Beats whose footage the QA model said does not fit the line said
+              over it: the one thing a reviewer can act on with "request changes"
+              (name the beat), shown whether or not the clip passed overall. */}
+          {clip.visualQa?.weakBeats && clip.visualQa.weakBeats.length > 0 && (
+            <div className="rounded-md border border-warning/40 bg-warning/5 px-2.5 py-1.5 text-xs">
+              <p className="font-medium text-warning">Footage that does not fit its line</p>
+              <ul className="mt-0.5 space-y-0.5 text-muted">
+                {clip.visualQa.weakBeats.map((b) => (
+                  <li key={b.index}>
+                    Beat {b.index} · {b.relevance}/10{b.note ? `: ${normalizeDashes(b.note)}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {clip.visualQa && !clip.visualQa.passed && (
+            <details className="rounded-md border border-warning/40 bg-warning/5" open>
+              <summary className="cursor-pointer px-2.5 py-1.5 text-xs font-medium text-warning">
+                Visual QA: {normalizeDashes(clip.visualQa.reason ?? "did not pass")}
+              </summary>
+              <ul className="space-y-0.5 border-t border-warning/30 p-2.5 text-[11px] leading-relaxed text-muted">
+                {clip.visualQa.evidence.map((line, i) => (
+                  <li key={i}>{normalizeDashes(line)}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {clip.script && (
+            <details className="rounded-md border border-border/60 bg-surface-2/40">
+              <summary className="cursor-pointer px-2.5 py-1.5 text-xs font-medium text-muted">
+                Script · {clip.script.beats.length} beat{clip.script.beats.length === 1 ? "" : "s"}
+              </summary>
+              <ol className="space-y-1.5 border-t border-border/60 p-2.5 text-xs leading-relaxed">
+                {clip.script.beats.map((beat, i) => (
+                  <li key={i} className="grid grid-cols-[1.5rem_1fr] gap-1">
+                    <span className="text-muted-2">{i + 1}.</span>
+                    <span>
+                      <span className="text-foreground">{normalizeDashes(beat.narration)}</span>
+                      {beat.onScreenText && <span className="block text-muted-2">On screen: {normalizeDashes(beat.onScreenText)}</span>}
+                      {/* One click writes the footage-only note the engine
+                          understands (agent-engine PR #98): the approved words
+                          stay, only this beat's clip is re-sourced. */}
+                      {clip.format === "original-short" && clip.script?.format !== "text-led" && (
+                        <button
+                          type="button"
+                          className="mt-0.5 block text-[11px] text-muted-2 underline disabled:opacity-50"
+                          disabled={pending}
+                          onClick={() => {
+                            const line = `Beat ${i + 1}'s footage does not fit the line.`;
+                            setNotes((n) => (n.includes(line) ? n : [n.trim(), line].filter((part) => part.length > 0).join(" ")));
+                          }}
+                        >
+                          Swap this beat&apos;s footage
+                        </button>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+              {clip.format === "original-short" && clip.script?.format !== "text-led" && (
+                <p className="border-t border-border/60 px-2.5 py-1.5 text-[11px] text-muted-2">
+                  A note that is only about footage keeps the approved words and re-sources the clips. Anything about the words goes back to the writer.
+                </p>
+              )}
+            </details>
+          )}
         </div>
       )}
 

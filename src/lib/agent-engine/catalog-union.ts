@@ -21,7 +21,14 @@ export interface EngineAgentCardModel {
   name: string;
   description: string | null;
   status: MiddlewareAgent["status"];
-  model: string | null;
+  /**
+   * The distinct models the workflow's model stages are compiled to run, in
+   * stage order. Read from each stage's `defaultModel`, never from the
+   * agent-level `model` field the engine does not read: that field was seeded
+   * as Sonnet for every agent, so the catalog said "Sonnet" for workflows
+   * whose drafting step runs on Opus and whose vision steps run on Gemini.
+   */
+  models: string[];
   tags: string[];
   /** lucide icon name; the card falls back when absent. */
   icon: string | null;
@@ -39,6 +46,15 @@ export interface EngineAgentCardModel {
  * `agents/` collection shares its name with karosCMO's since-removed in-app
  * engine and still holds one of its documents.
  */
+/** Each model stage's compiled default, de-duplicated, in workflow order. */
+export function stageModels(agent: Pick<MiddlewareAgent, "stages">): string[] {
+  const seen = new Set<string>();
+  for (const stage of agent.stages) {
+    if (stage.kind === "agent" && stage.defaultModel) seen.add(stage.defaultModel);
+  }
+  return [...seen];
+}
+
 export function buildEngineAgentCards(
   middlewareAgents: readonly MiddlewareAgent[],
 ): EngineAgentCardModel[] {
@@ -49,7 +65,7 @@ export function buildEngineAgentCards(
       name: agent.name || agent.slug,
       description: agent.description,
       status: agent.status,
-      model: agent.model,
+      models: stageModels(agent),
       tags: agent.tags,
       icon: agent.icon,
       category: agent.category,

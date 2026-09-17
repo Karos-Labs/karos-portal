@@ -53,6 +53,22 @@ const read = (rel: string) => readFileSync(path.join(REPO, rel), "utf8");
 /** The component that owns one family's intake surface — named by the family. */
 const surfaceOf = (family: AgentIntake["agent"]) => `src/components/${family}-agent-intake.tsx`;
 
+/**
+ * The archive link a surface renders, wherever it lives.
+ *
+ * SCRUM-412: LinkedIn's and X's feedback card moved into the shared
+ * `intake-feedback-box.tsx`, and the archive anchor moved with it. Reading only
+ * the family's own file would report the link as GONE from those two pages,
+ * which is the opposite of true - so read the family's file plus the shared
+ * section it mounts. Named by the mount, so a surface that stops mounting it
+ * has to answer for the link itself again.
+ */
+const FEEDBACK_BOX = "src/components/intake-feedback-box.tsx";
+const surfaceClosure = (family: AgentIntake["agent"]) => {
+  const own = read(surfaceOf(family));
+  return own.includes("<IntakeFeedbackBox") ? `${own}\n${read(FEEDBACK_BOX)}` : own;
+};
+
 const NOW = Date.UTC(2026, 7, 1, 12, 0, 0);
 
 function makeSeat(overrides: Partial<ClientSeat> = {}): ClientSeat {
@@ -313,20 +329,24 @@ describe("#85 — every row the band paints has somewhere to land", () => {
       expect(hrefValues(tag)).toEqual(["{intakeRowHref(view.href, row.id)}"]);
     }
 
-    // The hover border that made the old `<li>`s look clickable is on the thing
-    // that IS clickable — the Link on the plain branch, the `<details>` on the
+    // The hover that made the old `<li>`s look clickable is on the thing that IS
+    // clickable — the Link on the plain branch, the `<details>` on the
     // disclosure branch. Asserted as a count over the row block so neither shape
     // can lose it, and so it cannot drift onto some inner span again.
-    const hovers = block.match(/hover:border-neon\/40/g) ?? [];
+    //
+    // round 6: the hand-written `hover:border-neon/40` is the shared `row-lift`
+    // utility now (globals.css) — one fill step plus the accent hairline, the
+    // one hover a bordered interactive row gets portal-wide (rule 3).
+    const hovers = block.match(/row-lift/g) ?? [];
     expect(hovers.length, "each row shape wears the hover affordance").toBe(2);
     const detailsAt = elementOpensAt(block, "details");
     expect(detailsAt, "the answers row is not a disclosure").toBeGreaterThan(-1);
     expect(
       elementAt(block, "details", detailsAt)!.tag,
       "the disclosure is not the thing that looks clickable",
-    ).toContain("hover:border-neon/40");
+    ).toContain("row-lift");
     expect(
-      links.some((tag) => tag.includes("hover:border-neon/40")),
+      links.some((tag) => tag.includes("row-lift")),
       "the plain row's link is not the thing that looks clickable",
     ).toBe(true);
   });
@@ -421,7 +441,7 @@ describe("#90 — the archive link resolves for the viewer who is reading it", (
 
   it("leaves no hard-coded client-shaped archive URL on the three surfaces", () => {
     for (const family of ["x", "linkedin", "reddit"] as const) {
-      const code = stripComments(read(surfaceOf(family)));
+      const code = stripComments(surfaceClosure(family));
       expect(code, surfaceOf(family)).not.toContain('"/tasks?tab=archive"');
       expect(code, surfaceOf(family)).toContain("clientArchiveLink({ clientId, isStaff })");
     }
@@ -435,7 +455,7 @@ describe("#90 — the archive link resolves for the viewer who is reading it", (
     // returning with the URL left correct.
     for (const family of ["x", "linkedin", "reddit"] as const) {
       const rel = surfaceOf(family);
-      const links = anchorsRendering(stripComments(read(rel)), "{archive.label}");
+      const links = anchorsRendering(stripComments(surfaceClosure(family)), "{archive.label}");
       expect(links.length, `${rel}: nothing renders {archive.label}`).toBeGreaterThan(0);
       for (const link of links) {
         expect(link, `${rel}: {archive.label} is rendered outside any <a>`).not.toBeNull();

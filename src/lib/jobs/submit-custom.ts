@@ -84,7 +84,9 @@ import {
   X_SETUP_REQUIRED_PREFIX,
   BATCH_SIZE_FIELD_KEY,
   agentKeyMatchesClientSlug,
+  launchProfileFor,
   perClientAgentSlug,
+  requestSteersRun,
 } from "@/lib/custom-agent-launch";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { estimateAgentRunCredits } from "@/lib/credit-estimate";
@@ -93,6 +95,7 @@ import { maxPostsPerSubmission, scheduleLimitsFor } from "@/lib/scheduled-runs";
 import { logActivity } from "@/lib/actions/_shared";
 import { customRunStartedTitle } from "@/lib/activity-titles";
 import { mintJobToken } from "@/lib/mcp/job-token";
+import { webhookCallbackOrigin } from "@/lib/app-origin";
 import type {
   AppUser,
   Client,
@@ -408,11 +411,11 @@ export async function submitCustomAgentJob(
     return { error: "This run's price is not set up correctly — your Karos team can fix it." };
   }
 
-  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.APP_URL;
-  if (!appUrl) {
-    return { error: "AGENT_SERVICE_CALLBACK_URL (or APP_URL) must be set for webhook callbacks." };
-  }
-  const origin = appUrl.replace(/\/$/, "");
+  // SCRUM-332 (AU49) follow-up: one helper for what was four hand-written
+  // copies, one of which read a variable that is wired nowhere.
+  const callback = webhookCallbackOrigin();
+  if ("error" in callback) return { error: callback.error };
+  const origin = callback.origin;
 
   const contextFiles: AgentServiceContextFile[] = [];
   for (const itemId of input.contextItemIds ?? []) {
@@ -490,7 +493,17 @@ export async function submitCustomAgentJob(
       const seat = (await listClientSeats(input.clientId)).find((s) => s.id === v2Identity.seatId);
       if (seat) engineBriefValues = { ...engineBriefValues, requestedExecutiveName: seat.name };
     }
-    if (!isLinkedInSetupV2(agent.key) && isLinkedInV2Agent(agent.key)) {
+    // NEITHER RUNG APPLIES ON THE ENGINE PATH, the same carve-out the
+    // reputation branch below makes and for the same reason. agent-engine's
+    // `linkedin-agent` runs `00-channel-setup` as its own pre-flight: a run
+    // carries the filled form, the workflow records the charter if the channel
+    // has none and matches the executive by NAME, then drafts. Both rungs here
+    // read rows only the deleted agent-service webhook ever wrote (`liAgentState`
+    // "foundation", `seatVoiceProfiles`), so on this path they can never be
+    // satisfied — the client is refused forever for a press that cannot produce
+    // what is being asked for. The INTAKE rung above stays on both paths: the
+    // form is what the pre-flight resolves from.
+    if (!engineProductId && !isLinkedInSetupV2(agent.key) && isLinkedInV2Agent(agent.key)) {
       if (!(await hasLinkedInV2Setup(input.clientId))) {
         return {
           error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the LinkedIn agent card, which stands up the lanes, the voice and the first topics. Nothing has run.`,
@@ -553,7 +566,20 @@ export async function submitCustomAgentJob(
         error: `${NEWSLETTER_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent needs your send day and your compliance limits before it can write an issue. Nothing has run.`,
       };
     }
-    if (!isNewsletterSetupV2(agent.key) && !(await hasNewsletterV2Setup(input.clientId))) {
+    // And not on the engine path — for the reason this repo can support, which
+    // is NOT that `newsletter-agent` inlines an index stand-up the way LinkedIn
+    // and reputation document theirs (product-mapping.ts calls this one
+    // drafting only). It is that `newsletterAgentState` "issue-index" is an
+    // agent-service row nothing writes any more AND `karos-newsletter-setup-v2`
+    // has no engine route for the "Set it up" press to reach, so this rung is a
+    // permanent refusal rather than a wait. A run that genuinely still needs an
+    // index now fails honestly engine-side and refunds the client, which is
+    // strictly better than refusing every run forever.
+    if (
+      !engineProductId &&
+      !isNewsletterSetupV2(agent.key) &&
+      !(await hasNewsletterV2Setup(input.clientId))
+    ) {
       return {
         error: `${NEWSLETTER_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the newsletter agent card, which builds the voice, the topic list and the issue numbering. Nothing has run.`,
       };
@@ -573,7 +599,11 @@ export async function submitCustomAgentJob(
         error: `${BLOG_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent needs your own domains and your off-limits subjects before it can write. Nothing has run.`,
       };
     }
-    if (!isBlogSetupV2(agent.key) && !(await hasBlogV2Setup(input.clientId))) {
+    // Engine path exempt for the newsletter rung's reason above, not for a
+    // claim about what `blog-agent` does first: `blogAgentState` "post-index"
+    // is an agent-service row with no writer left, and `karos-blog-setup-v2`
+    // has no engine route either, so the press this asks for cannot land.
+    if (!engineProductId && !isBlogSetupV2(agent.key) && !(await hasBlogV2Setup(input.clientId))) {
       return {
         error: `${BLOG_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the blog agent card, which builds the voice, the cluster map and the post numbering. Nothing has run.`,
       };
@@ -845,7 +875,12 @@ export async function submitCustomAgentJob(
       // fix is that the page and the server must agree on it — otherwise the
       // dialog paints a field the server builds its input without. Pinned by
       // the page/server consistency sweep in product-mapping.test.ts.
-      inputs: { ...toEngineRunInput(engineBriefValues, engineProductId), ...engineExtraInputs },
+      inputs: {
+        ...toEngineRunInput(engineBriefValues, engineProductId, {
+          requestSteersRun: requestSteersRun(launchProfileFor(agent)),
+        }),
+        ...engineExtraInputs,
+      },
       createdBy: user.uid,
     });
     if ("error" in dispatched) {
@@ -1114,11 +1149,11 @@ export async function submitDynamicAgentJob(
     return { error: "Agent not found." };
   }
 
-  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.NEXT_PUBLIC_APP_URL;
-  if (!appUrl) {
-    return { error: "AGENT_SERVICE_CALLBACK_URL (or NEXT_PUBLIC_APP_URL) must be set for webhook callbacks." };
-  }
-  const origin = appUrl.replace(/\/$/, "");
+  // SCRUM-332 (AU49) follow-up: one helper for what was four hand-written
+  // copies, one of which read a variable that is wired nowhere.
+  const callback = webhookCallbackOrigin();
+  if ("error" in callback) return { error: callback.error };
+  const origin = callback.origin;
 
   // DECISION: specSnapshot is a deep clone taken right here, at job-creation
   // time — never the live spec at execution time. structuredClone (Node 18+)

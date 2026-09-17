@@ -25,9 +25,7 @@
 
 import "server-only";
 import { TokenExpiredError } from "@/lib/integrations/publishers";
-
-const GRAPH_API_VERSION = "v20.0";
-const GRAPH_API_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
+import { metaGraphUrl } from "@/lib/integrations/meta-graph";
 
 /** Thrown on Meta's "permission not yet approved" shape — distinct from a dead token: the fix is Meta approving App Review, not reconnecting anything. */
 export class MetaAccessNotGrantedError extends Error {
@@ -75,7 +73,7 @@ export async function resolveInstagramBusinessAccountId(
   pageId: string,
 ): Promise<string | null> {
   const res = await fetch(
-    `${GRAPH_API_BASE}/${encodeURIComponent(pageId)}?fields=instagram_business_account&access_token=${encodeURIComponent(systemUserToken)}`,
+    `${metaGraphUrl(encodeURIComponent(pageId))}?fields=instagram_business_account&access_token=${encodeURIComponent(systemUserToken)}`,
   );
   await assertGraphOk(res);
   const body = (await res.json()) as { instagram_business_account?: { id?: string } };
@@ -104,7 +102,7 @@ export async function listRecentInstagramMedia(
   limit = 25,
 ): Promise<InstagramMediaSummary[]> {
   const res = await fetch(
-    `${GRAPH_API_BASE}/${encodeURIComponent(igUserId)}/media` +
+    `${metaGraphUrl(`${encodeURIComponent(igUserId)}/media`)}` +
       `?fields=id,media_type,media_product_type,timestamp,permalink&limit=${limit}` +
       `&access_token=${encodeURIComponent(systemUserToken)}`,
   );
@@ -153,7 +151,7 @@ export async function fetchInstagramMediaInsights(
 ): Promise<InstagramMediaInsights> {
   const metrics = metricsForMediaType(mediaType);
   const res = await fetch(
-    `${GRAPH_API_BASE}/${encodeURIComponent(mediaId)}/insights?metric=${metrics.join(",")}` +
+    `${metaGraphUrl(`${encodeURIComponent(mediaId)}/insights`)}?metric=${metrics.join(",")}` +
       `&access_token=${encodeURIComponent(systemUserToken)}`,
   );
   await assertGraphOk(res);
@@ -182,7 +180,7 @@ export async function fetchInstagramMediaInsights(
  */
 export async function fetchInstagramFollowerCount(systemUserToken: string, igUserId: string): Promise<number | null> {
   const res = await fetch(
-    `${GRAPH_API_BASE}/${encodeURIComponent(igUserId)}?fields=followers_count&access_token=${encodeURIComponent(systemUserToken)}`,
+    `${metaGraphUrl(encodeURIComponent(igUserId))}?fields=followers_count&access_token=${encodeURIComponent(systemUserToken)}`,
   );
   await assertGraphOk(res);
   const body = (await res.json()) as { followers_count?: number };

@@ -18,6 +18,7 @@ import {
   mediaKindFor,
   mediaMimeFor,
 } from "@/lib/media-kinds";
+import { storageRefusalReason } from "@/lib/media-type";
 import { cn } from "@/lib/utils";
 
 /**
@@ -61,6 +62,23 @@ function probeDuration(file: File): Promise<number | undefined> {
   });
 }
 
+/**
+ * Read the reason out of a refused PUT.
+ *
+ * The parsing lives in `lib/media-type` (`storageRefusalReason`) — pure, so it
+ * is tested by being CALLED on real GCS error bodies rather than asserted
+ * through this component's shape. See its comment for why a discarded response
+ * here cost five days: this PUT never reaches our server, so nothing about the
+ * refusal is logged anywhere else.
+ *
+ * `.text()` can itself reject (a torn connection mid-body); an empty string
+ * then degrades to the bare status, which is still the answer that matters.
+ */
+async function putFailureReason(res: Response): Promise<string> {
+  const body = await res.text().catch(() => "");
+  return storageRefusalReason({ status: res.status, statusText: res.statusText, body });
+}
+
 async function uploadOne(clientId: string, file: File): Promise<void> {
   // The kind decides two things below: which fallback content type is sent when
   // the browser gives none, and whether the duration probe runs at all. Asked
@@ -99,7 +117,11 @@ async function uploadOne(clientId: string, file: File): Promise<void> {
     headers: { "Content-Type": contentType },
     body: file,
   });
-  if (!putRes.ok) throw new Error(`Upload to storage failed for ${file.name}`);
+  if (!putRes.ok) {
+    // The reason, not just the fact — see `putFailureReason` for why this
+    // response is the only place it will ever be readable.
+    throw new Error(`Storage refused ${file.name}: ${await putFailureReason(putRes)}`);
+  }
 
   const durationSeconds = kind === "video" ? await probeDuration(file) : undefined;
 
@@ -354,9 +376,26 @@ export function MediaUploadButton({
                     <div className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-muted-2 border-t-transparent" />
                   )}
                   <span className="min-w-0 flex-1 truncate text-foreground">{item.name}</span>
-                  <span className="shrink-0 text-[10px] uppercase tracking-[0.06em] text-muted-2">
-                    {item.status === "error" ? item.error : item.status}
-                  </span>
+                  {item.status === "error" ? (
+                    // NEITHER `shrink-0` NOR uppercased, unlike the status
+                    // label it replaces. A real reason from GCS is a sentence
+                    // ("403 AccessDenied — …"), and one held at natural width
+                    // in small caps pushed the filename out of its own row —
+                    // which is the column that says WHICH file failed. So it
+                    // truncates, keeps the full text on `title` for the long
+                    // messages, and reads in danger colour rather than as
+                    // another muted micro-label.
+                    <span
+                      title={item.error}
+                      className="min-w-0 max-w-[55%] shrink truncate text-[10px] text-danger"
+                    >
+                      {item.error}
+                    </span>
+                  ) : (
+                    <span className="shrink-0 text-[10px] uppercase tracking-[0.06em] text-muted-2">
+                      {item.status}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>

@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardTitle, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { AgentMark } from "@/components/agent-identity";
 import {
   createDynamicAgentSpecAction,
   deleteDynamicAgentSpecAction,
@@ -92,7 +93,7 @@ export function AgentStudioList({
                 className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5"
               >
                 <div className="flex min-w-0 items-center gap-2.5">
-                  <Icon name={spec.icon || "Sparkles"} className="h-4 w-4 shrink-0 text-muted-2" />
+                  <AgentMark identity={spec.name} icon={spec.icon || "Sparkles"} className="h-4 w-4 shrink-0 text-muted-2" />
                   <div className="min-w-0">
                     <a
                       href={`/admin/agents/builder/${spec.id}`}

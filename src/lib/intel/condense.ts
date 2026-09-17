@@ -39,7 +39,44 @@ export async function condenseDocs(
   return results;
 }
 
+/**
+ * Condenses one document, or returns it EMPTY when every model attempt failed.
+ *
+ * Empty is the contract's own "no client-tier row" signal: `runOnboardPipeline`
+ * dropped an empty condensation rather than store a blank panel, and
+ * `writeContextDocsFromResearch` still does, so a document whose condensation
+ * could not be produced simply has no client-tier copy this run — its
+ * internal-tier version is written regardless, which is the version every
+ * downstream agent reads. Before this, one failed condensation threw out of
+ * `Promise.all`, `runIntelReportPipeline` marked the whole Regenerate failed,
+ * and a client whose Intel Report and SEO/GEO report had both completed was
+ * shown `aiProcessingError` for a ~50%-shorter copy of a document it already
+ * had. Logged at ERROR so the miss is visible, never silent.
+ */
 async function condenseOne(
+  client: Client,
+  docType: ContextDocType,
+  internalContent: string,
+  rules: string,
+): Promise<CondensedDoc> {
+  try {
+    return await condenseOneOrThrow(client, docType, internalContent, rules);
+  } catch (err) {
+    logStructured(
+      "ERROR",
+      `context-doc condensation: "${docType}" could not be condensed by any vendor — client-tier copy skipped this run, internal tier unaffected`,
+      {
+        event: "context_document.condense_failed",
+        clientId: client.id,
+        docType,
+        error: err instanceof Error ? err.message : String(err),
+      },
+    );
+    return { docType, content: "" };
+  }
+}
+
+async function condenseOneOrThrow(
   client: Client,
   docType: ContextDocType,
   internalContent: string,
@@ -164,6 +201,12 @@ Return ONLY the condensed markdown document. No preamble, no explanation.`;
  * then the next candidate is tried; only when every candidate has failed does
  * this throw, and it throws the LAST candidate's error, since that is the one
  * whose failure is still live.
+ *
+ * One retry on the SAME vendor for a transient failure (see
+ * `isTransientCondensationError`) before moving on: the 2026-09-07 run saw
+ * Vertex answer "No output generated" on six documents in a row and direct
+ * Anthropic close the connection on another — weather, not configuration,
+ * and a second call seconds later usually answers.
  */
 async function runCondensationAttempts(
   attempts: readonly CondensationModelAttempt[],
@@ -173,53 +216,93 @@ async function runCondensationAttempts(
   let lastErr: unknown;
   for (let i = 0; i < attempts.length; i++) {
     const attempt = attempts[i]!;
-    try {
-      const resolved = attempt.resolve();
-      const stream = build(resolved);
-      const text = await stream.text;
-      logger.trackStream(stream, {
-        clientId: ctx.clientId,
-        agentId: null,
-        agentName: ctx.agentName,
-        modelName: resolved.modelId,
-        vendor: resolved.vendor,
-        operation: "doc_condense",
-      });
-      if (i > 0) {
+    let retried = false;
+    for (;;) {
+      try {
+        const resolved = attempt.resolve();
+        const stream = build(resolved);
+        const text = await stream.text;
+        logger.trackStream(stream, {
+          clientId: ctx.clientId,
+          agentId: null,
+          agentName: ctx.agentName,
+          modelName: resolved.modelId,
+          vendor: resolved.vendor,
+          operation: "doc_condense",
+        });
+        if (i > 0) {
+          logStructured(
+            "WARNING",
+            `context-doc condensation: primary vendor "${attempts[0]!.vendor}" was bypassed — ` +
+              `"${ctx.docType}" served by fallback vendor "${attempt.vendor}"`,
+            {
+              event: "context_document.condense_fallback",
+              docType: ctx.docType,
+              from: attempts[0]!.vendor,
+              to: attempt.vendor,
+            },
+          );
+        }
+        return { text, resolved };
+      } catch (err) {
+        lastErr = err;
+        if (!retried && isTransientCondensationError(err)) {
+          retried = true;
+          logStructured(
+            "WARNING",
+            `context-doc condensation: vendor "${attempt.vendor}" (model "${attempt.modelId}") failed transiently for "${ctx.docType}" — retrying once`,
+            {
+              event: "context_document.condense_attempt_retry",
+              docType: ctx.docType,
+              vendor: attempt.vendor,
+              modelId: attempt.modelId,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          );
+          if (CONDENSATION_RETRY_DELAY_MS.current > 0) {
+            await new Promise((resolve) => setTimeout(resolve, CONDENSATION_RETRY_DELAY_MS.current));
+          }
+          continue;
+        }
+        const more = i < attempts.length - 1;
         logStructured(
-          "WARNING",
-          `context-doc condensation: primary vendor "${attempts[0]!.vendor}" was bypassed — ` +
-            `"${ctx.docType}" served by fallback vendor "${attempt.vendor}"`,
+          more ? "WARNING" : "ERROR",
+          `context-doc condensation: vendor "${attempt.vendor}" (model "${attempt.modelId}") failed for ` +
+            `"${ctx.docType}"${more ? " — falling back" : " — no remaining vendors"}`,
           {
-            event: "context_document.condense_fallback",
+            event: "context_document.condense_attempt_failed",
             docType: ctx.docType,
-            from: attempts[0]!.vendor,
-            to: attempt.vendor,
+            vendor: attempt.vendor,
+            modelId: attempt.modelId,
+            error: err instanceof Error ? err.message : String(err),
           },
         );
+        break;
       }
-      return { text, resolved };
-    } catch (err) {
-      lastErr = err;
-      const more = i < attempts.length - 1;
-      logStructured(
-        more ? "WARNING" : "ERROR",
-        `context-doc condensation: vendor "${attempt.vendor}" (model "${attempt.modelId}") failed for ` +
-          `"${ctx.docType}"${more ? " — falling back" : " — no remaining vendors"}`,
-        {
-          event: "context_document.condense_attempt_failed",
-          docType: ctx.docType,
-          vendor: attempt.vendor,
-          modelId: attempt.modelId,
-          error: err instanceof Error ? err.message : String(err),
-        },
-      );
     }
   }
   throw lastErr instanceof Error
     ? lastErr
     : new Error(`context-doc condensation: all vendor attempts failed for "${ctx.docType}"`);
 }
+
+/**
+ * Errors worth one immediate retry on the SAME vendor before moving on: the
+ * stream ending with nothing (the AI SDK's `AI_NoOutputGeneratedError`, which
+ * is what an upstream 5xx/overload looks like through `streamText`), a
+ * connection the provider closed, or an explicit overload/rate-limit status.
+ * Everything else — a refused wiring, a bad request — goes straight to the
+ * next vendor, since repeating it would repeat the same answer.
+ */
+export function isTransientCondensationError(err: unknown): boolean {
+  const message = err instanceof Error ? `${err.name} ${err.message}` : String(err);
+  return /No output generated|NoOutputGenerated|other side closed|ECONNRESET|ETIMEDOUT|socket hang up|fetch failed|overloaded|rate limit|\b(429|502|503|504|529)\b/i.test(
+    message,
+  );
+}
+
+/** Pause between a transient failure and its retry. Mutable so the test suite does not wait. */
+export const CONDENSATION_RETRY_DELAY_MS = { current: 1_500 };
 
 /**
  * Re-condense existing internal docs for a client (monthly refresh light pass).

@@ -160,6 +160,6 @@ describe("logUsage against an externally-sourced modelName (webhook / reconcile-
 
     const row = usageRow();
     expect(row!["pricingUnresolved"]).toBeUndefined();
-    expect(row!["estimatedCostUsd"]).toBe(4.8); // Haiku rate, not the old $18 Sonnet default.
+    expect(row!["estimatedCostUsd"]).toBe(6); // Haiku 4.5 at $1/$5 (2026-09-08), not the old $18 Sonnet default.
   });
 });

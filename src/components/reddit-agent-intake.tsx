@@ -21,16 +21,16 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "@/components/ui";
 import { SavedFormCard } from "@/components/saved-form-card";
-import { JobStatusBadge } from "@/components/job-status";
-import { formatDate, relativeTime } from "@/lib/utils";
+import { relativeTime } from "@/lib/utils";
 import type { JobStatus } from "@/lib/types";
-import { IntakeNoRuns } from "@/components/intake-no-runs";
 import { clientArchiveLink, intakeAnchorId } from "@/lib/agent-intake-links";
 import { intakeSave } from "@/lib/intake-save";
 import {
   addRedditDraftFeedbackAction,
   saveRedditCompanyIntakeAction,
 } from "@/lib/actions/reddit-agent-actions";
+import { fieldError } from "@/components/intake-field";
+import { IntakeRunRows } from "@/components/intake-run-rows";
 
 /* ── client-safe props (serialized server-side) ── */
 
@@ -65,10 +65,6 @@ export interface RedditRunRowView {
   status: JobStatus;
   createdAt: number;
   href?: string;
-}
-
-function fieldError(error: string | null) {
-  return error ? <p className="mt-2 text-xs text-danger">{error}</p> : null;
 }
 
 const MODE_SUMMARY: Record<string, string> = {
@@ -321,56 +317,19 @@ function FeedbackBox({
       <CardTitle>Feedback</CardTitle>
       {/* F28: the archive holds APPROVED work (F149 filters it to approved,
           non-future items), so a fresh batch is not there yet and a client sent
-          looking for one finds an empty page. Name the approval step, and link
-          the archive rather than describing where it might be. */}
+          looking for one finds an empty page. "Once it is in" says it arrives
+          later without naming the approval step, which a client is never told
+          about (the SOW rule Albert kept on 2026-09-10). */}
       <p className="mt-1 text-sm text-muted">
         Tell us what is working and what is not, in your own words. It goes straight into the
-        agent&apos;s next run. Once your Karos team has approved the replies, saying whether you posted a
-        reply happens on the reply itself, in{" "}
+        agent&apos;s next run. Saying whether you posted a reply happens on the reply itself once it
+        is in{" "}
         <a href={archive.href} className="underline hover:text-foreground">
           {archive.label}
         </a>
         , and that is the signal that sharpens the voice fastest.
       </p>
-      {runs.length > 0 ? (
-        /* The run's state through the app's own mapper, and its date through
-           the app's own formatter. This printed the raw database word
-           ("review", "queued", "failed") beside an ISO machine date, in
-           client-facing copy - the same rows the X and LinkedIn intakes render
-           properly. */
-        <ul className="mt-3 space-y-1.5">
-          {runs.slice(0, 4).map((r) => {
-            /* C2 (parity pass 2026-09). The CLIENT'S sentence is the primary
-               text for BOTH roles. Staff used to read `Run <date>` in its
-               place, so one row said two different things and a staff preview
-               of this page could not be compared with what the client gets.
-               They lose nothing: the exact generation instant they debug with
-               is appended as a muted secondary suffix, and the /jobs link -
-               staff-only, staff-guarded, and outside the client workspace -
-               rides on that suffix behind an Internal marker. The per-day
-               collapse for clients still happens server-side (toRunRowViews). */
-            const label = `Worked on your content · ${relativeTime(r.createdAt)}`;
-            const stamp = `Run ${formatDate(r.createdAt)}`;
-            return (
-              <li key={r.id} className="flex flex-wrap items-center gap-2 text-xs text-muted">
-                <span>{label}</span>
-                {isStaff &&
-                  (r.href ? (
-                    <a href={r.href} className="text-muted-2 underline hover:text-foreground">
-                      {stamp}
-                    </a>
-                  ) : (
-                    <span className="text-muted-2">{stamp}</span>
-                  ))}
-                {isStaff && r.href && <Badge tone="neutral">Internal</Badge>}
-                <JobStatusBadge status={r.status} />
-              </li>
-            );
-          })}
-        </ul>
-      ) : (
-        <IntakeNoRuns clientId={clientId} noun="replies" />
-      )}
+      <IntakeRunRows clientId={clientId} family="reddit" runs={runs} isStaff={isStaff} />
       <div className="mt-4 space-y-3">
         <Textarea
           rows={5}
@@ -417,7 +376,7 @@ export function RedditAgentIntake({
   company: RedditIntakeView | null;
   feedback: RedditFeedbackRowView[];
   runs: RedditRunRowView[];
-  /** Whose vocabulary the run rows are written in - see FeedbackBox. */
+  /** Whose vocabulary the run rows are written in - see IntakeRunRows. */
   isStaff: boolean;
 }) {
   return (

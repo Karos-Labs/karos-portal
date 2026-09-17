@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/icon";
 import {
   CLIENT_CATEGORY_MAX_LENGTH,
@@ -10,10 +10,46 @@ import {
   cn,
 } from "@/lib/utils";
 import { BrandFavicon } from "@/components/brand-favicon";
+import { HereFor } from "@/components/here-for";
 import { SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
 import { socialAccount, socialHandleValue } from "@/lib/social-handles";
 import { clientOwnerEmailAction, updateClientProfileAction } from "@/lib/actions";
+import {
+  SETUP_LANDING_COPY,
+  SETUP_LANDING_FIELDS,
+  SETUP_LANDING_KEYS,
+  type SetupLandingField,
+} from "@/lib/setup-ladder";
+import { dropLandingParams, landedFromLadder } from "@/lib/setup-landing-params";
 import type { Client, SocialLinks } from "@/lib/types";
+
+/**
+ * THE FIELD THE LADDER SENT THEM TO OPEN (portal feedback round 6, §2.3/§2.8).
+ *
+ * `?edit=description|category|website&for=<stepId>` — read here rather than
+ * threaded from the settings page, because that page is a server component
+ * owned by another surface and this is where the two editors actually live: the
+ * About and Website fields are inside the Brand Profile sheet, the category is
+ * the inline form. Both were behind icon-only buttons, so `?tab=profile` landed
+ * a client BESIDE the field they were told to fill in.
+ *
+ * `outline: 2px solid var(--focus)` rather than a Tailwind ring: `--focus` is
+ * the one focus token (globals.css) and an outline is what stays visible over a
+ * card's own shadow, which is the same argument `.focus-ring` is built on.
+ */
+const LANDING_OUTLINE = { outline: "2px solid var(--focus)", outlineOffset: "2px" } as const;
+
+function readLandingField(raw: string | null): SetupLandingField | null {
+  return SETUP_LANDING_FIELDS.find((field) => field === raw) ?? null;
+}
+
+/** Drops `edit=` / `for=` from the URL without a navigation, so the band and the
+ *  outline do not come back on the next render or a Back press.
+ *  round 6 review (E14): the URL surgery itself lives in
+ *  `setup-landing-params.ts` now — this file only names the keys it owns. */
+function clearLandingParams(): void {
+  dropLandingParams([SETUP_LANDING_KEYS.edit, SETUP_LANDING_KEYS.for]);
+}
 
 /**
  * The Client fields this panel renders or edits — its whole contract, stated
@@ -152,7 +188,9 @@ function Pill({
   return (
     <div
       className={cn(
-        "flex items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 focus-within:border-neon/50",
+        // `focus-within:border-border-strong`, not the orange it used to tint:
+        // focus is ink everywhere now, and the field inside carries the ring.
+        "flex items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 focus-within:border-border-strong",
         className,
       )}
     >
@@ -187,9 +225,18 @@ function Pill({
 function BrandProfileModal({
   client,
   onClose,
+  landing = null,
+  onLandingDone,
 }: {
   client: ClientProfileFields;
   onClose: () => void;
+  /**
+   * The field the setup ladder sent this client here to fill in, when it did.
+   * Only the two fields this sheet holds; `category` lands on the inline form.
+   */
+  landing?: Exclude<SetupLandingField, "category"> | null;
+  /** Clears the band, the outline and the query params — on save or on "Got it". */
+  onLandingDone?: () => void;
 }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
@@ -209,7 +256,18 @@ function BrandProfileModal({
   const [form, setForm] = useState({
     contactEmail: client.contactEmail ?? "",
     website: client.website ?? "",
-    description: client.description ?? "",
+    /**
+     * THE BRIEF PRE-FILLS ABOUT (round 6, §2.3).
+     *
+     * The panel below has always DISPLAYED `description || brief`, so a client
+     * with an AI brief and no description read an About paragraph on their own
+     * profile while the ladder said the profile was incomplete — Albert's
+     * "maybe it is already set up". The honest fix is not to count the brief as
+     * a description (nobody wrote it) but to put it in the field, so the client
+     * confirms a sentence instead of writing one from nothing. Save stores it
+     * explicitly, exactly like the contact-email default below.
+     */
+    description: client.description ?? client.brief ?? "",
   });
 
   async function uploadLogo(file: File) {
@@ -292,6 +350,10 @@ function BrandProfileModal({
     try {
       const res = await updateClientProfileAction(client.id, form);
       if (!res.ok) { setError(res.error); return; }
+      // The band and the outline clear on the FIRST successful save (§2.8):
+      // nothing about the landing is stored, and the ladder row itself is what
+      // remembers whether the step is done.
+      onLandingDone?.();
       onClose();
       router.refresh();
     } catch (e) {
@@ -301,8 +363,9 @@ function BrandProfileModal({
     }
   }
 
-  const inputCls = "w-full rounded-[8px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 outline-none focus:border-neon/50 transition-colors";
+  const inputCls = "focus-ring w-full rounded-[8px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 transition-colors";
   const labelCls = "mb-1.5 block text-xs font-medium text-muted";
+  const landingCopy = landing ? SETUP_LANDING_COPY[landing] : undefined;
 
   return createPortal(
     <div
@@ -328,6 +391,16 @@ function BrandProfileModal({
 
         {/* Body */}
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 space-y-4">
+          {/* The landing band sits INSIDE the sheet, because the sheet is what
+              covers the section the client landed on: a band behind it would be
+              telling them something they cannot see. */}
+          {landing && landingCopy && (
+            <HereFor
+              action={landingCopy.action}
+              reason={landingCopy.reason}
+              onDismiss={() => onLandingDone?.()}
+            />
+          )}
           {/* Company picture (Account Center Profile tab, portal revamp). Same
               upload the logo route always offered staff — a client managing
               their own logo is admitted through the same canViewClient fence,
@@ -408,7 +481,15 @@ function BrandProfileModal({
             </div>
             <div>
               <label className={labelCls}>Website</label>
-              <input type="url" value={form.website} onChange={(e) => set("website", e.target.value)} placeholder="https://…" className={inputCls} />
+              <input
+                type="url"
+                value={form.website}
+                onChange={(e) => set("website", e.target.value)}
+                placeholder="https://…"
+                className={inputCls}
+                autoFocus={landing === "website"}
+                {...(landing === "website" ? { style: LANDING_OUTLINE } : {})}
+              />
             </div>
           </div>
 
@@ -420,6 +501,8 @@ function BrandProfileModal({
               placeholder="Short company description…"
               rows={3}
               className={cn(inputCls, "resize-none")}
+              autoFocus={landing === "description"}
+              {...(landing === "description" ? { style: LANDING_OUTLINE } : {})}
             />
           </div>
 
@@ -500,14 +583,52 @@ export function ClientProfilePanel({
   hideDescription?: boolean;
 }) {
   const router = useRouter();
-  const [editing, setEditing] = useState(false);
+  const params = useSearchParams();
+  /**
+   * THE LADDER'S LANDING, RESOLVED AT MOUNT (round 6, §2.3).
+   *
+   * `for=` has to name a real step and `edit=` a real field, or nothing opens:
+   * a stale or hand-typed link lands on the ordinary Profile tab rather than on
+   * a form nobody asked for. Same "fail open" rule the calendar's own params
+   * follow. Read once into the initial state below — the params are dropped
+   * with `replaceState` on the first save, so re-reading them per render would
+   * fight the very cleanup that clears the band.
+   */
+  const landingField = readLandingField(params.get(SETUP_LANDING_KEYS.edit));
+  // round 6 review (E14): one shared predicate, so this panel and the documents
+  // list cannot disagree about what "the ladder sent me" means.
+  const landed = landedFromLadder(params);
+  /**
+   * ONLY THE ACCOUNT CENTER MOUNT ANSWERS A LANDING.
+   *
+   * This panel is mounted three times on the very page the ladder lands on: the
+   * client rail, the staff sidebar's client-context block and the Profile tab.
+   * The first two pass `hideDescription` (their "about" lives in the sheet this
+   * panel opens), and only the Profile tab passes neither prop — which is the
+   * same distinction those props were introduced for ("Account Center is the
+   * one place the full about still belongs inline"). Without this gate, one
+   * `?edit=` would open the sheet in every mount at once.
+   */
+  const landing = landed && !compact && !hideDescription ? landingField : null;
+  const [landingCleared, setLandingCleared] = useState(false);
+  const activeLanding = landingCleared ? null : landing;
+
+  const [editing, setEditing] = useState(landing === "category");
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
   const [category, setCategory] = useState(client.category ?? "");
   const [teamSize, setTeamSize] = useState(client.teamSize ?? "");
   const [links, setLinks] = useState<SocialLinks>(client.socialLinks ?? {});
-  const [brandProfileOpen, setBrandProfileOpen] = useState(false);
+  const [brandProfileOpen, setBrandProfileOpen] = useState(
+    landing === "description" || landing === "website",
+  );
+
+  /** Clears the band, the outline and the query params. Save calls it too. */
+  function landingDone() {
+    setLandingCleared(true);
+    clearLandingParams();
+  }
 
   function setLink(key: keyof SocialLinks, value: string) {
     setLinks((prev) => ({ ...prev, [key]: value }));
@@ -527,6 +648,7 @@ export function ClientProfilePanel({
     startTransition(async () => {
       const res = await updateClientProfileAction(client.id, { category, teamSize, socialLinks: normalized });
       if (res.ok) {
+        landingDone();
         setEditing(false);
         router.refresh();
       } else {
@@ -545,11 +667,27 @@ export function ClientProfilePanel({
     row.account !== null,
   );
   const hasMeta = Boolean(client.category || client.teamSize);
+  // `focus-ring` rather than the bare `outline-none` this used to carry: an
+  // input that removes the browser's focus outline and puts nothing back is
+  // the WCAG 2.4.13 failure the one focus token exists to end (round 6).
   const inputCls =
-    "min-w-0 flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-2 outline-none";
+    "focus-ring min-w-0 flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-2";
+
+  const categoryLandingCopy = activeLanding === "category" ? SETUP_LANDING_COPY.category : undefined;
 
   return (
     <div className="px-1">
+      {/* The landing band, at the top of the section the ladder sent them to
+          (§2.8). Only for the field this panel edits inline; the sheet carries
+          its own, because the sheet covers this. */}
+      {categoryLandingCopy && (
+        <HereFor
+          action={categoryLandingCopy.action}
+          reason={categoryLandingCopy.reason}
+          onDismiss={landingDone}
+          className="mb-3"
+        />
+      )}
       {/* Company header */}
       <div className={cn("flex items-center gap-2.5", compact ? "mb-2 py-0.5" : "mb-2.5")}>
         <BrandFavicon
@@ -700,7 +838,7 @@ export function ClientProfilePanel({
                     }
                     className={cn(
                       SOCIAL_SQUARE,
-                      "transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon",
+                      "focus-ring transition-colors hover:border-border-strong hover:text-foreground",
                     )}
                   >
                     <SocialPlatformMark platform={key} className="h-3.5 w-3.5 shrink-0" />
@@ -757,7 +895,7 @@ export function ClientProfilePanel({
               <select
                 value={teamSize}
                 onChange={(e) => setTeamSize(e.target.value)}
-                className="bg-transparent text-xs text-foreground outline-none [&>option]:bg-surface"
+                className="focus-ring bg-transparent text-xs text-foreground [&>option]:bg-surface"
               >
                 <option value="">Team</option>
                 {TEAM_SIZES.map((t) => (
@@ -779,6 +917,8 @@ export function ClientProfilePanel({
                 maxLength={CLIENT_CATEGORY_MAX_LENGTH}
                 aria-describedby="client-category-hint"
                 className={inputCls}
+                autoFocus={activeLanding === "category"}
+                {...(activeLanding === "category" ? { style: LANDING_OUTLINE } : {})}
               />
             </Pill>
           </div>
@@ -835,7 +975,12 @@ export function ClientProfilePanel({
       )}
 
       {brandProfileOpen && (
-        <BrandProfileModal client={client} onClose={() => setBrandProfileOpen(false)} />
+        <BrandProfileModal
+          client={client}
+          onClose={() => setBrandProfileOpen(false)}
+          landing={activeLanding === "description" || activeLanding === "website" ? activeLanding : null}
+          onLandingDone={landingDone}
+        />
       )}
     </div>
   );

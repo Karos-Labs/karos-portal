@@ -185,31 +185,45 @@ describe("toggleStarredAgentAction validates what is being pinned", () => {
 });
 
 /**
- * The rail's own two defects behind that same star (review wave, 2026-09).
+ * The rail's agents block (round 6: marks and names, and nothing else).
  */
 describe("the rail's agent list", () => {
   const nav = src("components/client-rail-agents-nav.tsx");
 
-  it("writes a settled star back into the staff shell's client context", () => {
-    // H3. `useOptimistic` holds its override only until the transition settles,
-    // and what replaces it in the staff shell is `starredIds` — read from the
-    // active-client CONTEXT, which ClientContextSync only refreshes from the
-    // `/clients/[id]` layout. Client context persists off that subtree, so on
-    // /jobs, /assets or /dashboard the `router.refresh()` re-rendered from a
-    // context nothing had updated and the pin flipped back a beat after the
-    // click.
-    expect(flat(nav)).toContain("const { activeClient, setActiveClient } = useActiveClient();");
-    expect(flat(nav)).toContain("if (activeClient && activeClient.client.id === clientId)");
-    // The SAME reducer the optimistic value uses, over the same array, so the
-    // context and the server cannot end up disagreeing about the result.
-    expect(flat(nav)).toContain(
-      "starredAgentIds: applyStarAction(starredIds, { agentId, starred: nextStarred }),",
+  // round 6: INVERTED. This used to pin H3's fix — an optimistic star array in
+  // the rail plus a write-back into the staff shell's active-client context, so
+  // a pin toggled from a rail row on /jobs did not flip back when the refresh
+  // re-read a context nothing had updated. There is no toggle in the rail any
+  // more (think-agents §3: the stars were four spends of the rationed accent in
+  // a nav, and a grey glyph that means nothing until hovered), so the whole
+  // mechanism goes with it. The remaining pin control is the agent page's, which
+  // only ever renders under `/clients/[id]` — the subtree whose layout DOES
+  // mount ClientContextSync, which is why it needs no write-back of its own.
+  it("carries no star control, and so no optimistic star machinery", () => {
+    expect(nav, "the rail stars agents again").not.toContain("toggleStarredAgentAction");
+    expect(nav).not.toContain("useOptimistic");
+    expect(nav).not.toContain("useActiveClient");
+    expect(nav, "a star glyph is back in the rail").not.toContain('name="Star"');
+    // `starredIds` survives as ORDER: pinned rows first, and only the unpinned
+    // group is capped.
+    expect(nav).toContain("const starredSet = new Set(starredIds);");
+    // The one place a client pins an agent.
+    expect(src("components/client-agents/agent-star-button.tsx")).toContain(
+      "toggleStarredAgentAction(clientId, agentId, next)",
     );
-    // After the action resolves, not before it: an optimistic context write
-    // would survive a refusal.
-    expect(flat(nav)).toMatch(
-      /await toggleStarredAgentAction\(clientId, agentId, nextStarred\);[\s\S]*?setActiveClient\(\{[\s\S]*?router\.refresh\(\);/,
-    );
+  });
+
+  it("marks exactly one row as current", () => {
+    // The parent "AI agents" row was filled for every `/agents/*` path and the
+    // child row was filled too, so two rows read as current at once.
+    expect(nav).toContain("const onAgentsRoot = pathname === agentsRoot;");
+    expect(flat(nav)).toContain('{...(onAgentsRoot ? { "aria-current": "page" as const } : {})}');
+    expect(flat(nav)).toContain('{...(active ? { "aria-current": "page" as const } : {})}');
+  });
+
+  it("offers the roster instead of a dead sentence when there are no rows", () => {
+    expect(nav, "the dead sentence is back").not.toContain("No agents set up yet.");
+    expect(nav).toContain("See your agents");
   });
 
   it("counts the rows the 'View all' control actually reveals", () => {

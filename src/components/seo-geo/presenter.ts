@@ -230,6 +230,19 @@ const NO_ENGINE_DATA = {
   sentence: "This snapshot carries no AI engine data.",
 } as const;
 
+/**
+ * The line under a score tile. The score counts an unmeasured check as zero,
+ * so on its own it reads low for a site that passed everything the audit
+ * could see; when the engine reported how the site did on the checks that
+ * DID run, say both halves in one breath. Snapshots from before that field
+ * existed keep the line they always had.
+ */
+export function coverageLineFor(coveragePct: number, measuredBasisScore: number | null | undefined): string {
+  const base = `measured ${coveragePct}% of checks`;
+  if (typeof measuredBasisScore !== "number" || coveragePct <= 0 || coveragePct >= 100) return base;
+  return `${base} · ${measuredBasisScore}/100 on the checks that ran`;
+}
+
 export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
   const seoBand = scoreBand(insights.seoScore);
   const geoBand = scoreBand(insights.geoReadiness);
@@ -276,7 +289,7 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
       tone: seoMeasured ? seoBand.tone : "neutral",
       bandLabel: seoMeasured ? seoBand.label : "not measured yet",
       coveragePct: insights.seoDataCoveragePct,
-      coverageLine: `measured ${insights.seoDataCoveragePct}% of checks`,
+      coverageLine: coverageLineFor(insights.seoDataCoveragePct, insights.seoMeasuredBasisScore),
       breakdownTitle: "What's behind this score",
       breakdown: checkBreakdown(SEO_CHECKS, insights.seoChecks),
     },
@@ -289,7 +302,7 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
       tone: readinessMeasured ? geoBand.tone : "neutral",
       bandLabel: readinessMeasured ? geoBand.label : "not measured yet",
       coveragePct: insights.geoReadinessCoveragePct,
-      coverageLine: `measured ${insights.geoReadinessCoveragePct}% of checks`,
+      coverageLine: coverageLineFor(insights.geoReadinessCoveragePct, insights.geoReadinessMeasuredBasisScore),
       breakdownTitle: "What's behind this score",
       breakdown: checkBreakdown(GEO_READINESS_CHECKS, insights.geoChecks),
     },
@@ -1106,15 +1119,23 @@ export function buildPresence(insights: SeoGeoInsights): PresenceView {
   const brandRate = b.measured > 0 ? b.named / b.measured : null;
   const catRate = c.measured > 0 ? c.named / c.measured : null;
 
+  /**
+   * NOT "the work below" any more (round 6). This sentence renders in two
+   * places — Home's "SEO & AI visibility" card and the panel's presence section
+   * — and there is no plan under either of them: the Karos-owned action plan was
+   * unmounted from the client report, and on Home the takeaway was never above
+   * anything. Naming the agents instead is true on both surfaces and says who is
+   * doing it.
+   */
   let takeaway: string | null = null;
   if (brandRate !== null && catRate !== null) {
     if (brandRate >= 0.5 && catRate < 0.25) {
       takeaway =
-        "Engines know who you are, but you're missing from the questions new customers ask. That's the gap the work below closes.";
+        "Engines know who you are, but you're missing from the questions new customers ask. That's the gap our agents are working on.";
     } else if (brandRate < 0.5 && catRate < 0.25) {
       takeaway = "Engines rarely name you even when asked directly. Improving your AI readiness comes first.";
     } else if (brandRate >= 0.5 && catRate >= 0.25) {
-      takeaway = "You show up both by name and in open category questions. The work below protects that position.";
+      takeaway = "You show up both by name and in open category questions. Our agents' job now is to protect that position.";
     } else {
       takeaway =
         "You appear in category questions more often than when buyers ask about you by name. Strengthening your brand signals makes that recognition stick.";
@@ -1287,7 +1308,7 @@ export function healRecommendations(
  *    approves, and there is exactly one change to make either way.
  *  • FALLBACK TWINS. Every id REC_COPY does not know resolves to the single
  *    REC_FALLBACK, so N unmapped findings render as N rows all reading "A
- *    technical finding your team is reviewing".
+ *    technical finding we are still mapping".
  *
  * WHY IT SHOWS UP AT APPROVAL. Each twin carries its own recId, and that is what
  * `approveSeoGeoRecommendation` stores — so one row turns green while its

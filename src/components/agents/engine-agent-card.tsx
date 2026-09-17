@@ -3,10 +3,18 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { Badge, Button, Label, Select, Textarea } from "@/components/ui";
-import { Icon, PlatformLogo } from "@/components/icon";
+import { AgentMark } from "@/components/agent-identity";
 import { RunAttachments, type RunAttachment } from "@/components/agents/run-attachments";
 import { dispatchControlPlaneAgentAction } from "@/lib/actions/control-plane-actions";
 import { agentStudioHref, type EngineAgentCardModel } from "@/lib/agent-engine/catalog-union";
+import {
+  agentEngineProductAcceptsMediaAssets,
+  attachmentModeForEngineProduct,
+  clientOnlyMediaIsRequired,
+  mediaSourceHint,
+  MEDIA_SOURCE_DEFAULT,
+  type MediaSource,
+} from "@/lib/custom-agent-launch";
 
 /**
  * A catalog card for one agent-engine workflow.
@@ -31,21 +39,24 @@ export function EngineAgentCard({
   const [clientId, setClientId] = useState(clients[0]?.id ?? "");
   const [customPrompt, setCustomPrompt] = useState("");
   const [attachments, setAttachments] = useState<RunAttachment[]>([]);
+  const [mediaSource, setMediaSource] = useState<MediaSource>(MEDIA_SOURCE_DEFAULT);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, startTransition] = useTransition();
 
   /**
-   * Exactly the two workflows that read `mediaAssets`, named rather than
-   * pattern-matched.
+   * The workflows that read `mediaAssets`, from the ONE predicate the client
+   * run dialog and the copilot chat also use (`agentEngineProductAcceptsMediaAssets`),
+   * so the three surfaces cannot disagree about which agents take media.
    *
    * Offering the control anywhere else would be a promise nothing keeps: the
-   * file would upload, cost storage, and be silently ignored. `branded-shorts`
-   * is the near-miss worth stating — it is a video agent, but it takes its
-   * source from the repo-side `brandedShortsIntake`, not from a run attachment.
+   * file would upload, cost storage, and be silently ignored.
    */
-  const acceptsMedia = agent.slug === "instagram-agent" || agent.slug === "tiktok-agent";
+  const acceptsMedia = agentEngineProductAcceptsMediaAssets(agent.slug);
+  const attachmentMode = attachmentModeForEngineProduct(agent.slug) ?? "slides";
+  // "Only media I upload" on an agent with no text fallback needs a file.
+  const mediaMissing = acceptsMedia && mediaSource === "client" && clientOnlyMediaIsRequired(agent.slug) && attachments.length === 0;
 
-  const runnable = agent.status === "active" && clientId !== "";
+  const runnable = agent.status === "active" && clientId !== "" && !mediaMissing;
 
   /**
    * Switching client drops what was already uploaded.
@@ -63,14 +74,10 @@ export function EngineAgentCard({
   return (
     <div className="rounded-lg border border-white/10 p-4">
       <div className="flex flex-wrap items-center gap-2">
-        {/* The channel's own logo when it has one, else whatever the control
-            plane named. A catalog this size is far faster to scan by logo than
-            by a generic stand-in glyph. */}
-        <PlatformLogo
-          slug={agent.slug}
-          className="h-4 w-4 opacity-80"
-          fallback={<Icon name={agent.icon ?? "Sparkles"} className="h-4 w-4 opacity-70" />}
-        />
+        {/* The agent's own mark in its own colour, the same one every other
+            surface draws for it (agent-identity.tsx). A catalog this size is
+            far faster to scan by logo and colour than by a stand-in glyph. */}
+        <AgentMark identity={`${agent.slug} ${agent.name}`} icon={agent.icon ?? "Sparkles"} className="h-4 w-4 shrink-0" />
         <span className="font-medium">{agent.name}</span>
         <Badge tone={agent.status === "active" ? "success" : "neutral"}>{agent.status}</Badge>
       </div>
@@ -81,7 +88,7 @@ export function EngineAgentCard({
       <p className="mt-2 text-xs opacity-60">
         {agent.stageCount} stages
         {agent.creditCost !== null ? ` · ${agent.creditCost} credits per run` : ""}
-        {agent.model ? ` · ${agent.model}` : ""}
+        {agent.models.length > 0 ? ` · ${agent.models.join(", ")}` : ""}
       </p>
 
       {/* Offered on every agent in the catalog. The one exception used to be the
@@ -104,13 +111,28 @@ export function EngineAgentCard({
       </div>
 
       {acceptsMedia && (
-        <RunAttachments
-          clientId={clientId}
-          attachments={attachments}
-          onChange={setAttachments}
-          disabled={pending}
-          mode={agent.slug === "tiktok-agent" ? "source-video" : "slides"}
-        />
+        <div className="mt-3 space-y-1 rounded-lg border border-white/10 p-3">
+          <Label htmlFor={`media-source-${agent.slug}`}>Media for this run</Label>
+          <Select
+            id={`media-source-${agent.slug}`}
+            value={mediaSource}
+            onChange={(e) => setMediaSource(e.target.value === "client" ? "client" : "system")}
+          >
+            <option value="system">Karos sources or generates the visuals</option>
+            <option value="client">Only media uploaded for this job</option>
+          </Select>
+          <RunAttachments
+            clientId={clientId}
+            attachments={attachments}
+            onChange={setAttachments}
+            disabled={pending}
+            mode={attachmentMode}
+            hint={mediaSourceHint(agent.slug, mediaSource)}
+          />
+          {mediaMissing && (
+            <p className="text-xs text-red-400">Attach the media this run should use, or let Karos source the visuals.</p>
+          )}
+        </div>
       )}
 
       <div className="mt-3 flex flex-wrap items-end gap-2">
@@ -129,7 +151,9 @@ export function EngineAgentCard({
           onClick={() =>
             startTransition(async () => {
               const trimmed = customPrompt.trim();
-              const result = await dispatchControlPlaneAgentAction(agent.slug, {
+              let result: Awaited<ReturnType<typeof dispatchControlPlaneAgentAction>>;
+              try {
+                result = await dispatchControlPlaneAgentAction(agent.slug, {
                 clientId,
                 // Both omitted when empty rather than sent as ""/[]: the engine
                 // reads an empty direction as "use the client's strategy", and
@@ -138,8 +162,16 @@ export function EngineAgentCard({
                 inputs: {
                   ...(trimmed ? { customPrompt: trimmed } : {}),
                   ...(attachments.length > 0 ? { mediaAssets: attachments } : {}),
+                  // Sent only when it departs from the engine's default, so a
+                  // plain run's envelope is byte-identical to before this control.
+                  ...(acceptsMedia && mediaSource !== MEDIA_SOURCE_DEFAULT ? { mediaSource } : {}),
                 },
               });
+              } catch (error) {
+                // An action that throws (an employee on an admin-only action, a
+                // network drop) is a notice here, not Next's generic error.
+                result = { ok: false, error: error instanceof Error && /forbidden/i.test(error.message) ? "Only a Karos admin can dispatch from here." : "The run could not be dispatched. Refresh and try again." };
+              }
               setNotice(
                 result.ok
                   ? { ok: true, text: `Dispatched — job ${result.jobId}` }
@@ -150,6 +182,7 @@ export function EngineAgentCard({
               if (result.ok) {
                 setAttachments([]);
                 setCustomPrompt("");
+                setMediaSource(MEDIA_SOURCE_DEFAULT);
               }
             })
           }

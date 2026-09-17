@@ -102,7 +102,11 @@ describe("deploy config env parity", () => {
     //
     // Only variables where empty means "off" belong here. A variable that is
     // genuinely optional, or whose value truly differs per deploy, does not.
-    const mustNotBeEmpty = ["_AGENT_ENGINE_CUSTOM_AGENT_CLIENTS"];
+    // (_AGENT_ENGINE_CUSTOM_AGENT_CLIENTS, the variable that incident was
+    // about, was retired 2026-09-06 along with the allowlist it fed — see
+    // src/lib/agent-engine/health.ts. The dispatch flag has the same shape:
+    // "" reads as off, and off sends every engine run nowhere.)
+    const mustNotBeEmpty = ["_AGENT_ENGINE_DISPATCH_ENABLED"];
     const text = readFileSync(resolve(process.cwd(), "cloudbuild.promote.yaml"), "utf8");
     for (const key of mustNotBeEmpty) {
       const match = text.match(new RegExp(`^ {2}${key}: *(.*)$`, "m"));

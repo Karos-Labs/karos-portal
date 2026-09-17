@@ -158,7 +158,7 @@ export function Modal({
       >
         <button
           onClick={onClose}
-          className="absolute right-4 top-4 z-10 text-muted-2 transition-colors hover:text-foreground"
+          className="focus-ring absolute right-4 top-4 z-10 rounded-md text-muted-2 transition-colors hover:text-foreground"
           aria-label="Close"
         >
           <Icon name="X" className="h-5 w-5" />
@@ -182,5 +182,52 @@ export function Modal({
       </div>
     </div>,
     document.body,
+  );
+}
+
+/**
+ * `Modal`'s four slots (title, description, body, footer) drawn IN the page —
+ * so an agent's fields can be its page instead of sitting behind a button and
+ * a dialog (Albert, 2026-09-10). Same props as `Modal`, including the ones it
+ * ignores, so the run form picks its frame with one line
+ * (`const Shell = inline ? InlinePanel : Modal`) and none of its logic moves.
+ * No portal, backdrop, focus trap, scroll lock or ✕: a page section needs none.
+ */
+export function InlinePanel({
+  open = true,
+  title,
+  description,
+  children,
+  footer,
+  scrollRef,
+}: {
+  open?: boolean;
+  /** Ignored: an in-page panel has nothing to close. */
+  onClose?: () => void;
+  title?: string;
+  description?: string;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+  /** Ignored: a dialog's max-width is wrong in a page column. */
+  className?: string;
+  /** Ignored: there is no backdrop. */
+  closeOnBackdrop?: boolean;
+  /** Attached to the body; the form's scroll-to-top is a no-op on a page section. */
+  scrollRef?: React.RefObject<HTMLDivElement | null>;
+}) {
+  if (!open) return null;
+  return (
+    <section className="rounded-[var(--radius)] border border-border bg-surface">
+      {(title || description) && (
+        <div className="px-5 pt-5">
+          {title && <h2 className="text-base font-semibold text-foreground">{title}</h2>}
+          {description && <p className="mt-1 text-sm text-muted">{description}</p>}
+        </div>
+      )}
+      <div className="px-5 pb-5" {...(scrollRef ? { ref: scrollRef } : {})}>
+        <div className={title || description ? "mt-4" : "pt-5"}>{children}</div>
+      </div>
+      {footer && <div className="border-t border-border px-5 py-4">{footer}</div>}
+    </section>
   );
 }

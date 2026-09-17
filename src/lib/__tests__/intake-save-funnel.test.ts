@@ -391,6 +391,11 @@ describe("#86 — every intake write goes through the funnel", () => {
       // other, and this is the dialog a client opens when something is already
       // wrong.
       "src/components/contact-us-modal.tsx",
+      // SCRUM-412: the feedback card LinkedIn and X each held a copy of is now
+      // one component, and the note it posts is an action call like any other.
+      // It joined the closure and the funnel in the same edit, which is the
+      // shape this list exists to notice.
+      "src/components/intake-feedback-box.tsx",
       "src/components/linkedin-agent-intake.tsx",
       "src/components/linkedin-seats-workspace.tsx",
       "src/components/newsletter-agent-intake.tsx",

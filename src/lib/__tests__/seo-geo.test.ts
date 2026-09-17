@@ -896,6 +896,19 @@ describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
     );
   });
 
+  // round 6: MOVED HERE from seo-geo-client-suggestions.test.ts. GEO-27 is no
+  // longer a client suggestion — share of voice is an outcome our agents move,
+  // not homework for the reader — but its REC_COPY entry stays for the
+  // cross-repo plan contract, and the claim it must not make is unchanged.
+  it("says share of voice for GEO-27, because that is what it measures", () => {
+    // The gap fires on `shareOfVoice`, the rival's share of the brand mentions
+    // in those answers. A brand named in fewer answers can still hold the
+    // larger share, so "named more often than you" was a claim this report had
+    // not made (review wave, 2026-09).
+    const copy = REC_COPY["GEO-27"];
+    expect(`${copy.title} ${copy.description}`).not.toMatch(/named (more often|most often)/i);
+  });
+
   it("refuses to hand back an internal label for an id it cannot resolve", () => {
     // Signatures of the pre-F9 fall-through: an exact registry label, or a title
     // echoed verbatim as its own description. Neither may reach a client.
@@ -903,12 +916,12 @@ describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
       title: "Indexable: pages return 200, no noindex/nosnippet",
       description: "something else",
     });
-    expect(asLabel.title).toBe("A technical finding your team is reviewing");
+    expect(asLabel.title).toBe("A technical finding we are still mapping");
 
     const echoed = resolveRecCopy("MODEL-INVENTED-2", { title: "LCP p75 ≤ 2.5s", description: "LCP p75 ≤ 2.5s" });
-    expect(echoed.title).toBe("A technical finding your team is reviewing");
+    expect(echoed.title).toBe("A technical finding we are still mapping");
 
-    expect(resolveRecCopy("MODEL-INVENTED-3", {}).title).toBe("A technical finding your team is reviewing");
+    expect(resolveRecCopy("MODEL-INVENTED-3", {}).title).toBe("A technical finding we are still mapping");
   });
 
   it("keeps genuinely plain stored copy for an unknown id", () => {
@@ -974,7 +987,7 @@ describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
     const [rec] = buildRecommendations(computeCheckGaps(GEO_READINESS_CHECKS, invented, "GEO"));
     expect(rec.title).not.toContain("Vibes");
     expect(rec.description).not.toContain("Vibes");
-    expect(rec.title).toBe("A technical finding your team is reviewing");
+    expect(rec.title).toBe("A technical finding we are still mapping");
   });
 });
 

@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Client portal, round 6: what changes</title>
+<style>
+@font-face{font-family:"Hanken";font-weight:400;src:url("file:///Users/albertkattan/Library/Fonts/karos-Hanken_Grotesk-Regular.ttf")}
+@font-face{font-family:"Hanken";font-weight:500;src:url("file:///Users/albertkattan/Library/Fonts/karos-Hanken_Grotesk-Medium.ttf")}
+@font-face{font-family:"Hanken";font-weight:600;src:url("file:///Users/albertkattan/Library/Fonts/karos-Hanken_Grotesk-SemiBold.ttf")}
+@font-face{font-family:"Spectral";font-weight:400;src:url("file:///Users/albertkattan/Library/Fonts/karos-Spectral-Regular.ttf")}
+@font-face{font-family:"Spectral";font-weight:500;src:url("file:///Users/albertkattan/Library/Fonts/karos-Spectral_Medium-Regular.ttf")}
+@font-face{font-family:"Spectral";font-weight:500;font-style:italic;src:url("file:///Users/albertkattan/Library/Fonts/karos-Spectral_Medium-Italic.ttf")}
+@font-face{font-family:"Mono";font-weight:500;src:url("file:///Users/albertkattan/Library/Fonts/karos-JetBrains_Mono-Medium.ttf")}
+
+@page{size:A4;margin:16mm 16mm 18mm 16mm}
+:root{
+  --ground:#f2f1ec;--paper:#ffffff;--s2:#eceae2;--border:#dad6cc;--border-strong:#c8c3b6;
+  --ink:#1a1a1a;--muted:#6b6a63;--muted-2:#767469;--neon:#ff6b2c;
+  --success:#4f7d4e;--warning:#a8781e;--danger:#b04a43;--info:#5d7389;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:#fff;color:var(--ink);font-family:Hanken,system-ui,sans-serif;font-size:9.8pt;line-height:1.36;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+h1,h2,h3{font-family:Spectral,Georgia,serif;font-weight:500;letter-spacing:-0.012em;margin:0}
+h1{font-size:30pt;line-height:1.08}
+h2{font-size:16pt;line-height:1.15;margin-bottom:3pt}
+h3{font-size:11.5pt;font-family:Hanken;font-weight:600;letter-spacing:0;margin:0 0 4pt}
+p{margin:0 0 6pt}
+.eyebrow{font-family:Mono,ui-monospace,monospace;font-weight:500;font-size:7.6pt;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-2)}
+.eyebrow .num{color:var(--neon)}
+.muted{color:var(--muted)}
+.small{font-size:9.2pt}
+hr.rule{border:0;border-top:1px solid var(--border);margin:10pt 0}
+
+/* cover */
+.cover{display:flex;flex-direction:column;min-height:255mm}
+.cover .top{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid var(--border);padding-bottom:8pt;margin-bottom:34pt}
+.cover h1{max-width:150mm;margin-bottom:12pt}
+.cover .lede{font-family:Spectral;font-size:13.5pt;line-height:1.35;max-width:150mm;color:var(--ink);margin-bottom:22pt}
+.summary{display:grid;grid-template-columns:1fr 1fr;gap:9pt 18pt;margin-top:6pt}
+.summary .item{border-top:1px solid var(--border);padding-top:7pt}
+.summary .item b{display:block;font-weight:600;margin-bottom:2pt}
+.summary .item span{color:var(--muted);font-size:9.6pt}
+.cover .foot{margin-top:auto;display:flex;justify-content:space-between;font-size:8.8pt;color:var(--muted);border-top:1px solid var(--border);padding-top:7pt}
+.howto{background:var(--ground);border-radius:4pt;padding:9pt 11pt;font-size:9.4pt;color:var(--ink);margin-top:20pt;max-width:150mm}
+.howto b{font-weight:600}
+
+/* sections */
+.section{break-inside:avoid;margin-top:12pt;padding-top:10pt;border-top:1px solid var(--border)}
+.section.first{border-top:0;padding-top:0;margin-top:0}
+.section.page{break-before:page}
+.head{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:6pt}
+.head .left{max-width:140mm}
+.effort{font-family:Mono,ui-monospace,monospace;font-size:7.6pt;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-2);white-space:nowrap;border:1px solid var(--border);border-radius:3pt;padding:2pt 6pt}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:0 18pt}
+.col{min-width:0}
+.col h3{color:var(--muted-2);font-size:8pt;font-family:Mono,ui-monospace,monospace;font-weight:500;letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid var(--border);padding-bottom:3pt;margin-bottom:6pt}
+ul{margin:0;padding-left:11pt}
+li{margin:0 0 3.4pt;padding-left:1pt}
+li::marker{color:var(--muted-2)}
+.note{margin-top:6pt;background:var(--ground);border-radius:4pt;padding:6pt 10pt;font-size:8.9pt}
+.note b{font-weight:600}
+
+/* mini wireframes */
+.wire{font-family:Mono,ui-monospace,monospace;font-size:7pt;line-height:1.38;color:var(--ink);background:var(--ground);border:1px solid var(--border);border-radius:4pt;padding:6pt 10pt;white-space:pre;margin:6pt 0 4pt;overflow:hidden;min-width:0}
+.wire .o{color:var(--neon)}
+.wire .m{color:var(--muted)}
+.wire .g{color:var(--success)}
+
+table{width:100%;border-collapse:collapse;font-size:8.8pt;margin:3pt 0 5pt}
+th{text-align:left;font-family:Mono,ui-monospace,monospace;font-weight:500;font-size:7.4pt;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-2);border-bottom:1px solid var(--border);padding:0 8pt 4pt 0}
+td{vertical-align:top;border-bottom:1px solid var(--border);padding:3.6pt 8pt 3.6pt 0}
+tr:last-child td{border-bottom:0}
+td.k{font-weight:600;white-space:nowrap}
+.rec{font-weight:600}
+.pill{display:inline-block;font-family:Mono,ui-monospace,monospace;font-size:7.2pt;letter-spacing:.06em;text-transform:uppercase;border:1px solid var(--border);border-radius:3pt;padding:1pt 5pt;color:var(--muted-2);vertical-align:middle;margin-left:4pt}
+
+.decisions td:first-child{width:22pt;color:var(--muted-2);font-family:Mono,ui-monospace,monospace;font-size:8pt}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 18pt}
+.footer-line{margin-top:14pt;border-top:1px solid var(--border);padding-top:6pt;font-size:8.8pt;color:var(--muted)}
+</style>
+</head>
+<body>
+
+<!-- ============ COVER ============ -->
+<div class="cover">
+  <div class="top">
+    <div class="eyebrow">Karos Labs · client portal · round 6</div>
+    <div class="eyebrow">4 September 2026 · for approval</div>
+  </div>
+  <h1>What changes in the portal, where it breaks, and what gets better.</h1>
+  <p class="lede">Eight areas, one page each at most. Every item says where the current build breaks, what we would change, and roughly how big the job is. Nothing here is built yet. You approve, then it ships on its own branch to prep.</p>
+
+  <div class="eyebrow" style="margin-bottom:6pt">The short version</div>
+  <div class="summary">
+    <div class="item"><b>One interaction logic, everywhere.</b><span>Links look like links, buttons like buttons, static boxes stay still. The Home cells that light up and the SEO cells that do not are the same shell today; that ends.</span></div>
+    <div class="item"><b>Get set up stops saying "Let's do this".</b><span>Every step detects what is already done, names the one thing missing, and lands on the exact field with it outlined.</span></div>
+    <div class="item"><b>The agent page tells the truth.</b><span>Your Instagram agent reads "Runs on request" while it delivers a post a day. One status check ignores drafts, and every future day of a chained stream is a draft. One predicate fixes it.</span></div>
+    <div class="item"><b>Create a post asks one question.</b><span>Everything optional folds into one "More options". The footer becomes one calm line. The dashed files box goes.</span></div>
+    <div class="item"><b>The sidebar shows marks and names, no stars.</b><span>Pinning lives on the agent page. The Agents tab becomes one row per agent with status, last made, next and a verb.</span></div>
+    <div class="item"><b>Reporting shows what we do, and asks only for what only they can do.</b><span>New section "What we are doing to improve your SEO and GEO", one row per agent with a button straight to it. "Things only you can do" shrinks to three structural asks and moves to the bottom. Seats leaves Profile.</span></div>
+  </div>
+
+  <div class="howto"><b>How to read this.</b> Each area has two columns: where it breaks, what we change. Size tags: <b>S</b> under a day, <b>M</b> one to three days. The last two pages hold the decisions only you can make and the order we would ship in. Everything keeps the standing rules: same page for staff and clients, one rationed orange, no em dashes in client copy, prep only.</div>
+
+  <div class="foot"><span>Sources: three design passes over the code at main (532bf1b), the portal flow audit, the UX deep dive, and a risk review against your rulings from rounds 1 to 6.</span><span>1</span></div>
+</div>
+
+<!-- ============ 1. INTERACTION LOGIC ============ -->
+<div class="section page first">
+  <div class="head">
+    <div class="left"><div class="eyebrow"><span class="num">01</span> · Portal-wide</div><h2>One interaction logic for every card, row and button</h2></div>
+    <div class="effort">S primitives · M sweep</div>
+  </div>
+  <div class="cols">
+    <div class="col"><h3>Where it breaks</h3><ul>
+      <li>The shared primitives are the root cause. Every Card tints its border and lifts on hover, so static boxes look pressable. Buttons jump 2px and bloom a shadow. The focus ring fails contrast, and inputs remove the browser's, so a keyboard user cannot see the field they are in.</li>
+      <li>On Home the KPI cells are links; the two "SEO &amp; AI visibility" cells beside them are static but wear the identical shell. That is the mismatch you saw.</li>
+      <li>Eleven orange things on Home (icon chips, meter fills, sparkline, a takeaway band, the bell), so the one orange button does not read as the one.</li>
+      <li>Agents surfaces use four row patterns for one meaning. Arrows follow button labels in six places. Run-history rows are boxed like links but do nothing.</li>
+    </ul></div>
+    <div class="col"><h3>What we change</h3><ul>
+      <li><b>Three kinds of thing, three looks.</b> A <b>link</b>: the whole surface is the target, one fill step on hover, one trailing chevron. A <b>button</b>: colour change only, no lift, no shadow; orange on at most one control per screen, the one that moves the client forward. <b>Static</b>: no border tint, no hover, no chevron, or it drops the box and sits on a divider.</li>
+      <li>One focus ring, ink, 2px, on every interactive element including inputs. The seven ring recipes go.</li>
+      <li>Fix the four primitives (Card, Button, Input, TabButton) once; then sweep Home, Agents and Reporting surface by surface. The SEO cells become links into the matching section of the report.</li>
+      <li>Orange on Home becomes exactly: the ladder's button, its progress fill, row hovers, the bell badge. Meters, sparklines and icon chips go ink.</li>
+    </ul></div>
+  </div>
+  <div class="note"><b>Why this first.</b> Fixing the primitives fixes most of the portal in one commit, and every later item in this document is built on these three looks. Note the primitives are shared with the staff app, so staff pages calm down too.</div>
+</div>
+
+<!-- ============ 2. GET SET UP ============ -->
+<div class="section">
+  <div class="head">
+    <div class="left"><div class="eyebrow"><span class="num">02</span> · Home</div><h2>Get set up: tailored steps that know what is done</h2></div>
+    <div class="effort">M</div>
+  </div>
+  <div class="cols">
+    <div class="col"><h3>Where it breaks</h3><ul>
+      <li>Only the current step has a control; four of six rows are not clickable at all. "Let's do this" is one label for six different actions and predicts nothing.</li>
+      <li>"Complete your profile" checks description and category, but onboarding already writes category, so the step really means "description missing" and never says so. Clicking lands on Profile with nothing pointed at; if an AI brief exists the profile even looks complete.</li>
+      <li>"Confirm your brand voice" ticks the moment a document is opened. "Set up your first agent" cannot tell "form saved" from "stand-up run missing". "Run your first agent" counts failed runs. "See your first result" counts an asset existing, not the client opening it.</li>
+      <li>The waiting row ("Karos is setting up your agent") has no horizon and can be wrong while posts already arrive daily. A finished checklist comes back every 7 days.</li>
+    </ul></div>
+    <div class="col"><h3>What we change</h3><ul>
+      <li>Every incomplete row is a link to its own landing with a status word at the right ("Not started", "After step 3"). Only the current row carries the orange button. Done rows go plain.</li>
+      <li>The button names the action and the missing thing: <b>Add a short description</b> · <b>Read your Target Audience</b> · <b>Add your LinkedIn agent details</b> · <b>Create your first Instagram post</b> · <b>Open your first post</b>. The line under the current row says what is already done.</li>
+      <li>Each landing shows a small "You're here to add a short description" band with the target field outlined and focused. It clears on the first save.</li>
+      <li>Honest signals per step: Profile = category, description and website, each named. Voice = each document read and marked "Looks right". Agent = details saved and stand-up done, or live by evidence. Run = one run reached review or delivered. Result = the client opened a post.</li>
+      <li>On completion: "You're set up. Your agents are running." and one Done. The card does not come back.</li>
+    </ul></div>
+  </div>
+</div>
+
+<!-- ============ 3. AGENT STATUS ============ -->
+<div class="section page first">
+  <div class="head">
+    <div class="left"><div class="eyebrow"><span class="num">03</span> · Agent page</div><h2>Status that matches reality ("Runs on request" while posting daily)</h2></div>
+    <div class="effort">S predicate · M model</div>
+  </div>
+  <div class="cols">
+    <div class="col"><h3>Where it breaks</h3><ul>
+      <li><b>The bug.</b> Imported posts are saved as drafts. The one-post-a-day chain only ever moves drafts onto future days, so every future day of the stream is a draft by construction. The "Live" check counts scheduled posts and explicitly rejects drafts, using a rule from before clients could see drafts. So the calendar shows a planned week while the agent above it says "Runs on request", and its aside adds "No schedule yet".</li>
+      <li>The status word is printed twice: a mono chip beside the logo and a tinted strip 100px lower, in two typographic voices. The strip can only say "Last delivered" and "In your Workspace", nothing about what comes next, the one question a client of a daily stream has.</li>
+      <li>Staff and client can read different words for the same agent ("Live" versus "Needs attention"), which breaks parity. Home's checklist uses its own flag for "live", so it can disagree with the agent page.</li>
+    </ul></div>
+    <div class="col"><h3>What we change</h3><ul>
+      <li>Fix the predicate: upcoming counts client-visible drafts, 14-day window. Your agent reads Live the day it ships. The checklist reads the same function, so Home and the agent page cannot disagree.</li>
+      <li>The status words stay as they are; they were never the problem. One badge component renders them on the roster, the agent page and Reporting. The reason becomes a sentence under the badge ("Your LinkedIn details are missing"), never a new word. A failed run becomes an Internal marker for staff, so both viewers read the same word.</li>
+      <li>The chip beside the logo goes. The strip becomes one plain line under the title; each fact with a destination is a link, "Adjust pace" sits at the end when a schedule exists:</li>
+    </ul>
+    </div>
+  </div>
+  <div class="wire"><span class="g">●</span> Live · Next post Thu 5 · 7 posts planned · Last delivered Aug 4 · 12 in your Workspace        <span class="m">Adjust pace</span></div>
+</div>
+
+<!-- ============ 6. NOTIFICATIONS ============ -->
+<div class="section">
+  <div class="head">
+    <div class="left"><div class="eyebrow"><span class="num">04</span> · Bell</div><h2>Notifications with one logic: every row opens something</h2></div>
+    <div class="effort">S now · M phase 2</div>
+  </div>
+  <div class="cols">
+    <div class="col"><h3>Where it breaks</h3><ul>
+      <li>"2 unread" is a static chip, and a second number beside the badge's.</li>
+      <li>The client's rows are Karos-owned states ("Your Karos team is reviewing new work", "Tasks are in progress"): inert, and counted in the badge.</li>
+      <li>The events a client actually waits for, a post landing or a run finishing, produce no notification at all.</li>
+    </ul></div>
+    <div class="col"><h3>What we change</h3><ul>
+      <li><b>The rule.</b> A row is one event or condition the client can open or act on, with one destination. Otherwise it is not a row and not counted; it stays an indicator on Home. The badge equals the rows in the panel, always.</li>
+      <li><b>This round.</b> The Karos-owned rows go for clients. Meeting action items become whole-row links with "Done" as a separate control. "N unread" becomes a quiet "Mark all as read". The empty state says "Nothing needs you right now." with a link to the calendar.</li>
+      <li><b>Phase 2, a later round.</b> The rows a client actually waits for: <b>Your Instagram post is ready</b> (opens the post) · <b>1 post did not go out</b> (opens the day) · <b>LinkedIn needs reconnecting</b> (opens settings) · <b>3 posts are waiting to be marked as posted</b> (opens the calendar). Needs one URL key to open a single post, which the checklist's last step needs anyway.</li>
+    </ul></div>
+  </div>
+</div>
+
+<!-- ============ 4. CREATE A POST ============ -->
+<div class="section page first">
+  <div class="head">
+    <div class="left"><div class="eyebrow"><span class="num">05</span> · Agent page</div><h2>Create a post: one question, one calm footer</h2></div>
+    <div class="effort">M</div>
+  </div>
+  <div class="cols">
+    <div class="col"><h3>Where it breaks</h3><ul>
+      <li>Operator vocabulary above the fold ("Social content system. Choose whether to set up, refresh, or produce..."), then six fields in a grid with a red asterisk. "What should the agent do?" offers staff operations to a client.</li>
+      <li>The dashed "No reference files are available" box is a dead control: clients cannot upload, the route refuses them.</li>
+      <li>The footer is a bordered band with a clock icon, two sentences, the price and an orange "Start run" that wraps onto two lines. The trigger said "Create a new post".</li>
+      <li>The price says "about 25 credits" whether the client asks for 1 post or 10, because post count is not the charge multiplier.</li>
+    </ul></div>
+    <div class="col"><h3>What we change</h3>
+    <ul>
+      <li>One required field, three "Try:" chips that fill it. Defaults as one muted line with Change. One "More options" disclosure holds channel, count, audience, must include or avoid. The staff-only run types (set up, refresh) stay inside the staff block. Files: nothing renders for clients, staff keep their picker.</li>
+      <li>Title and button say <b>Create post</b> (clip or reply for other agents). The confirm is paper; the page's own run button keeps the one orange. Default count 1 and the price follows the count, so the quoted price is the price.</li>
+    </ul></div>
+  </div>
+  <div class="wire">Create a post                                              ✕
+<span class="m">One on-brand post: creative, caption and hashtags. Your Karos team reviews it first.</span>
+What should this post be about?
+┌──────────────────────────────────────────────────────┐
+│ <span class="m">Create content that introduces the new offer...</span>      │
+└──────────────────────────────────────────────────────┘
+<span class="m">Try:</span> [Introduce our newest offer] [A founder story] [The problem we solve]
+<span class="m">Instagram + TikTok · 1 post · Produce content now         Change</span>
+▸ More options
+──────────────────────────────────────────────────────────
+<span class="m">About 25 credits · ready in about 30 minutes · you can leave this page</span>
+                                        [ Cancel ]  [ Create post ]</div>
+</div>
+
+<!-- ============ 5. SIDEBAR + AGENTS TAB ============ -->
+<div class="section">
+  <div class="head">
+    <div class="left"><div class="eyebrow"><span class="num">06</span> · Navigation and Agents tab</div><h2>Sidebar without stars; a roster you can compare</h2></div>
+    <div class="effort">S rail · M roster</div>
+  </div>
+  <div class="cols">
+    <div class="col"><h3>Where it breaks</h3><ul>
+      <li>Every rail row carries a star. Unpinned ones are grey glyphs with no meaning until hovered; pinned ones are orange, so four pins spend the accent four times in the nav. The parent "AI agents" row and the child row both read as current.</li>
+      <li>The Agents tab is a two-column card grid where a Live Instagram agent and a never-run Reddit agent are the same rectangle. No "last made", no "next", no verb.</li>
+      <li>Not set up yet: a placeholder video frame reading "coming soon", or an empty state promising "They will let you know", which no code does.</li>
+    </ul></div>
+    <div class="col"><h3>What we change</h3><ul>
+      <li>Rail rows: platform mark and name, nothing else, 32px tall, identical to the other nav rows (which are already right and only gain the focus ring). Pinned first, hairline, then the rest capped at 6 with "View all". One current row per rail.</li>
+      <li>Pinning lives on the agent page only, ink not orange. Research behind this: NN/g vertical navigation, Apple HIG sidebars, Material navigation drawer, GitHub Primer NavList. All four keep trailing actions off row defaults.</li>
+      <li>Roster: one row per agent, the whole row a link (below).</li>
+      <li>Not-set-up pages get a real action and honest copy: "Not set up yet. Your Karos team sets this up. Tell us when you want it." No video frame without a video.</li>
+    </ul></div>
+  </div>
+  <div class="wire">[◎] Instagram Agent   <span class="g">● Live</span>            Last made: "Founder mode" · 2d   Next: Thu 5    Create post ›
+[in] LinkedIn Agent    Needs your input  <span class="m">Your LinkedIn details are missing</span>               Set up ›
+[r/] Reddit Agent      Not set up yet    <span class="m">Your Karos team sets this up</span>                    Request setup ›</div>
+</div>
+
+<!-- ============ 7. REPORTING ============ -->
+<div class="section page first">
+  <div class="head">
+    <div class="left"><div class="eyebrow"><span class="num">07</span> · Reporting</div><h2>What we are doing, and things only you can do</h2></div>
+    <div class="effort">S + M</div>
+  </div>
+  <div class="cols">
+    <div class="col"><h3>Where it breaks</h3><ul>
+      <li>Whether a finding is "yours" is read off where the check sits in the scoring table, not off who can act on it. That is how three outcomes our agents exist to move (share of voice, named-mention rate, never cited) became client tasks: "Get your name in front of buyers", "Get quoted where the engines are already looking", "Catch up with the competitor leading these answers".</li>
+      <li>The section sits second on the tab, straight under the scores.</li>
+      <li>The only "what Karos does" pointer on the tab is one hand-built Reputation card. Nothing connects the scores to the agents that move them. The takeaway line says "the work below closes the gap" on Home, where there is no work below.</li>
+    </ul></div>
+    <div class="col"><h3>What we change</h3><ul>
+      <li><b>Things only you can do</b> becomes an explicit allow-list of three, everything else is dropped: <b>Claim your public company record</b> · <b>Point your public record at your own website</b> · <b>Open your listings on the review platforms</b>. Each keeps the measured evidence line. Empty state: "Nothing on your side is holding you back right now." It moves to the very bottom.</li>
+      <li><b>New section under the scores: What we are doing to improve your SEO and GEO.</b> One row per agent: mark, name, one honest sentence on the lever it moves, the same status badge as the Agents tab, and one outline button <b>Open Reddit Agent</b> straight to its page. Agents not on the plan read "Not on your plan" with Support (a client cannot open a page for an agent they do not have).</li>
+    </ul></div>
+  </div>
+  <table>
+    <tr><th style="width:26mm">Agent</th><th>The one sentence a client reads</th></tr>
+    <tr><td class="k">Blog</td><td>Articles on your own site that answer the questions buyers ask about your category. These are the pages an engine can cite as a source.</td></tr>
+    <tr><td class="k">Landing Builder</td><td>One page on your site built to answer one buyer question end to end. It is the page an engine can hand a buyer as the answer.</td></tr>
+    <tr><td class="k">LinkedIn</td><td>Posts for your company page and each person you put forward, ready for you to post. LinkedIn is a site the engines quote often when they answer business questions.</td></tr>
+    <tr><td class="k">Reddit</td><td>One reply a day, drafted for a live thread your account is placed to answer, for you to post yourself. Reddit threads are a source the engines cite.</td></tr>
+    <tr><td class="k">X</td><td>A post a day on X, in your voice, from what your industry is talking about right now. It keeps your name in the public conversation.</td></tr>
+    <tr><td class="k">Instagram · TikTok</td><td>A daily post. Public posts from a professional account can be indexed by search, a dated record of what you do. Clips build the profile a buyer checks after an engine names you.</td></tr>
+    <tr><td class="k">Reputation</td><td>Drafts replies to your reviews and watches what is said about you. Reviews on independent sites are one of the off-site checks in your AI readiness score.</td></tr>
+    <tr><td class="k">Newsletter</td><td>Goes to the people who already know you, not to the engines. Its issues are where the blog agent takes its next topics from.</td></tr>
+  </table>
+  <div class="cols">
+    <div class="col"><ul>
+      <li>Where the snapshot's citation data names linkedin.com, reddit.com or the client's own domain, that row says "Quoted N times in the answers we measured". That is what makes it analysis rather than a brochure.</li>
+      <li>A test caps the claims: no percentages, no "will", no "boost", no dashes. The scores are the only measure.</li>
+    </ul></div>
+    <div class="col"><ul>
+      <li><b>Final order</b>: scores · measurement line · what we are doing · where you stand versus competitors · the deep report · things only you can do. The Reputation card folds into the new section.</li>
+      <li>Status here comes from the same function as the Agents tab, so "Live" cannot mean two things.</li>
+    </ul></div>
+  </div>
+</div>
+
+<!-- ============ 8. ACCOUNT CENTER ============ -->
+<div class="section page first">
+  <div class="head">
+    <div class="left"><div class="eyebrow"><span class="num">08</span> · Account Center</div><h2>Profile: remove Seats</h2></div>
+    <div class="effort">S</div>
+  </div>
+  <div class="cols">
+    <div class="col"><h3>Where it breaks</h3><ul>
+      <li>The Seats card is a read-only list that points at two other pages. Nothing links to it and nothing depends on it.</li>
+    </ul></div>
+    <div class="col"><h3>What we change</h3><ul>
+      <li>Delete the card and its read. Seats stay where they are edited: the X and LinkedIn agent pages, reached from each agent's "What it runs on" band.</li>
+      <li>Noted for a later round, not this one: the company card has three edit entries in 60px (two pencils and a contact glyph); one "Edit profile" entry would be the client-shaped version.</li>
+    </ul></div>
+  </div>
+</div>
+
+<!-- ============ DECISIONS ============ -->
+<div class="section">
+  <div class="head">
+    <div class="left"><div class="eyebrow"><span class="num">09</span> · Your call</div><h2>Decisions only you can make</h2></div>
+  </div>
+  <p class="muted small" style="margin-bottom:8pt">Everything else in this document is decided. Each line has our recommendation; a "yes" to the document as written takes the recommendation on every row.</p>
+  <table class="decisions">
+    <tr><th></th><th style="width:62mm">Question</th><th style="width:38mm">Recommendation</th><th>Why</th></tr>
+    <tr><td>1</td><td>Does a client-visible future post (a draft on a locked day) count as "producing", with a 14-day window?</td><td class="rec">Yes, 14 days</td><td>Applies the August decision that clients see drafts to the status word. It is the fix for the bug you named.</td></tr>
+<tr><td>2</td><td>Does "Complete your profile" require the website as well as category and description?</td><td class="rec">Yes</td><td>The SEO and GEO report and the blog agent read it first.</td></tr>
+<tr><td>3</td><td>Is "Looks right" the done gesture for a document, with "Something is off" opening Support?</td><td class="rec">Yes</td><td>Replaces "opened once" with a real confirmation. Support keeps the brand-voice question open; an editable field here would depend on it.</td></tr>
+<tr><td>4</td><td>Waiting row while Karos sets an agent up: a fixed promise or a staff-set date per client?</td><td class="rec">Fixed: "Usually ready within 2 business days"</td><td>Ops cannot hold a per-client date yet. You confirm the number.</td></tr>
+<tr><td>5</td><td>Create a post defaults to 1 post at about 25 credits, with the price following the count?</td><td class="rec">Yes</td><td>Today 3 posts and 10 posts both quote 25. Credits v2 settles to actual usage, so the quote would understate exactly the runs that surprise a client.</td></tr>
+<tr><td>6</td><td>Agents tab: full-width rows, or keep the cards and only add status, last made and a verb?</td><td class="rec">Rows</td><td>Comparison is why a client opens the page, and lists beat cards for it.</td></tr>
+<tr><td>7</td><td>Show agents the client does not have in the Reporting section, as "Not on your plan" with Support?</td><td class="rec">Yes</td><td>You asked for every relevant agent. It is also the only upsell surface that reads as analysis.</td></tr>
+<tr><td>8</td><td>Approve a calendar URL that opens one post directly?</td><td class="rec">Yes</td><td>The checklist's last step needs it, and any future notification row does too.</td></tr>
+<tr><td>9</td><td>After the checklist completes: leave the slot empty, or show "More ways to get value"?</td><td class="rec">Empty this round</td><td>The list re-opens the round-4 Home debate. Decide it on its own for round 7.</td></tr>
+<tr><td>10</td><td>Remove the status chip beside the agent logo and replace the tinted strip with one plain status line?</td><td class="rec">Yes</td><td>Today the same word appears twice in two voices. This was your own question.</td></tr>
+
+  </table>
+
+</div>
+
+<!-- ============ SHIPPING ============ -->
+<div class="section page first">
+  <div class="head">
+    <div class="left"><div class="eyebrow"><span class="num">10</span> · After approval</div><h2>How it would ship</h2></div>
+  </div>
+  <div class="two">
+    <div><h3>Order of work, each its own PR to prep</h3>
+    <ol style="margin:0;padding-left:12pt">
+      <li style="margin-bottom:4pt"><b>Primitives and the status predicate.</b> Two small fixes with the biggest visible effect: the whole portal calms down and your agent reads Live.</li>
+      <li style="margin-bottom:4pt"><b>Reporting.</b> The three-item allow-list, the new agents section, the order, Seats out.</li>
+      <li style="margin-bottom:4pt"><b>Status and Agents tab.</b> One badge everywhere, one line under the title, rows instead of cards, the rail without stars.</li>
+      <li style="margin-bottom:4pt"><b>Get set up.</b> Per-step detection, named buttons, landings with the field outlined.</li>
+      <li style="margin-bottom:4pt"><b>Create a post.</b> The one-question dialog.</li>
+      <li><b>Notifications.</b> The clean-up. The client feed waits for a later round.</li>
+    </ol></div>
+    <div><h3>Guardrails</h3><ul>
+      <li>Executors on Opus 5; every logic, copy and status decision on Fable 5.1; a risk agent reads every PR against your rulings before merge.</li>
+      <li>Same page for staff and clients; staff extras only as marked Internal blocks. One orange per screen. No em dashes in client copy (a test enforces it). Prices read "about N credits".</li>
+      <li>Merges land on prep only. Production stays on the manual promote. The credits flag stays off in production.</li>
+      <li>Two risks we manage: the shared primitives also change hover and focus on staff pages, so that PR gets its own sweep of the admin pages; and widening "live" flips the status of every client with imported future drafts at once, so we check each client's attribution first.</li>
+      <li><b>Not in this round</b>, still your open calls: brand-voice editing by the client, self-serve credit top-up, calendar "Schedule a run" for clients (stays staff only), and asking clients for site or Search Console access as a structural item (needs a new data field).</li>
+    </ul></div>
+  </div>
+  <p class="small muted" style="margin-top:12pt;border-top:1px solid var(--border);padding-top:8pt"><b style="color:var(--ink)">Decided without you, say if you disagree:</b> no client uploads in the dialog (the route refuses them on purpose); no renaming of status words; the general "get named on other sites" item is out; Support stays the one word for every help trigger; dynamic agents are not in the Reporting section yet; asking clients for site access waits for a data field; the Karos-owned rows leave the client's bell.</p>
+  <div class="footer-line">Planning docs and the full design passes: <span style="font-family:Mono;font-size:8pt">docs/portal-round6/</span> on branch <span style="font-family:Mono;font-size:8pt">claude/portal-round6-plan</span>. No application code has changed.</div>
+</div>
+
+</body>
+</html>

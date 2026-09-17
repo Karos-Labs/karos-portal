@@ -73,7 +73,12 @@ import {
 import { canViewClient } from "@/lib/client-visibility";
 import { resolveContentIdentity } from "@/lib/agent-identity-map";
 import { listClientAgents } from "@/lib/data-client-agents";
-import { engagementScore, rankByEngagement } from "@/lib/analytics";
+import {
+  engagementScore,
+  keepCurrentMetricDefinitions,
+  metricsDefinitionVersion,
+  rankByEngagement,
+} from "@/lib/analytics";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { shouldReconcilePublished } from "@/lib/asset-lifecycle";
 import { computeBoardCapacity } from "@/lib/task-dedup";
@@ -86,7 +91,7 @@ import {
 } from "@/lib/crypto/token-cipher";
 import { randomUUID } from "node:crypto";
 import type { SeoGeoInsights } from "@/lib/seo-geo";
-import { competitorBrandKeys, looksLikeUrlInput } from "@/lib/competitor-input";
+import { planReportCompetitorReplacement } from "@/lib/competitor-replace";
 
 /* ----------------------------- helpers ----------------------------- */
 
@@ -305,6 +310,22 @@ export async function listUsers(role?: Role): Promise<AppUser[]> {
 export async function countUsers(): Promise<number> {
   const snap = await col.users().count().get();
   return snap.data().count;
+}
+
+/**
+ * Registrations waiting in the admin queue — the number on the sidebar badge.
+ *
+ * The app layout computed this by reading EVERY user document on every staff
+ * request (`listUsers()`, then a filter), for a number that is almost always
+ * zero. Only disabled accounts can be pending, so the query asks for those and
+ * filters `approvedAt` in memory: an exact match on `null` would miss a record
+ * written before the field existed, and a disabled account that WAS approved
+ * (a deactivated colleague) is not a registration. Disabled accounts are a
+ * handful; the whole roster is not.
+ */
+export async function countPendingRegistrations(): Promise<number> {
+  const snap = await col.users().where("disabled", "==", true).get();
+  return snap.docs.filter((d) => !(d.data() as AppUser).approvedAt).length;
 }
 
 /* ----------------------------- clients ----------------------------- */
@@ -852,6 +873,26 @@ export async function listAssets(opts?: { clientId?: string }): Promise<Asset[]>
   return snap.docs
     .map((d) => withId<Asset>(d))
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+}
+
+/**
+ * How many assets each client has, as one aggregation query per client.
+ *
+ * The Clients page used to answer this by reading EVERY asset document in the
+ * database and counting in memory — the largest collection in the store, read
+ * whole, to print one number per card. A `count()` aggregation is billed per
+ * 1,000 index entries matched rather than per document, needs no composite
+ * index for a single equality filter, and returns no document bodies. Clients
+ * not in the result have zero assets.
+ */
+export async function countAssetsForClients(clientIds: readonly string[]): Promise<Record<string, number>> {
+  const entries = await Promise.all(
+    [...new Set(clientIds)].map(async (clientId) => {
+      const snap = await col.assets().where("clientId", "==", clientId).count().get();
+      return [clientId, snap.data().count] as const;
+    }),
+  );
+  return Object.fromEntries(entries);
 }
 
 /**
@@ -1485,13 +1526,23 @@ export async function listClientMarketingAnalytics(
  * an out-of-order or replayed sync can't overwrite fresher metrics with stale
  * ones. The 0–100 `engagementScore` is (re)derived from the metrics here so the
  * denormalized ranking field can never drift from the numbers it summarizes.
+ *
+ * `metricsVersion` is stamped here for the same reason, and from the platform
+ * rather than the caller: it records WHICH definition of `impressions` these
+ * numbers are (analytics.ts's `metricsDefinitionVersion`), so nothing downstream
+ * has to guess whether a row predates a metric Meta redefined. A caller cannot
+ * pass one — a row's definition is a fact about the mapping that produced it.
  */
 export async function upsertClientMarketingAnalytics(
-  input: Omit<ClientMarketingAnalytics, "id" | "engagementScore" | "createdAt" | "updatedAt">,
+  input: Omit<
+    ClientMarketingAnalytics,
+    "id" | "engagementScore" | "metricsVersion" | "createdAt" | "updatedAt"
+  >,
 ): Promise<void> {
   const id = analyticsDocId(input.clientId, input.platform, input.assetId);
   const ref = col.clientMarketingAnalytics().doc(id);
   const score = engagementScore(input.metrics);
+  const metricsVersion = metricsDefinitionVersion(input.platform);
   await adminDb().runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const now = Date.now();
@@ -1500,7 +1551,7 @@ export async function upsertClientMarketingAnalytics(
       if ((existing.capturedAt ?? 0) > input.capturedAt) return; // a newer capture already landed
       tx.set(
         ref,
-        { ...input, id, engagementScore: score, updatedAt: now },
+        { ...input, id, engagementScore: score, metricsVersion, updatedAt: now },
         { merge: true },
       );
     } else {
@@ -1508,6 +1559,7 @@ export async function upsertClientMarketingAnalytics(
         ...input,
         id,
         engagementScore: score,
+        metricsVersion,
         createdAt: now,
         updatedAt: now,
       } satisfies ClientMarketingAnalytics);
@@ -1562,7 +1614,17 @@ export async function upsertClientInsightsCache(
  * floor) but reliably wins `bottom` — a post nobody has been shown yet gets
  * narrated to the client as their worst performer.
  *
- * `sampleSize` counts the rows that SURVIVE both filters, which is what
+ * SUPERSEDED METRIC DEFINITIONS ARE REFUSED TOO (2026-09, CN2). Ranking is by
+ * `engagementScore`, which divides by `metrics.impressions` — and what that field
+ * counts changed for both Meta platforms when Graph retired the metrics it was
+ * built from (`impressions` → `views`, `post_impressions` → `post_media_view`).
+ * Two definitions ranked against each other produce a step change that reads as
+ * a performance change, and this result is handed to the client-facing copilot,
+ * so it is the same failure mode as the mock rows above: a number narrated as
+ * measurement that does not mean what the reader assumes. The filter is per
+ * platform, so a Meta cutover costs nothing on channels that never changed.
+ *
+ * `sampleSize` counts the rows that SURVIVE all three filters, which is what
  * re-arms the "no performance analytics captured yet" fallbacks downstream —
  * those read `sampleSize > 0`, and a set that was all-mock, or is now all
  * zero-impression, used to sail past it with a non-zero count.
@@ -1571,9 +1633,10 @@ export async function getClientPerformanceBenchmarks(
   clientId: string,
   count = 5,
 ): Promise<PerformanceBenchmarks> {
-  const records = (await listClientMarketingAnalytics(clientId)).filter(
+  const measured = (await listClientMarketingAnalytics(clientId)).filter(
     (r) => r.source === "live" && r.metrics.impressions > 0,
   );
+  const records = keepCurrentMetricDefinitions(measured);
   const { top, bottom } = rankByEngagement(records, count);
   return { clientId, top, bottom, sampleSize: records.length };
 }
@@ -1689,7 +1752,9 @@ export async function deleteClientCompetitor(id: string): Promise<void> {
  * Uses a single Firestore write batch so a partial failure cannot leave a mix
  * of old and new rows — either all rows are replaced or none are changed.
  *
- * Two merge rules keep the pool duplicate-free and measurement-stable:
+ * The merge rules that keep the pool duplicate-free and measurement-stable live
+ * in `planReportCompetitorReplacement` (competitor-replace.ts), where they can
+ * be proved without a database:
  *
  * 1. **Manual rows absorb their analysis twin.** An incoming row whose brand
  *    keys match an existing MANUAL row enriches that row in place (canonical
@@ -1697,7 +1762,10 @@ export async function deleteClientCompetitor(id: string): Promise<void> {
  *    analysis fields) and is NOT created as a report row — previously every
  *    analysis/report run minted a "Speedrun by a16z" twin next to the user's
  *    raw "https://speedrun.a16z.com" manual row.
- * 2. **The measured AI-visibility signal survives.** Incoming rows inherit
+ * 2. **Lab rows are never replaced.** A row imported from the client's lab
+ *    profile (`source: "lab"`) survives every run and absorbs its twin too,
+ *    keeping its curated name and tier.
+ * 3. **The measured AI-visibility signal survives.** Incoming rows inherit
  *    `llmMentions`/`llmMentionsAt` (and a missing `url`) from the old report
  *    row for the same brand, and old report rows the engines actually named
  *    (llmMentions > 0) that the new report dropped are retained — a standalone
@@ -1714,80 +1782,20 @@ export async function replaceReportCompetitors(
     .clientCompetitors()
     .where("clientId", "==", clientId)
     .get();
-  const reportDocs = existingAll.docs.filter(
-    (d) => (d.data() as ClientCompetitor).source === "report",
+  const plan = planReportCompetitorReplacement(
+    existingAll.docs.map((d) => ({ id: d.id, data: d.data() as Omit<ClientCompetitor, "id"> })),
+    rows,
+    Date.now(),
   );
-  const manualDocs = existingAll.docs.filter(
-    (d) => (d.data() as ClientCompetitor).source === "manual",
-  );
-
-  const oldRows = reportDocs.map((d) => d.data() as Omit<ClientCompetitor, "id">);
-  const oldByKey = new Map<string, Omit<ClientCompetitor, "id">>();
-  for (const r of oldRows) {
-    for (const k of competitorBrandKeys(r.company, r.url)) if (!oldByKey.has(k)) oldByKey.set(k, r);
-  }
-  const manualByKey = new Map<string, (typeof manualDocs)[number]>();
-  for (const d of manualDocs) {
-    const m = d.data() as ClientCompetitor;
-    for (const k of competitorBrandKeys(m.company, m.url)) if (!manualByKey.has(k)) manualByKey.set(k, d);
-  }
-  const manualKeyOf = (name: string, url?: string) =>
-    competitorBrandKeys(name, url).map((k) => manualByKey.get(k)).find(Boolean);
 
   const batch = adminDb().batch();
-
-  const carriedOld = new Set<Omit<ClientCompetitor, "id">>();
-  const merged: Array<Omit<ClientCompetitor, "id">> = [];
-  for (const row of rows) {
-    const manualDoc = manualKeyOf(row.company, row.url);
-    if (manualDoc) {
-      // Enrich the manual row in place; never mint a report twin beside it.
-      const m = manualDoc.data() as ClientCompetitor;
-      batch.set(
-        manualDoc.ref,
-        {
-          company: looksLikeUrlInput(m.company) && row.company ? row.company : m.company,
-          ...(m.url || !row.url ? {} : { url: row.url }),
-          ...(row.positioning ? { positioning: row.positioning } : {}),
-          ...(row.keyStrengths?.length ? { keyStrengths: row.keyStrengths } : {}),
-          ...(row.keyWeaknesses?.length ? { keyWeaknesses: row.keyWeaknesses } : {}),
-          ...(row.threatLevel ? { threatLevel: row.threatLevel } : {}),
-          marketTier: row.marketTier,
-          overlap: row.overlap,
-          updatedAt: Date.now(),
-        },
-        { merge: true },
-      );
-      continue;
-    }
-    const old = competitorBrandKeys(row.company, row.url)
-      .map((k) => oldByKey.get(k))
-      .find(Boolean);
-    if (!old) {
-      merged.push(row);
-      continue;
-    }
-    carriedOld.add(old);
-    merged.push({
-      ...row,
-      ...(!row.url && old.url ? { url: old.url } : {}),
-      ...(old.llmMentions !== undefined
-        ? { llmMentions: old.llmMentions, ...(old.llmMentionsAt !== undefined ? { llmMentionsAt: old.llmMentionsAt } : {}) }
-        : {}),
-    });
+  for (const { id, patch } of plan.updates) {
+    batch.set(col.clientCompetitors().doc(id), patch, { merge: true });
   }
-  // Measured survivors also skip re-creation when a manual row now covers them.
-  const survivors = oldRows.filter(
-    (r) =>
-      !carriedOld.has(r) &&
-      (r.llmMentions ?? 0) > 0 &&
-      !manualKeyOf(r.company, r.url),
-  );
-
-  for (const doc of reportDocs) {
-    batch.delete(doc.ref);
+  for (const id of plan.deletes) {
+    batch.delete(col.clientCompetitors().doc(id));
   }
-  for (const row of [...merged, ...survivors]) {
+  for (const row of plan.creates) {
     batch.set(col.clientCompetitors().doc(), row);
   }
   await batch.commit();
@@ -1892,16 +1900,44 @@ export async function upsertClientContextDoc(
 }
 
 /**
- * Atomically replace all context documents for a client.
- * Deletes all existing docs for the client, then writes the new set in one batch.
+ * Atomically replace the context documents one producer owns for a client.
+ *
+ * `owned` is the (docType, tier) pairs the producer writes — for the intel
+ * pipeline, CONTEXT_DOC_SET_CONTRACT in src/lib/intel/agent-onboarding.ts. Every
+ * existing row of this client at one of those pairs is deleted, duplicates
+ * included, and `docs` is written in their place, all in one batch.
+ *
+ * A row at any other pair is left exactly as it is. Those rows have writers of
+ * their own — the agent profiles (`x-agent-profile` & co., via
+ * upsertAgentProfileScope), `meeting-notes` (transcript ingest), a lab import's
+ * `client-guidelines` at tier internal — and the producer never writes them
+ * back. Until 2026-09-11 this deleted every row of the client, and each
+ * Regenerate lost those rows for good.
+ *
+ * Refuses, before anything is read or written, a row the next replace would not
+ * delete (another client's, or at a pair outside `owned`): written anyway, it
+ * would add one more duplicate on every run.
  */
 export async function replaceClientContextDocs(
   clientId: string,
   docs: Array<Omit<ClientContextDoc, "id">>,
+  owned: ReadonlyArray<Pick<ClientContextDoc, "docType" | "tier">>,
 ): Promise<void> {
+  const pairOf = (row: Pick<ClientContextDoc, "docType" | "tier">) => `${row.docType}::${row.tier}`;
+  const ownedPairs = new Set(owned.map(pairOf));
+  const strays = docs.filter((doc) => doc.clientId !== clientId || !ownedPairs.has(pairOf(doc)));
+  if (strays.length) {
+    throw new Error(
+      `replaceClientContextDocs(${clientId}) refused rows it would never delete: ` +
+        strays.map((doc) => `${pairOf(doc)} of client ${doc.clientId}`).join(", "),
+    );
+  }
+
   const existing = await col.clientContextDocs().where("clientId", "==", clientId).get();
   const batch = adminDb().batch();
-  for (const d of existing.docs) batch.delete(d.ref);
+  for (const d of existing.docs) {
+    if (ownedPairs.has(pairOf(d.data() as ClientContextDoc))) batch.delete(d.ref);
+  }
   for (const doc of docs) batch.set(col.clientContextDocs().doc(), doc);
   await batch.commit();
 }
@@ -2129,6 +2165,63 @@ export async function markIntegrationForReauth(clientId: string, platform: strin
   const docId = `${clientId}_${platform}`;
   await col.clientIntegrations().doc(docId).set(
     { status: "reauthenticate", expiredAt: Date.now() },
+    { merge: true },
+  );
+}
+
+/**
+ * One integration by (clientId, platform), credentials decrypted STRICTLY —
+ * this is a consuming path (token refresh), so an undecryptable value fails
+ * loud like the publish cron does rather than being dropped. Null when the
+ * client never connected that platform.
+ */
+export async function getClientIntegration(
+  clientId: string,
+  platform: string,
+): Promise<ClientIntegration | null> {
+  const doc = await col.clientIntegrations().doc(`${clientId}_${platform}`).get();
+  if (!doc.exists) return null;
+  const row = withId<ClientIntegration>(doc);
+  return row.credentials ? { ...row, credentials: decryptCredentials(row.credentials) } : row;
+}
+
+/**
+ * Persist a refreshed token set (CN1, 2026-09). Writes ONLY the keys the
+ * provider rotated (`accessToken`, sometimes `refreshToken`, plus `expiresAt`);
+ * `{ merge: true }` deep-merges the nested `credentials` map, so a manual-paste
+ * field such as `pageId` or `organizationId` — and a `refreshToken` this call
+ * did not touch — survives without being rewritten. Each value is encrypted on
+ * its own (encryptCredentials), so nothing untouched is decrypted here.
+ *
+ * Deliberately NOT a read-modify-write of the whole map: re-sending the stored
+ * ciphertext would restore any key a concurrent writer changed between the read
+ * and the write, so a reconnect landing in that window would have its brand-new
+ * refresh token replaced by the dead one it just superseded. The read stays only
+ * to refuse an integration that does not exist.
+ *
+ * A successful refresh is proof the token set works again, so the dead-token
+ * markers (`status: "expired" | "reauthenticate"`, `expiredAt`) are cleared
+ * here rather than by each caller. Throws when the integration does not exist:
+ * refreshing a connection nobody made must not create one.
+ */
+export async function updateClientIntegrationCredentials(
+  clientId: string,
+  platform: string,
+  credentials: Record<string, string>,
+): Promise<void> {
+  const ref = col.clientIntegrations().doc(`${clientId}_${platform}`);
+  const existing = await ref.get();
+  if (!existing.exists) {
+    throw new Error(`No ${platform} integration to update for client ${clientId}`);
+  }
+  const { FieldValue } = await import("firebase-admin/firestore");
+  await ref.set(
+    {
+      credentials: encryptCredentials(credentials),
+      status: "active",
+      expiredAt: FieldValue.delete(),
+      updatedAt: Date.now(),
+    },
     { merge: true },
   );
 }

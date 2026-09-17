@@ -24,6 +24,7 @@ import {
   isLinkedInV2Agent,
 } from "@/lib/agent-service/linkedin-agent-context";
 import { hasRedditAgentIntake, isRedditAgent } from "@/lib/agent-service/reddit-agent-context";
+import { engineOwnsSetup } from "@/lib/agent-engine/setup-ownership";
 import {
   LINKEDIN_SETUP_REQUIRED_PREFIX,
   REDDIT_SETUP_REQUIRED_PREFIX,
@@ -74,9 +75,19 @@ export async function unfireableScheduleReason(
   // gate is stricter than the thing it mirrors and refuses the only run that can
   // ever satisfy it — so a paused setup schedule could never be resumed, and a
   // new one could only be created once it was no longer needed.
+  //
+  // AND THE ENGINE PATH IS EXEMPT, the third clause and the same one the submit
+  // core carries (`!engineProductId`). agent-engine's `linkedin-agent` runs
+  // `00-channel-setup` as its own pre-flight, so an engine-routed client has no
+  // stand-up to press and the `liAgentState` "foundation" row this asks for is
+  // never written — refusing on it would turn every fire away for a row the
+  // client cannot produce, which is the exact invisible schedule this module
+  // exists to prevent, arrived at from the other direction. A client with no lab
+  // slug does not reach the engine and is gated exactly as before.
   if (
     isLinkedInV2Agent(agent.key) &&
     !isLinkedInSetupV2(agent.key) &&
+    !engineOwnsSetup(agent.key, client.agentsRepoSlug) &&
     !(await hasLinkedInV2Setup(client.id))
   ) {
     return `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the LinkedIn agent card, which stands up the lanes, the voice and the first topics. The schedule stays off until then.`;

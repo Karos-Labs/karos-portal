@@ -11,6 +11,7 @@ import { NotificationBell, useNotificationDismissals } from "@/components/notifi
 import { unreadNotificationCount, type TaskAlert } from "@/lib/notification-rows";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { ClientRailAgentsNav, type RailAgent } from "@/components/client-rail-agents-nav";
+import { ACCOUNT_CENTER_ICON, ClientRailAccountNav } from "@/components/client-rail-account-nav";
 import { ClientProfilePanel } from "@/components/client-profile-panel";
 import { BrandColorsSection } from "@/components/client-context-sections";
 import { NavLink, type RailNavItem as NavItem } from "@/components/rail-nav-link";
@@ -60,9 +61,11 @@ export function ClientRail({
   const home = `/clients/${client.id}`;
 
   // Portal revamp Surface 01: the rail is rebuilt around the agents a client
-  // actually uses. "AI agents" is no longer a plain nav row — the roster and
-  // its star toggles render inline (ClientRailAgentsNav, between Home and
-  // Calendar), so it is deliberately absent from this array. "Home" replaces
+  // actually uses. "AI agents" is no longer a plain nav row — the agent list
+  // renders inline (ClientRailAgentsNav, between Home and Calendar), so it is
+  // deliberately absent from this array. (Round 6 took the star toggles OFF the
+  // rail: Pin lives on the agent's own page, and the rail reads the order it
+  // sets.) "Home" replaces
   // "Dashboard" as the label (same route); the destination itself is unchanged.
   //
   // Workspace is gone — the locked decision list retires it ("The Board is
@@ -96,7 +99,7 @@ export function ClientRail({
     // a separate follow-up build. The label changes here first since it is
     // the name a client sees everywhere the destination is offered.
     label: "Account Center",
-    icon: "Settings",
+    icon: ACCOUNT_CENTER_ICON,
   };
 
   // Bar + sheet frame are shared with the staff shell's client-context mode -
@@ -129,7 +132,7 @@ export function ClientRail({
         <div className="sticky top-0 flex h-screen flex-col">
           {/* Logo */}
           <div className="shrink-0 px-4 pt-4">
-            <Link href={home} className="flex items-center gap-2.5 px-2 py-1">
+            <Link href={home} className="focus-ring flex items-center gap-2.5 px-2 py-1">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src="/brand/kairos-head-disc-dark.svg"
@@ -181,7 +184,6 @@ export function ClientRail({
             <nav className="flex flex-col gap-0.5 border-t border-border pt-4">
               <NavLink item={tabNav[0]} pathname={pathname} />
               <ClientRailAgentsNav
-                clientId={client.id}
                 home={home}
                 agents={agents}
                 starredIds={starredAgentIds}
@@ -189,6 +191,21 @@ export function ClientRail({
               {tabNav.slice(1).map((item) => (
                 <NavLink key={item.href} item={item} pathname={pathname} />
               ))}
+              {/* ACCOUNT CENTER WAS NOT ON THIS RAIL AT ALL (SCRUM-419).
+                  `settingsItem` fed the avatar dropdown, the credits
+                  pill's deep link and a row in the MOBILE company sheet
+                  below, and was never rendered here — so a client at desktop
+                  width had no navigation entry to their own profile,
+                  competitors, settings or credits, and the signposted ways in
+                  were an avatar menu and whatever a Home widget linked to. That
+                  is what made the metrics widgets the entry point, which is the
+                  complaint filed separately as SCRUM-418.
+
+                  Last rather than directly beneath the agents: it keeps the
+                  order the mobile sheet already uses (roster, then account), and
+                  "under the AI agents" in the report reads as the section below
+                  them, not as a row wedged in front of Calendar. */}
+              <ClientRailAccountNav home={home} />
             </nav>
           </div>
 
@@ -204,9 +221,17 @@ export function ClientRail({
                      tab is first for this role otherwise, so a pill that says
                      "credits" landed people on Profile. */
                   href={`${settingsItem.href}?tab=credits`}
-                  className="flex min-w-0 flex-1 items-center justify-between rounded-md border border-border px-3 py-1.5 text-xs text-muted transition-colors hover:border-border-strong hover:text-foreground"
+                  /* round 6 (rule 3): ONE FILL STEP, not a border tint. The
+                     chip's border is drawn, so tinting it on hover is the
+                     "static box wearing a link's shell" ambiguity from the
+                     other side - the fill is what says this is a target. */
+                  className="focus-ring flex min-w-0 flex-1 items-center justify-between rounded-md border border-border px-3 py-1.5 text-xs text-muted transition-colors hover:bg-surface-2"
                 >
                   <span className="flex items-center gap-1.5">
+                    {/* Orange (round 6, Albert 2026-09-06). Round 6 greyed this
+                        out with the rest of Home's accents; the ruling puts it
+                        back — a coin beside a price is a sanctioned orange, and
+                        the ration is about controls. */}
                     <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />
                     Credits
                   </span>
@@ -222,7 +247,7 @@ export function ClientRail({
                 dismissals={dismissals}
               />
             </div>
-            <AccountMenu user={user} client={client} settingsHref={settingsItem.href} />
+            <AccountMenu user={user} client={client} />
           </div>
         </div>
       </aside>
@@ -234,7 +259,7 @@ export function ClientRail({
            works this way. The strip itself stays - it is the product's
            wordmark, not a menu (orchestrator ruling). */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3 md:hidden">
-        <Link href={home} className="flex items-center gap-2.5">
+        <Link href={home} className="focus-ring flex items-center gap-2.5">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/brand/kairos-head-disc-dark.svg"
@@ -250,8 +275,11 @@ export function ClientRail({
             <Link
               href={`${settingsItem.href}?tab=credits`}
               aria-label={`${spendableCredits} credits remaining, open credits settings`}
-              className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted"
+              /* round 6 (rule 3): the mobile twin had no hover at all - a link
+                 wearing a static box's shell. Same one fill step as the rail's. */
+              className="focus-ring flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:bg-surface-2"
             >
+              {/* Orange, as the rail's twin above (Albert 2026-09-06). */}
               <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />
               <span className="stat-number font-medium text-foreground">{spendableCredits}</span>
             </Link>
@@ -291,7 +319,6 @@ export function ClientRail({
             same as the desktop rail. */}
         <div className="border-t border-border pt-4">
           <ClientRailAgentsNav
-            clientId={client.id}
             home={home}
             agents={agents}
             starredIds={starredAgentIds}
@@ -308,16 +335,16 @@ export function ClientRail({
           <Link
             href={settingsItem.href}
             onClick={() => setCompanyOpen(false)}
-            className="flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+            className="focus-ring flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
-            <Icon name="Settings" className="h-4 w-4 text-muted-2" />
+            <Icon name={settingsItem.icon} className="h-4 w-4 text-muted-2" />
             {settingsItem.label}
           </Link>
           {user.isGroupAdmin && (
             <Link
               href="/team"
               onClick={() => setCompanyOpen(false)}
-              className="flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+              className="focus-ring flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
             >
               <Icon name="Users" className="h-4 w-4 text-muted-2" />
               Team

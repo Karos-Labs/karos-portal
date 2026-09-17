@@ -245,7 +245,17 @@ function asset(overrides: Partial<Asset> = {}): Asset {
     title: TITLE,
     content: "Body",
     createdBy: "staff-1",
-    createdAt: NOW - 10 * DAY,
+    /**
+     * TODAY, since SCRUM-417. The client's slot on Home is now "Generated
+     * today" - `Recent activity` is what STAFF get there - and that card
+     * selects on `createdAt` being the current calendar day. At `NOW - 10 * DAY`
+     * the client-viewer tests below rendered an empty card, and the
+     * `toContain(TITLE)` non-vacuity line each of them carries is what said so
+     * rather than letting their negatives pass against nothing. The delivery
+     * fields stay ten days back, because the archive-window and
+     * delivery-stamp behaviour they exercise is a different question.
+     */
+    createdAt: NOW,
     updatedAt: NOW - 2 * DAY,
     status: "published",
     type: "social_post",
@@ -263,7 +273,13 @@ function overview(assets: Asset[], viewerIsClient: boolean): string {
   );
 }
 
-describe("the client portal's Recent activity badge", () => {
+/**
+ * SCRUM-417 renamed this describe. It said "Recent activity badge", and that
+ * card is now what STAFF get in Home's second slot - a client gets "Generated
+ * today". The claim is unchanged and applies to both: the badge on a home asset
+ * row prints its viewer's register word, never the stored enum.
+ */
+describe("the client portal's home asset badge", () => {
   it("prints the client register's word, and no raw status enum", () => {
     const html = overview([asset({ status: "published" })], true);
 
@@ -1072,8 +1088,9 @@ describe("the copilot system prompt", () => {
     // Non-vacuity on the allowlist itself: an empty list would make every call
     // an offender, which reads as a passing sweep only by accident.
     expect(LABEL_CALLEES.length, "found no label accessors to allow").toBeGreaterThan(2);
+    // An optional second argument, the viewer flag the register takes.
     const THROUGH_A_CALL = new RegExp(
-      `\\b(?:${LABEL_CALLEES.join("|")})\\(\\s*[A-Za-z_$][\\w$.]*\\s*\\)`,
+      `\\b(?:${LABEL_CALLEES.join("|")})\\(\\s*[A-Za-z_$][\\w$.]*\\s*(?:,\\s*[A-Za-z_$][\\w$]*\\s*)?\\)`,
     );
     const staffOnly = staffOnlyRanges(prompt);
     const offenders: string[] = [];
@@ -1186,7 +1203,9 @@ describe("the copilot system prompt", () => {
     // job is bound to (`j`) is the loop's business, and reformatting the call is
     // not a behaviour change. What has to hold is that the field goes through that
     // register.
-    expect(prompt).toMatch(/jobStatusLabel\(\s*\w+\.status\s*\)/);
+    // With the viewer, so a client session gets the client's word ("Done")
+    // rather than "In review".
+    expect(prompt).toMatch(/jobStatusLabel\(\s*\w+\.status\s*,\s*viewerIsClient\s*\)/);
     expect(prompt).toContain('from "@/lib/job-status-copy"');
     // asset.type: RELABELLED through the register the deliverable cards read. The
     // argument is a bare local because the type arrives via `Object.entries`, so

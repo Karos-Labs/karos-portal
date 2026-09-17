@@ -130,6 +130,50 @@ describe("SEO/GEO surfaces stay mounted (QA F152)", () => {
     expect(page).toMatch(/suggestions=\{/);
   });
 
+  /**
+   * round 6: THE TAB'S ORDER IS A RULING, so it is pinned by source index the
+   * same way the mounts themselves are.
+   *
+   * Albert: "Move 'Things only you can do' to the very bottom of Reporting" and
+   * "ADD above it a section [that lists] every relevant Karos agent with what it
+   * does for visibility". Reading order is the whole point of both asks — the
+   * scores answer the question the tab is named after, the agent rows say what
+   * is moving them, the panel is the comparison and the working, and the one
+   * section that asks the READER for anything closes the tab. Nothing about an
+   * order is a type error, which is this file's entire premise.
+   */
+  it("reads scores, then what we are doing, then the report, then the client's own list", () => {
+    const page = read(path.join(SRC, "app", "(app)", "clients", "[id]", "settings", "page.tsx"));
+    expect(page).toMatch(/import\s*\{[^}]*\bVisibilityWork\b[^}]*\}\s*from/);
+    // The section is built once and mounted through a const, because the
+    // no-snapshot branch shows it too (what we are doing does not depend on
+    // having measured it yet).
+    expect(page).toContain("<VisibilityWork");
+    // Read off the JSX that renders the tab, not off the whole file: the notes
+    // above the panel name `<ClientSuggestions/>` in prose, and a comment is
+    // not a mount.
+    const section = page.slice(page.indexOf("const reportingSection = seoGeo ?"));
+    const order = ["<SeoGeoScores", "{visibilityWork}", "{visibilityPanel}", "<ClientSuggestions"].map(
+      (needle) => section.indexOf(needle),
+    );
+    expect(order.every((i) => i > -1), section).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it("keeps the hand-built Reputation card off the tab", () => {
+    // round 6: it was the only "what Karos does" pointer on a tab full of
+    // scores — one agent, a label invented on this page, and a green "Beta"
+    // badge. The Reputation agent is a row in <VisibilityWork/> now, with the
+    // roster's own status word, so a second surface cannot describe it
+    // differently.
+    const page = read(path.join(SRC, "app", "(app)", "clients", "[id]", "settings", "page.tsx"));
+    // Anchored on the mount, so the note explaining the removal (which quotes
+    // the badge it took with it) is not itself a hit.
+    expect(page).not.toMatch(/^\s*\{reputationBubble\}/m);
+    expect(page).not.toMatch(/<Badge tone="neon">/);
+    expect(page).not.toMatch(/^\s*const reputationBubble/m);
+  });
+
   it("keeps Performance and Connected channels off the Reporting tab", () => {
     // "Connected channels and Performance have nothing to do in the Reporting
     // tab." Staff Home keeps its own <ClientAnalytics/>; this page has none.

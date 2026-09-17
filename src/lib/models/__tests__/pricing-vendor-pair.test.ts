@@ -66,24 +66,25 @@ describe("the pricing lookup fails loudly on an inconsistent (vendor, model id) 
 
   it("prices the CONSISTENT pair, so the refusal above is discrimination and not a blanket throw", () => {
     expect(priceFor("vertex", "claude-haiku-4-5@20251001")).toEqual({
-      inputPer1M: 0.8,
-      outputPer1M: 4.0,
+      inputPer1M: 1.0,
+      outputPer1M: 5.0,
     });
     expect(priceFor("anthropic", "claude-haiku-4-5-20251001")).toEqual({
-      inputPer1M: 0.8,
-      outputPer1M: 4.0,
+      inputPer1M: 1.0,
+      outputPer1M: 5.0,
     });
   });
 
-  it("prices Vertex Haiku at Haiku's rate, NOT the 3.75x Sonnet default it used to fall to", () => {
+  it("prices Vertex Haiku at Haiku's rate, NOT the 3x Sonnet default it used to fall to", () => {
     // The concrete latent mispricing this ticket was filed on: the flat table
     // had no `claude-haiku-4-5@20251001` key at all, so it fell to
-    // `_default: { 3.00, 15.00 }`.
+    // `_default: { 3.00, 15.00 }`. (Haiku 4.5 is $1/$5 as of 2026-09-08 —
+    // Sonnet's rate is 3x it, not the 3.75x the older $0.80/$4 row implied.)
     const p = priceFor("vertex", "claude-haiku-4-5@20251001");
     expect(p.inputPer1M).not.toBe(3.0);
     expect(p.outputPer1M).not.toBe(15.0);
-    expect(3.0 / p.inputPer1M).toBeCloseTo(3.75, 6);
-    expect(15.0 / p.outputPer1M).toBeCloseTo(3.75, 6);
+    expect(3.0 / p.inputPer1M).toBeCloseTo(3.0, 6);
+    expect(15.0 / p.outputPer1M).toBeCloseTo(3.0, 6);
   });
 
   it("has no `_default` row left to fall back to", () => {
@@ -97,8 +98,8 @@ describe("the pricing lookup fails loudly on an inconsistent (vendor, model id) 
     expect(() => computeCostUsd("vertex", "claude-haiku-4-5-20251001", 1_000_000, 1_000_000)).toThrow(
       PricingLookupError,
     );
-    // …and the consistent pair returns the real figure: 0.80 + 4.00.
-    expect(computeCostUsd("vertex", "claude-haiku-4-5@20251001", 1_000_000, 1_000_000)).toBe(4.8);
+    // …and the consistent pair returns the real figure: 1.00 + 5.00.
+    expect(computeCostUsd("vertex", "claude-haiku-4-5@20251001", 1_000_000, 1_000_000)).toBe(6);
     // What the old flat lookup would have returned for that same call.
     expect(computeCostUsd("anthropic", "claude-sonnet-4-6", 1_000_000, 1_000_000)).toBe(18);
   });

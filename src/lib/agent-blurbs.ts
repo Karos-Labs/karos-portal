@@ -178,7 +178,7 @@ export function clientAgentBlurb(input: {
   // line for gets a sentence that promises nothing specific, because guessing
   // what an unknown agent produces is how a client ends up expecting the wrong
   // thing. The backfill script exists to make this branch rare.
-  return `${input.name} runs on this account and produces work your Karos team reviews before it reaches you.`;
+  return `${input.name} runs on this account and makes work for you.`;
 }
 
 /**

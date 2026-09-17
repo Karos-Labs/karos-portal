@@ -184,7 +184,7 @@ export function ClientAgentFeedbackModal({
         </div>
 
         <div>
-          <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+          <p className="mb-2 font-label text-[10px] uppercase tracking-[0.08em] text-muted">
             {scope === "agent" ? "On this agent" : "On this format"}
           </p>
           {scoped.length === 0 ? (

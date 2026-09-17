@@ -12,6 +12,7 @@
  */
 
 import { isInternalLine } from "@/lib/doc-render";
+import { splitMetaLinks } from "@/lib/draft-meta";
 
 export interface XParsedPost {
   text: string;
@@ -76,6 +77,215 @@ function metaTarget(label: string, meta: string): "reply" | "quote" | null {
   if (REPLY_PHRASE.test(meta)) return "reply";
   if (QUOTE_PHRASE.test(meta)) return "quote";
   return null;
+}
+
+/**
+ * Reply/quote WORDING as a bullet's own LABEL, deliberately broader than the
+ * target labels above and used for the opposite purpose: those decide what may
+ * be ADDRESSED, this decides what must NOT be printed as an address.
+ *
+ * "First reply" and "Reply URL" are the two the agent actually writes and
+ * neither is a target label — in a thread "first reply" names the draft's own
+ * second post, not somebody else's. Widening REPLY_LABEL to catch them would
+ * aim a client's reply at whatever URL followed, which is the one failure this
+ * module is written to avoid.
+ *
+ * ANCHORED: the label must BE a reply or quote reference, not merely contain
+ * the word. "Quote of the week", "Reply rate" and "Replies to date" are
+ * ordinary labels over ordinary links, and swapping them for "Source" would
+ * destroy a bullet's only descriptive words to fix a different bullet's lie.
+ */
+const TARGET_LABEL =
+  /^(?:the\s+)?(?:(?:first|next|second|last|final)\s+)?(?:in\s+)?(?:repl(?:y|ies|ying)|quot(?:e|ed|ing))(?:\s+(?:to|target|post|source|url|link))?$/i;
+
+/**
+ * The same wording as a bullet's LEAD-IN, and only where it stands directly in
+ * front of the link ("replying to <url>", "First reply — <url>") — the one
+ * position in which it reads as that link's title rather than as a sentence.
+ *
+ * Anchored, and lookahead-guarded, on purpose. Removing the wording wherever it
+ * appeared cut the verb out of honest sentences: "Angle: what to say when
+ * replying to critics, per <url>" came back as "…when critics, per <url>" and
+ * stopped meaning anything. The agent's prose about the draft is client copy
+ * and is left alone; only a lead-in between the reader and the link may go.
+ */
+const TARGET_LEAD_IN =
+  /^(?:the\s+)?(?:(?:first|next|second|last|final)\s+)?(?:in\s+)?(?:repl(?:y|ies|ying)|quot(?:e|ed|ing))(?:\s+(?:to|target|post|source|url|link))?\b[\s:.,—–-]*(?=https?:\/\/)/i;
+
+/**
+ * The bullet's own leading label, e.g. "First reply" in "First reply: <url>".
+ *
+ * A URL's scheme is not a label, so a colon followed by "//" does not end one —
+ * without that, "replying to https://…" reads as a label of "replying to https"
+ * and dropping it would take the scheme off the link with it.
+ */
+const META_LABEL = /^([^:]{1,40}):(?!\/\/)/;
+
+/** One meta bullet, told apart by what its URL actually is. */
+export interface XMetaBullet {
+  /**
+   * The words to print. Identical to the bullet as parsed, EXCEPT when `label`
+   * is set — then the misleading label or lead-in has been taken out of it.
+   */
+  text: string;
+  /**
+   * - `reply-target` / `quote-target`: an X status URL this draft addresses;
+   * - `source`: any other URL — something to read, never a target;
+   * - `note`: no URL at all.
+   */
+  kind: "reply-target" | "quote-target" | "source" | "note";
+  /** The bullet's URL, when it carries one. */
+  url?: string;
+  /**
+   * What the reader must print in front of the bullet INSTEAD of its own
+   * label. Set only when that label (or lead-in) claims a reply or quote target
+   * the URL cannot be — so a bullet that keeps a label of its own never gets a
+   * second one printed over it.
+   */
+  label?: string;
+}
+
+/**
+ * How a meta bullet may be shown.
+ *
+ * THE RULE THIS EXISTS FOR: a bullet labelled "First reply" carrying a page
+ * that is not an X post reads, once the reader links it, as the post the draft
+ * answers — a client was shown a Notion page that way (2026-09-15). Only an
+ * x.com/twitter.com STATUS url can be a reply or quote target; anything else is
+ * a source, and the wording that claimed otherwise is dropped rather than the
+ * bullet, so the link a client may want to read survives as "Source: <link>".
+ *
+ * TWO LIMITS, both of them about not damaging honest copy. The claim is judged
+ * against the URL it actually governs — the first one after the label — so a
+ * bullet naming a real X post further along ("…, quoted from <x link>") cannot
+ * buy the link under its reply label a pass. And the only words that may be
+ * taken off are the bullet's own leading claim: its label, or a lead-in
+ * standing in front of the link. Reply wording anywhere else is the agent
+ * describing the draft, and it stays exactly as written.
+ *
+ * Pure, so the reader component (which cannot be imported by a test — its
+ * server-action import pulls in the Admin SDK) is left with nothing to decide.
+ */
+export function classifyXMetaBullet(meta: string): XMetaBullet {
+  const text = stripBold(meta).trim();
+  const url = splitMetaLinks(text).find((seg) => seg.href)?.href;
+  if (!url) return { text, kind: "note" };
+
+  const labelMatch = text.match(META_LABEL);
+  const label = labelMatch?.[1].trim() ?? "";
+  const body = labelMatch ? text.slice(labelMatch[0].length).trim() : text;
+  const governed = splitMetaLinks(body).find((seg) => seg.href)?.href ?? url;
+
+  if (STATUS_URL.test(governed)) {
+    // A real X post: the existing label/phrase rules decide, and a bullet that
+    // names one keeps its own words — they are true.
+    const target = metaTarget(label, text);
+    if (target === "reply") return { text, kind: "reply-target", url: governed };
+    if (target === "quote") return { text, kind: "quote-target", url: governed };
+    return { text, kind: "source", url: governed };
+  }
+
+  // Not an X post, so nothing here may be shown as a target. The label goes
+  // when the label is what claimed it; otherwise a lead-in goes, but only when
+  // the bullet had no label of its own to keep.
+  if (TARGET_LABEL.test(label)) {
+    const rest = body.replace(TARGET_LEAD_IN, "").trim();
+    return { text: rest || governed, kind: "source", url: governed, label: "Source" };
+  }
+  if (!label) {
+    const rest = text.replace(TARGET_LEAD_IN, "").trim();
+    if (rest !== text) return { text: rest || governed, kind: "source", url: governed, label: "Source" };
+  }
+  return { text, kind: "source", url: governed };
+}
+
+/**
+ * The engine's `meta.thread` for an X asset, as post texts.
+ *
+ * The field is the agent-engine deliverable's own (materializeXPost carries it
+ * across verbatim) and its element shape is NOT pinned in this repo, so plain
+ * strings and `{ text }` / `{ post }` objects are read and anything else is
+ * ignored rather than guessed at.
+ *
+ * Each part is de-marked exactly as a post parsed out of the markdown is
+ * (`stripBold`, trimmed) — that parity is the point. These render beside those
+ * posts and the clipboard hands them to X, where a literal `**` is two
+ * asterisks in the client's post and a leading space is an indent.
+ */
+export function xThreadParts(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const parts: string[] = [];
+  for (const entry of value) {
+    const raw =
+      typeof entry === "string"
+        ? entry
+        : entry && typeof entry === "object"
+          ? ["text", "post"]
+              .map((k) => (entry as Record<string, unknown>)[k])
+              .find((v): v is string => typeof v === "string")
+          : undefined;
+    const text = raw ? stripBold(raw).trim() : "";
+    if (text) parts.push(text);
+  }
+  return parts;
+}
+
+/** Case, punctuation, quote and dash shape folded away for a body comparison. */
+const foldPost = (s: string) =>
+  stripBold(s)
+    .replace(/[\u2010-\u2015]/g, "-")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s.,;:!?"'\u2026-]+$/, "");
+
+/**
+ * The tail one copy of a post may have gained and still be that post: spacing,
+ * punctuation, hashtags, links. Anything a reader would call a sentence is not
+ * drift — it is a different post.
+ */
+const DRIFT_TAIL = /^[\s.,;:!?"'\u2026-]*(?:(?:#\S+|https?:\/\/\S+)[\s.,;:!?"'\u2026-]*)*$/;
+
+/**
+ * Two parts that read as the same post.
+ *
+ * Not string equality. The markdown's opener and the engine's own copy of it
+ * drift — bold, a full stop, an appended hashtag or link, a dash normalized on
+ * one side — and any difference that survives this comparison puts the opener
+ * on the card twice, once as the post and once as "Reply 1". So the shapes are
+ * folded away, and one body may carry a tail the other does not.
+ *
+ * WHAT THE TAIL MAY BE is the whole guard, because the mistake in the other
+ * direction is worse: a genuine reply that opens by echoing the post would be
+ * swallowed and the client would never see it. A duplicate is visible; a
+ * missing reply is not. So the tail must be nothing a reader would read (and
+ * the shared run must be a post's worth of text, not a stub) — a sentence
+ * after the shared words means the two are different posts.
+ */
+function sameBody(a: string, b: string): boolean {
+  const x = foldPost(a);
+  const y = foldPost(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  return short.length >= 16 && long.startsWith(short) && DRIFT_TAIL.test(long.slice(short.length));
+}
+
+/**
+ * The replies in an engine thread, given the post already on the card.
+ *
+ * A thread is ONE post with its replies, so the first part is dropped when it
+ * is that post restated (the engine sends the whole chain, the markdown holds
+ * the opener) — otherwise every part is a reply and nothing is lost. Which of
+ * the two `meta.thread` is has never been pinned on the engine side, which is
+ * why this reads the parts rather than trusting a position.
+ */
+export function xThreadReplies(parts: readonly string[], mainText: string): string[] {
+  const rest = parts.filter((p) => p.trim().length > 0);
+  if (rest.length > 0 && sameBody(rest[0], mainText)) rest.shift();
+  return rest;
 }
 
 export function parseXDrafts(markdown: string): XParsedBatch | null {

@@ -44,18 +44,34 @@ export default async function ClientAssetsPage({
   const assets = getClientLibraryAssets(await listAssets({ clientId: id }));
 
   const pendingCount = assets.filter((a) => a.status === "draft").length;
+  /* The SERVER's clock, read once here rather than in the client component:
+     AssetsView is "use client", so a Date.now() inside it would let the
+     browser's timezone decide which day "today" is, while runDayKey - the
+     helper its selector shares with Home's widget - is a server-local calendar
+     day. Two surfaces answering "today" from two clocks is the drift the shared
+     selector exists to stop. */
+  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+  const now = Date.now();
 
   return (
     <>
       <PageHeader
         title="Assets"
         description={
+          // SCRUM-426: this is the staff work queue, every status; the client's
+          // own view is their archive, which shows approved work only. It used
+          // to call that "the client's library", a third name for one place.
           pendingCount > 0
-            ? `${pendingCount} draft${pendingCount === 1 ? "" : "s"} awaiting review. Approve to publish to ${client.name}.`
-            : `Deliverables for ${client.name}. Approved items appear in the client's library.`
+            ? `${pendingCount} draft${pendingCount === 1 ? "" : "s"} awaiting review. ${client.name} sees only what you approve, in their archive.`
+            : `Every deliverable for ${client.name}, in every status. ${client.name} sees only approved work, in their archive.`
         }
       />
-      <AssetsView assets={assets} canApprove initialStatus={statusFilterFromParam(statusParam)} />
+      <AssetsView
+        assets={assets}
+        canApprove
+        initialStatus={statusFilterFromParam(statusParam)}
+        now={now}
+      />
     </>
   );
 }

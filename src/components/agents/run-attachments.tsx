@@ -24,7 +24,7 @@ export interface RunAttachment {
  * the first file, or hiding the slide order from the agent whose whole
  * contract is that order.
  */
-export type AttachmentMode = "slides" | "source-video" | "chat";
+export type AttachmentMode = "slides" | "source-video" | "picture" | "chat";
 
 const MODES: Record<
   AttachmentMode,
@@ -46,6 +46,15 @@ const MODES: Record<
     chip: () => "source",
     hint: "The episode this run cuts its clip from.",
     addLabel: "Attach source video",
+  },
+  picture: {
+    accept: "image/jpeg,image/png,image/webp",
+    // X and LinkedIn write the post TO one picture (`resolveSocialMedia` stages
+    // the first attached image); a second would upload and be ignored.
+    max: 1,
+    chip: () => "picture",
+    hint: "Attach a picture and the post is written to it.",
+    addLabel: "Attach an image",
   },
   chat: {
     // Same set the signed-URL route (`/api/agent-engine/run-media`) itself
@@ -103,6 +112,7 @@ export function RunAttachments({
   disabled,
   mode = "slides",
   layout = "block",
+  hint,
   children,
 }: {
   clientId: string;
@@ -110,6 +120,8 @@ export function RunAttachments({
   onChange: (next: RunAttachment[]) => void;
   disabled?: boolean;
   mode?: AttachmentMode;
+  /** Replaces the mode's default sentence — the run dialog words it per media source. */
+  hint?: string;
   /** Where this control sits — see `AttachmentLayout`. */
   layout?: AttachmentLayout;
   /**
@@ -125,7 +137,7 @@ export function RunAttachments({
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const spec = MODES[mode];
+  const spec = { ...MODES[mode], ...(hint !== undefined ? { hint } : {}) };
   const full = attachments.length >= spec.max;
 
   async function uploadOne(file: File): Promise<RunAttachment> {

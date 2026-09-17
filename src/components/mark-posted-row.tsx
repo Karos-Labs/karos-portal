@@ -127,7 +127,7 @@ export function MarkPostedRow({
 
   return (
     <div className="border-t border-border pt-3">
-      <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
+      <p className="mb-2 text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">
         Already posted it?
       </p>
       <button

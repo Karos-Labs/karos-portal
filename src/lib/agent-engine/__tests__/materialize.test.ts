@@ -349,6 +349,23 @@ describe("the long-form products land on the asset type their content actually i
     expect(asset.type).toBe("email");
     expect(asset.title).toBe("The brief is the decision");
     expect(asset.content).toBe("Full assembled edition body.");
+    // No render on this deliverable: the meta carries no html, and the modal falls back to the text.
+    expect(asset.meta).not.toHaveProperty("html");
+  });
+
+  it("newsletter-agent: carries the engine's email-safe HTML renders in meta, with the markdown text still as content", async () => {
+    const html = "<!DOCTYPE html><html><body><table><tr><td>Light edition</td></tr></table></body></html>";
+    const htmlDark = "<!DOCTYPE html><html><body><table><tr><td>Dark edition</td></tr></table></body></html>";
+    await materialize("newsletter-agent", {
+      subjectLine: "The brief is the decision",
+      previewText: "Why more output made things worse",
+      text: "Full assembled edition body.",
+      html,
+      htmlDark,
+    });
+    const asset = createdAsset();
+    expect(asset.content).toBe("Full assembled edition body.");
+    expect(asset.meta).toMatchObject({ subjectLine: "The brief is the decision", previewText: "Why more output made things worse", html, htmlDark });
   });
 
   it("newsletter-agent: stitches intro/sections/signoff when the agent recorded no assembled text", async () => {
@@ -432,6 +449,20 @@ describe("the report and bundle products render to something a reviewer can read
     expect(asset.content).toContain("## Recommendations (2)");
     expect(asset.content).toContain("- Add FAQ schema");
     expect(asset.content).toContain("- Fix canonical tags");
+    // An older deliverable carries no measured facts, so no such section appears.
+    expect(asset.content).not.toContain("What the audit measured");
+  });
+
+  it("seo-geo-report (engine 2026-09-07+): each score states its coverage and measured-basis figure, and the measured facts get their own section", () => {
+    const asset = materializeSeoGeoReport({
+      seoScore: { score: 62, dataCoveragePct: 90.4, measuredBasisScore: 69 },
+      geoReadiness: { score: 41, dataCoveragePct: 71, measuredBasisScore: null },
+      narrative: "Summary.",
+      measuredFacts: ["Core Web Vitals (real users, mobile, p75, site-wide): LCP 1.9s, INP 120ms, CLS 0.04.", "No /llms.txt is published.", ""],
+      firedRecommendations: [],
+    });
+    expect(asset.content).toContain("**SEO 62 (90% measured, 69 on measured checks) · GEO readiness 41 (71% measured)**");
+    expect(asset.content).toContain("## What the audit measured\n\n- Core Web Vitals (real users, mobile, p75, site-wide): LCP 1.9s, INP 120ms, CLS 0.04.\n- No /llms.txt is published.");
   });
 
   /**
@@ -605,10 +636,11 @@ describe("the report and bundle products render to something a reviewer can read
       expect(aioAbsentCell?.state).not.toBe(plainAbsentCell?.state);
     });
 
-    it("real per-engine data (chatgpt, perplexity, gemini, claude, copilot) maps onto the widened 5-engine EngineId, not just the old 3", async () => {
+    it("real per-engine data maps onto the four captured engines; Copilot (accepted, not captured since 2026-09-05) gets no column", async () => {
       readAgentEngineRunMock.mockResolvedValue(
         stepsWithCells([
           { promptId: "p1", engine: "perplexity", captureTier: "MEASURED", brandMentioned: true, brandFirstMentionCharOffset: 0, brandCited: false },
+          // A stale copilot cell from an older run must not resurrect the column.
           { promptId: "p1", engine: "copilot", captureTier: "MEASURED", brandMentioned: false, brandCited: false },
         ]),
       );
@@ -623,7 +655,9 @@ describe("the report and bundle products render to something a reviewer can read
       const copilot = insights.perEngine.find((e) => e.engine === "copilot");
       expect(perplexity?.captureTier).toBe("MEASURED");
       expect(perplexity?.promptsMeasured).toBe(1);
-      expect(copilot?.captureTier).toBe("MEASURED");
+      expect(copilot).toBeUndefined();
+      expect(insights.perEngine.map((e) => e.engine)).toEqual(["chatgpt", "perplexity", "gemini", "claude"]);
+      expect(insights.geoVisibilityEnginesTotal).toBe(4);
     });
 
     it("never blocks the job when the client record can't be read", async () => {
@@ -1176,5 +1210,64 @@ describe("two materializations of one run cannot produce two assets", () => {
   it("treats a failed fresh read as no information rather than as a reason to throw or to skip", async () => {
     getJobMock.mockRejectedValue(new Error("firestore hiccup"));
     expect(await materialize("x-agent", { text: "post" })).toBe("agent-engine-pubsub-1");
+  });
+});
+
+describe("RFC-12: the picture an X or LinkedIn run resolved reaches the asset", () => {
+  // prep job eIruxfiBhYTFHgfXKWK5: the run staged a TechCrunch screenshot and
+  // wrote its signed URL into the deliverable's `media`, and the asset showed
+  // no image at review because nothing here read that field.
+  it("linkedin-post re-hosts deliverable.media.url into imageUrl and the reader's artifacts list, and keeps the provenance in meta", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) }) as unknown as typeof fetch;
+    await materialize("linkedin-agent", {
+      headline: "Adobe acquisition signals enterprise AI marketing shift",
+      text: "Adobe just paid to acquire a six-person AI marketing startup.",
+      takeaway: "Enterprise buys speed; growth-stage brands need it now.",
+      archetype: "milestone-launch",
+      contentMode: "hot-news",
+      draftsMarkdown: "# LinkedIn drafts\n\n## Account 1 · Company page\n\n### Post 1 · Milestone launch\n\n> Adobe just paid.\n\n`40 chars`\n\n- **Topic:** Adobe\n- **Media:** https://storage.googleapis.com/b/agent-engine/pubsub-1/screenshot-73ec.png?sig=1",
+      mediaStatus: "screenshot",
+      mediaRationale: "a screenshot of the cited page",
+      media: {
+        url: "https://storage.googleapis.com/b/agent-engine/pubsub-1/screenshot-73ec.png?sig=1",
+        path: ".media-cache/pubsub-1/screenshot-73ec.png",
+        provider: "screenshot",
+        licenseConfidence: "unknown",
+        requiresCredit: true,
+        creditUrl: "https://techcrunch.com/2026/09/02/adobe-acquires-rilo/",
+      },
+    });
+    const asset = createdAsset();
+    expect(asset.imageUrl).toBe("https://karos.example/rehosted.png");
+    expect(uploadBytesMock).toHaveBeenCalledWith(expect.objectContaining({ path: "agent-engine/job_1/media.png", contentType: "image/png", ifAbsent: true }));
+    const meta = asset.meta as Record<string, unknown>;
+    expect(meta.artifacts).toEqual([{ name: "media.png", url: "https://karos.example/rehosted.png", contentType: "image/png" }]);
+    expect((meta.media as Record<string, unknown>).provider).toBe("screenshot");
+    expect(meta.mediaStatus).toBe("screenshot");
+    expect(meta.takeaway).toBe("Enterprise buys speed; growth-stage brands need it now.");
+    expect(meta.contentMode).toBe("hot-news");
+  });
+
+  it("x-post does the same, and a deliverable with no media (or a non-https path) leaves imageUrl unset", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) }) as unknown as typeof fetch;
+    await materialize("x-agent", {
+      text: "Four-day weeks are spreading.",
+      mainPostText: "Four-day weeks are spreading.",
+      hook: "Four-day weeks are spreading.",
+      lane: "knowledge",
+      thread: ["Part two.", "Part three."],
+      media: { url: "https://storage.googleapis.com/b/agent-engine/pubsub-1/n1-a.jpg?sig=1", path: ".media-cache/pubsub-1/n1-a.jpg", provider: "unsplash", licenseConfidence: "blanket", requiresCredit: false },
+    });
+    const withMedia = createdAsset();
+    expect(withMedia.imageUrl).toBe("https://karos.example/rehosted.png");
+    expect(uploadBytesMock).toHaveBeenCalledWith(expect.objectContaining({ path: "agent-engine/job_1/media.jpg", contentType: "image/jpeg" }));
+    expect((withMedia.meta as Record<string, unknown>).thread).toEqual(["Part two.", "Part three."]);
+
+    createAssetMock.mockReset().mockImplementation(createdWithId);
+    uploadBytesMock.mockReset().mockResolvedValue({ url: "https://karos.example/rehosted.png" });
+    await materialize("x-agent", { text: "No picture.", mainPostText: "No picture.", hook: "No picture.", lane: "pov", media: { url: ".media-cache/pubsub-1/local.png", path: ".media-cache/pubsub-1/local.png" } });
+    const without = createdAsset();
+    expect(without.imageUrl ?? null).toBeNull();
+    expect(uploadBytesMock).not.toHaveBeenCalled();
   });
 });

@@ -35,7 +35,7 @@ export function StaffOnlySection({
         className,
       )}
     >
-      <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">{label}</p>
+      <p className="font-label text-[10px] uppercase tracking-[0.08em] text-muted-2">{label}</p>
       {children}
     </section>
   );

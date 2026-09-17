@@ -1,18 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/modal";
-import { Badge, TabButton } from "@/components/ui";
+import { Badge, Button, TabButton } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ContextGroundingNotice } from "@/components/context-grounding-notice";
 import { AudienceSimulation } from "@/components/audience-simulation";
 import { CopyCaptionButton } from "@/components/copy-caption-button";
+import { EmailPreview } from "@/components/email-preview";
 import { parseLiDrafts } from "@/lib/li-drafts";
 import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
 import { isRedditV2Envelope, parseRedditDrafts } from "@/lib/reddit-drafts";
 import { RedditDraftsBatch } from "@/components/reddit-drafts-review";
-import { parseXDrafts } from "@/lib/x-drafts";
+import { parseXDrafts, xThreadParts } from "@/lib/x-drafts";
 import { draftsDisplayTitle, hasGeneratedTitle } from "@/lib/deliverable-titles";
 import { XDraftsBatch } from "@/components/x-drafts-review";
 import {
@@ -23,12 +24,14 @@ import {
 import { looksLikeMarkdown, renderAssetBody } from "@/lib/doc-render";
 import { normalizeDashes } from "@/lib/text-utils";
 import { MarkPostedRow } from "@/components/mark-posted-row";
+import { canMarkAssetPosted } from "@/lib/mark-posted";
 import { PostManagementRow } from "@/components/post-management-row";
 import { ApprovePanel } from "@/components/approve-panel";
 import { approveAssetAction, publishAssetNowAction, unscheduleAssetAction } from "@/lib/actions/asset-actions";
 import { PLATFORM_LABELS, PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { isAssetPublishable } from "@/lib/asset-visibility";
 import {
+  type AssetImage,
   assetDownloadTargets,
   assetImages,
   assetLiMedia,
@@ -36,15 +39,8 @@ import {
   assetVideos,
 } from "@/lib/asset-images";
 import { templateForAsset } from "@/lib/post-chain";
+import { cn } from "@/lib/utils";
 import type { Asset } from "@/lib/types";
-
-const TYPE_ICON: Record<string, string> = {
-  instagram_post: "Camera",
-  email: "Mail",
-  article: "Newspaper",
-  social_post: "Share2",
-  note: "FileText",
-};
 
 const MODE_LABELS: Record<string, string> = {
   auto: "Auto-publish",
@@ -187,6 +183,13 @@ export function AssetDetailModal({
     () => (liBatch ? assetLiMedia(assetMeta) : []),
     [assetMeta, liBatch],
   );
+  // The engine ships an X thread's parts as `meta.thread` (materializeXPost)
+  // whether or not the markdown spells them out - the reader hangs them under
+  // the post as its replies when the markdown holds the opener alone.
+  const xThread = useMemo(
+    () => (xBatch ? xThreadParts(assetMeta?.thread) : []),
+    [assetMeta, xBatch],
+  );
 
   if (!asset) return null;
 
@@ -230,22 +233,26 @@ export function AssetDetailModal({
 
   const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
   const imageConcept = asset.meta?.imageConcept as string | undefined;
+  // The engine's email-safe render of a newsletter edition (2026-09-05). Only an
+  // email asset carries one; every other type keeps the plain content view.
+  const emailHtml = asset.type === "email" && typeof asset.meta?.html === "string" && asset.meta.html.length > 0 ? asset.meta.html : undefined;
   const slides = (asset.meta?.slides as SlideMeta[] | undefined)?.filter(Boolean) ?? [];
   const channels = asset.channels ?? [];
   const when = asset.scheduledAt ?? asset.recommendedAt;
+  // Every photo the post carries, in slide order, whatever shape the ingest
+  // wrote (meta.slides, meta.images, meta.files, imageUrl). The gallery below
+  // draws ALL of them: this modal used to show the first photo only for any
+  // post without structured meta.slides — every lab-imported carousel — and a
+  // thumbnail list for the rest, so "see each slide" was true for one shape.
   const images = assetImages(asset);
-  // The lead photo whenever this isn't a structured meta.slides carousel. NOT
-  // `length === 1`: a post with several photos and no meta.slides (every
-  // multi-photo lab import) would then show nothing at all, where the old
-  // asset.imageUrl-only cover at least showed the first one. The rest stay
-  // reachable via Download all below.
   const coverImageUrl = images.length > 0 ? images[0].url : null;
   const videos = assetVideos(asset);
-  // Whether this asset offers anything to download at all — same helper the
-  // buttons use, so the section and its contents cannot disagree. Locked assets
-  // returned at the guard above, so this is only ever an unlocked asset and the
-  // section can never render empty around a refused button.
+  // Whether this asset offers anything to download at all — the same helper
+  // the buttons use, so a mount and its contents cannot disagree. Photo-only
+  // posts get the control in the gallery's header; everything else (clips, or
+  // photos beside a clip) gets it once, below the media.
   const downloads = assetDownloadTargets(asset);
+  const showGallery = images.length > 0 && videos.length === 0;
 
   return (
     <Modal
@@ -282,7 +289,9 @@ export function AssetDetailModal({
         />
       ) : (
       <div className="space-y-4">
-        {/* Status + template + type row */}
+        {/* Status + template row. The asset's type used to print here too
+            ("instagram post" beside a camera); the photos below say it, so
+            it was a label for something already on screen (Albert, 2026-09-14). */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Never the raw enum. The tone stays local (presentation is this
               component's business); the WORD comes from the register the viewer
@@ -290,10 +299,6 @@ export function AssetDetailModal({
               archive one screen away already uses. */}
           <Badge tone={statusTone(asset.status)}>{assetStatusLabel(asset.status, viewerIsClient)}</Badge>
           {template && <Badge tone="neutral">{template.name}</Badge>}
-          <span className="inline-flex items-center gap-1.5 text-xs text-muted-2">
-            <Icon name={TYPE_ICON[asset.type] ?? "FileText"} className="h-3.5 w-3.5" />
-            {asset.type.replace(/_/g, " ")}
-          </span>
         </div>
 
         {/* SCRUM-404: the context-grounding note, ABOVE the content it
@@ -304,27 +309,34 @@ export function AssetDetailModal({
             path: a fully-grounded deliverable renders nothing new. */}
         {asset.contextGrounding && <ContextGroundingNotice grounding={asset.contextGrounding} />}
 
-        {/* Metadata grid */}
-        <div className="grid gap-3 rounded-md border border-border bg-surface-2 p-3 sm:grid-cols-2">
-          {when != null && (
-            <Meta
-              icon={asset.scheduledAt != null ? "CalendarClock" : "Sparkles"}
-              label={asset.scheduledAt != null ? "Scheduled for" : "Recommended slot"}
-              value={fmt(when)}
-            />
-          )}
-          {asset.publishMode && (
-            <Meta icon="Settings2" label="Publishing" value={MODE_LABELS[asset.publishMode] ?? asset.publishMode} />
-          )}
-          {asset.scheduledPlatform && (
-            <Meta icon="Send" label="Platform" value={PLATFORM_LABELS[asset.scheduledPlatform] ?? asset.scheduledPlatform} />
-          )}
-          <Meta
-            icon="Share2"
-            label="Channels"
-            value={channels.length ? channels.map((c) => PLATFORM_LABELS[c] ?? c).join(", ") : "-"}
-          />
-        </div>
+        {/* The facts, in one row. Only facts that exist: a "Channels: -" cell
+            told the reader nothing and cost a line, and the two-column grid
+            spread three short values over a card taller than the pills above
+            it. Same labels, same icons, one line on a desktop width. */}
+        {(when != null || asset.publishMode || asset.scheduledPlatform || channels.length > 0) && (
+          <div className="flex flex-wrap gap-x-6 gap-y-2 rounded-md border border-border bg-surface-2 px-3 py-2.5">
+            {when != null && (
+              <Meta
+                icon={asset.scheduledAt != null ? "CalendarClock" : "Sparkles"}
+                label={asset.scheduledAt != null ? "Scheduled for" : "Recommended slot"}
+                value={fmt(when)}
+              />
+            )}
+            {asset.publishMode && (
+              <Meta icon="Settings2" label="Publishing" value={MODE_LABELS[asset.publishMode] ?? asset.publishMode} />
+            )}
+            {asset.scheduledPlatform && (
+              <Meta icon="Send" label="Platform" value={PLATFORM_LABELS[asset.scheduledPlatform] ?? asset.scheduledPlatform} />
+            )}
+            {channels.length > 0 && (
+              <Meta
+                icon="Share2"
+                label="Channels"
+                value={channels.map((c) => PLATFORM_LABELS[c] ?? c).join(", ")}
+              />
+            )}
+          </div>
+        )}
 
         {asset.recommendedReason && asset.scheduledAt == null && (
           <p className="flex items-start gap-1.5 text-[11px] text-muted-2">
@@ -333,12 +345,15 @@ export function AssetDetailModal({
           </p>
         )}
 
-        {/* Cover image (non-carousel). Sourced from assetImages() rather than
-            asset.imageUrl alone, which missed any import whose photos landed in
-            meta.files - the same gap that rendered those assets' cards blank. */}
-        {slides.length === 0 && coverImageUrl && videos.length === 0 && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={coverImageUrl} alt={asset.title} className="w-full rounded-lg border border-border" />
+        {/* The photos — every slide of a carousel, one at a time with the rest
+            in a rail underneath, and the download control in the gallery's own
+            header where the thing it downloads is. A single-photo post is the
+            same component with no rail. Video posts keep the player below and
+            skip the gallery: their cover is the player's poster. */}
+        {showGallery && (
+          // Keyed on the asset so a different post in the same mounted modal
+          // starts on its first slide (state resets with the remount).
+          <SlideGallery key={asset.id} asset={asset} images={images} slides={slides} />
         )}
 
         {/* Video deliverables - podcast cuts, branded shorts, TikTok. Until
@@ -357,13 +372,22 @@ export function AssetDetailModal({
             className="max-h-96 w-full rounded-lg border border-border bg-black object-contain"
           />
         ))}
+        {/* Downloads — photos AND clips — for whatever the gallery is not
+            showing. Gated on the shared helper, never on photos: gating on
+            photos was the third place a video-only asset lost its control. */}
+        {downloads.length > 0 && (
+          !showGallery && (
+          <div className="flex justify-end">
+            <AssetDownloadButtons asset={asset} />
+          </div>
+        ))}
 
         {/* Content - a parsed drafts batch gets the per-draft reader (pick,
             edit, skip, each choice feeding the agent's next run); anything
             else gets the caption with a copy button. */}
         {liBatch ? (
           <div>
-            <p className="mb-1.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Drafts</p>
+            <p className="mb-1.5 text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">Drafts</p>
             <LiDraftsBatch
               clientId={asset.clientId}
               {...(asset.jobId ? { jobId: asset.jobId } : {})}
@@ -374,7 +398,7 @@ export function AssetDetailModal({
           </div>
         ) : redditBatch ? (
           <div>
-            <p className="mb-1.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Drafts</p>
+            <p className="mb-1.5 text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">Drafts</p>
             <RedditDraftsBatch
               clientId={asset.clientId}
               {...(asset.jobId ? { jobId: asset.jobId } : {})}
@@ -387,28 +411,54 @@ export function AssetDetailModal({
           </div>
         ) : xBatch ? (
           <div>
-            <p className="mb-1.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Drafts</p>
+            <p className="mb-1.5 text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">Drafts</p>
             <XDraftsBatch
               clientId={asset.clientId}
               {...(asset.jobId ? { jobId: asset.jobId } : {})}
               assetId={asset.id}
               accounts={xBatch.accounts}
+              {...(xThread.length > 0 ? { thread: xThread } : {})}
+            />
+          </div>
+        ) : emailHtml ? (
+          <div>
+            <p className="mb-1.5 text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">Edition</p>
+            {/* A newsletter's deliverable is the email, not the markdown: the
+                engine renders every approved edition to email-safe HTML in both
+                themes (asset.meta.html / htmlDark) and this shows that render,
+                with the text the reviewer read under its own tab. */}
+            <EmailPreview
+              html={emailHtml}
+              {...(typeof asset.meta?.htmlDark === "string" ? { htmlDark: asset.meta.htmlDark } : {})}
+              textFallback={
+                <div>
+                  <div className="mb-1.5 flex items-center justify-end">
+                    <CopyCaptionButton asset={asset} variant="full" />
+                  </div>
+                  <AssetContentBody content={asset.content} />
+                </div>
+              }
             />
           </div>
         ) : (
           <div>
             <div className="mb-1.5 flex items-center justify-between gap-2">
-              <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Content</p>
+              <p className="text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">
+                {images.length > 0 ? "Caption" : "Content"}
+              </p>
               {/* Posting happens by hand from a phone, and this modal is the
                   phone's way into a post - so copy is a primary action here, not
                   the card's hover-revealed icon. */}
               <CopyCaptionButton asset={asset} variant="full" />
             </div>
             <AssetContentBody content={asset.content} />
+            {hashtags.length > 0 && (
+              <p className="mt-2 text-xs text-muted">{hashtags.map((h) => "#" + h).join(" ")}</p>
+            )}
           </div>
         )}
 
-        {hashtags.length > 0 && (
+        {hashtags.length > 0 && (liBatch || redditBatch || xBatch || emailHtml) && (
           <p className="text-xs text-muted">{hashtags.map((h) => "#" + h).join(" ")}</p>
         )}
 
@@ -419,40 +469,6 @@ export function AssetDetailModal({
           </p>
         )}
 
-        {/* Carousel slides */}
-        {slides.length > 0 && (
-          <div className="space-y-2">
-            {slides.map((s, i) => (
-              <div key={i} className="flex gap-2 rounded-lg bg-surface-2 p-2">
-                {s.imageUrl && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={s.imageUrl} alt="" className="h-24 w-20 shrink-0 rounded border border-border object-cover" />
-                )}
-                <div className="min-w-0">
-                  <p className="text-xs font-medium">
-                    {i + 1}. {s.headline}
-                    {s.role ? <span className="text-muted-2"> · {s.role}</span> : null}
-                  </p>
-                  {s.body ? <p className="mt-0.5 whitespace-pre-wrap text-xs text-muted">{s.body}</p> : null}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Downloads — photos AND clips. Gating the section on photos was the
-            third place a video-only asset lost its download control, after the
-            button itself and the card's inline link. */}
-        {downloads.length > 0 && (
-          <div className="border-t border-border pt-3">
-            <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Download</p>
-            <AssetDownloadButtons asset={asset} />
-          </div>
-        )}
-
-        <ApproveRow asset={asset} canApprove={canPublish} connectedPlatforms={connectedPlatforms ?? []} />
-        <UnscheduleRow asset={asset} canApprove={canPublish} />
-
         {/* Unconditional on eligibility - a viewer with no Publish Now button (a
             client, or staff with no compatible connected platform) is exactly
             who most needs to see WHY a scheduled post never went out; the
@@ -460,16 +476,158 @@ export function AssetDetailModal({
         {asset.publishError && asset.status !== "published" && (
           <PublishStateNotice publishError={asset.publishError} />
         )}
-        <PublishNowRow
-          asset={asset}
-          canPublish={canPublish}
-          connectedPlatforms={connectedPlatforms ?? []}
-        />
-        <MarkPostedRow asset={asset} />
-        <PostManagementRow asset={asset} canManage={canPublish} />
+
+        <ActionFooter asset={asset} canPublish={canPublish} connectedPlatforms={connectedPlatforms ?? []} />
       </div>
       )}
     </Modal>
+  );
+}
+
+/**
+ * Every slide of a post, one at a time, with the rest visible in a rail
+ * underneath — the reader gets the whole carousel, not its cover.
+ *
+ * Three things this replaces at once: the cover-only `<img>` that any post
+ * without structured `meta.slides` got (every lab-imported carousel showed
+ * slide 1 and hid the other three behind "Download all"); the thumbnail list
+ * that the engine's own carousels got instead, which showed each slide at
+ * 80×96 beside a copy of text already painted on it; and the separate
+ * "Download" section two blocks further down, which is now the control in this
+ * gallery's header, beside the count of what it downloads.
+ *
+ * Scroll-snap does the paging so a phone swipes it natively; the arrows, the
+ * counter and the rail are the same gesture for a mouse. The rail's selected
+ * ring is the one orange in this block — a control, so the accent rule allows
+ * it.
+ */
+function SlideGallery({ asset, images, slides }: { asset: Asset; images: AssetImage[]; slides: SlideMeta[] }) {
+  const stripRef = useRef<HTMLDivElement>(null);
+  const [index, setIndex] = useState(0);
+  const count = images.length;
+  const many = count > 1;
+
+  // The strip is the source of truth for "which slide": a swipe, a wheel and an
+  // arrow press all end in a scroll, and this reads the landed position back.
+  const onScroll = useCallback(() => {
+    const el = stripRef.current;
+    if (!el || el.clientWidth === 0) return;
+    setIndex(Math.min(count - 1, Math.max(0, Math.round(el.scrollLeft / el.clientWidth))));
+  }, [count]);
+
+  const goTo = useCallback(
+    (i: number) => {
+      const el = stripRef.current;
+      if (!el) return;
+      const next = Math.min(count - 1, Math.max(0, i));
+      el.scrollTo({ left: next * el.clientWidth, behavior: "smooth" });
+      setIndex(next);
+    },
+    [count],
+  );
+
+  const current = slides[index];
+  const copy = current ? [current.headline, current.body].filter(Boolean).join(" · ") : null;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="inline-flex items-center gap-1.5 text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">
+          <Icon name={many ? "Images" : "Image"} className="h-3.5 w-3.5" />
+          {many ? `${count} slides` : "Photo"}
+        </p>
+        <AssetDownloadButtons asset={asset} />
+      </div>
+
+      <div
+        className="group relative overflow-hidden rounded-lg border border-border bg-surface-2"
+        tabIndex={many ? 0 : -1}
+        onKeyDown={(e) => {
+          if (!many) return;
+          if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            goTo(index - 1);
+          } else if (e.key === "ArrowRight") {
+            e.preventDefault();
+            goTo(index + 1);
+          }
+        }}
+        aria-roledescription={many ? "carousel" : undefined}
+        aria-label={many ? `${count} slides` : undefined}
+      >
+        <div
+          ref={stripRef}
+          onScroll={onScroll}
+          className="flex snap-x snap-mandatory overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {images.map((img, i) => (
+            <div key={img.url + i} className="w-full shrink-0 snap-start" aria-hidden={i !== index}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={img.url}
+                alt={many ? `Slide ${i + 1} of ${count}` : asset.title}
+                loading={i === 0 ? "eager" : "lazy"}
+                className="mx-auto max-h-[72vh] w-full object-contain"
+              />
+            </div>
+          ))}
+        </div>
+
+        {many && (
+          <>
+            <button
+              type="button"
+              onClick={() => goTo(index - 1)}
+              disabled={index === 0}
+              aria-label="Previous slide"
+              className="focus-ring absolute left-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 disabled:hidden"
+            >
+              <Icon name="ChevronLeft" className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => goTo(index + 1)}
+              disabled={index === count - 1}
+              aria-label="Next slide"
+              className="focus-ring absolute right-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/85 text-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 disabled:hidden"
+            >
+              <Icon name="ChevronRight" className="h-4 w-4" />
+            </button>
+            <span
+              aria-live="polite"
+              className="pointer-events-none absolute bottom-2 right-2 rounded-full border border-border bg-background/85 px-2 py-0.5 font-label text-[11px] tabular-nums text-foreground"
+            >
+              {index + 1} / {count}
+            </span>
+          </>
+        )}
+      </div>
+
+      {many && (
+        <div className="flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:thin]">
+          {images.map((img, i) => (
+            <button
+              key={img.url + i}
+              type="button"
+              onClick={() => goTo(i)}
+              aria-label={`Slide ${i + 1}`}
+              aria-current={i === index ? "true" : undefined}
+              className={cn(
+                "focus-ring shrink-0 overflow-hidden rounded border transition-opacity",
+                i === index ? "border-neon opacity-100 ring-1 ring-neon" : "border-border opacity-55 hover:opacity-100",
+              )}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={img.url} alt="" loading="lazy" className="h-14 w-11 object-cover" />
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* The current slide's copy, for a carousel the engine wrote as text +
+          image (meta.slides). Selectable, unlike the text painted on the PNG. */}
+      {copy && <p className="text-xs text-muted">{copy}</p>}
+    </div>
   );
 }
 
@@ -538,6 +696,67 @@ function AssetContentBody({ content }: { content: string }) {
 }
 
 /**
+ * Everything a viewer can DO to this post, in one bar at the bottom — the
+ * lifecycle move on the left (Approve, Publish now, Unschedule, Mark as posted),
+ * the destructive ones on the right (Unpublish, Delete). One hint line, for the
+ * leading action only.
+ *
+ * Before this each control was its own titled section ("Ready to approve?",
+ * "Change of plans?", "Manual push", "Already posted it?", "Manage this post"),
+ * every one with an eyebrow, a divider and a sentence, so a draft with two
+ * possible actions took four blocks and the panel read as a form. The same
+ * components answer the same eligibility questions as before (canApprove,
+ * isAssetPublishable, canMarkAssetPosted); only the chrome around them is
+ * shared now. Approving expands the shared ApprovePanel in place of the bar.
+ *
+ * Renders nothing when the viewer has nothing to do here (a client on a draft),
+ * so a client never sees an empty bar.
+ */
+function ActionFooter({
+  asset,
+  canPublish,
+  connectedPlatforms,
+}: {
+  asset: Asset;
+  canPublish: boolean;
+  connectedPlatforms: string[];
+}) {
+  const [approving, setApproving] = useState(false);
+
+  // Whether ANY control below would render, asked with the same predicates
+  // those controls use — so the bar cannot appear around nothing. The
+  // mark-posted rule reads the clock (has this post's day arrived), which is
+  // the point of it; the directive scopes to the next source line only.
+  // eslint-disable-next-line react-hooks/purity
+  const canMarkPosted = canMarkAssetPosted(asset, Date.now());
+  const isDraft = asset.status === "draft";
+  const isPlanned = asset.status === "approved" || asset.status === "scheduled";
+  if (!canPublish && !canMarkPosted) return null;
+
+  if (approving) {
+    return (
+      <div className="border-t border-border pt-1">
+        <ApprovePanel asset={asset} connectedPlatforms={connectedPlatforms} onDone={() => setApproving(false)} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-3 border-t border-border pt-3">
+      <div className="flex flex-wrap items-start gap-2">
+        {canPublish && isDraft && <ApproveInline asset={asset} onOpenPanel={() => setApproving(true)} />}
+        {canPublish && isPlanned && (
+          <PublishNowInline asset={asset} canPublish={canPublish} connectedPlatforms={connectedPlatforms} />
+        )}
+        {canPublish && isPlanned && <UnscheduleInline asset={asset} />}
+        <MarkPostedRow asset={asset} variant="button" />
+      </div>
+      <PostManagementRow asset={asset} canManage={canPublish} variant="button" />
+    </div>
+  );
+}
+
+/**
  * Approve a draft, from the calendar - the same two-step flow the staff Assets
  * list offers (asset-card.tsx): a non-schedulable draft (a note) approves
  * straight through, everything else opens the shared ApprovePanel to pick a
@@ -545,24 +764,14 @@ function AssetContentBody({ content }: { content: string }) {
  * ever DISPLAY a draft that had already been approved elsewhere - opening a
  * draft here offered no way to move it forward at all.
  *
- * Staff only, same gate as PublishNowRow: `approveAssetAction` is
- * `requireStaff()`, so a client-facing button could only ever error.
+ * Staff only, same gate as PublishNowInline: `approveAssetAction` is
+ * `requireStaff()`, so a client-facing button could only ever error. The
+ * caller (ActionFooter) has already checked the status.
  */
-function ApproveRow({
-  asset,
-  canApprove,
-  connectedPlatforms,
-}: {
-  asset: Asset;
-  canApprove: boolean;
-  connectedPlatforms: string[];
-}) {
+function ApproveInline({ asset, onOpenPanel }: { asset: Asset; onOpenPanel: () => void }) {
   const router = useRouter();
-  const [approving, setApproving] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  if (!canApprove || asset.status !== "draft") return null;
 
   // Notes have no scheduling dimension - same rule asset-card.tsx applies.
   const calendarEligible = asset.type !== "note";
@@ -581,35 +790,21 @@ function ApproveRow({
   }
 
   return (
-    <div className="border-t border-border pt-3">
-      {approving ? (
-        <ApprovePanel
-          asset={asset}
-          connectedPlatforms={connectedPlatforms}
-          onDone={() => setApproving(false)}
-        />
-      ) : (
-        <>
-          <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
-            Ready to approve?
-          </p>
-          <button
-            type="button"
-            onClick={() => (calendarEligible ? setApproving(true) : handleSimpleApprove())}
-            disabled={busy}
-            className="inline-flex h-11 items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground disabled:opacity-60"
-          >
-            <Icon name="Check" className="h-3.5 w-3.5" />
-            {busy ? "Approving…" : "Approve"}
-          </button>
-          <p className="mt-1.5 text-[11px] text-muted-2">
-            {calendarEligible
-              ? "Pick a publishing tier and a slot, then it lands on the content calendar."
-              : "Approves this draft."}
-          </p>
-          {error && <p className="mt-1.5 text-[11px] text-danger">{error}</p>}
-        </>
-      )}
+    <div className="flex flex-col gap-1">
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => (calendarEligible ? onOpenPanel() : handleSimpleApprove())}
+        loading={busy}
+        title={calendarEligible ? "Pick a publishing tier and a slot; it lands on the content calendar" : "Approves this draft"}
+      >
+        <Icon name="Check" className="h-3.5 w-3.5" />
+        Approve
+      </Button>
+      <p className="text-[11px] text-muted-2">
+        {calendarEligible ? "Pick a tier and a slot, then it lands on the calendar." : "Approves this draft."}
+      </p>
+      {error && <p className="text-[11px] text-danger">{error}</p>}
     </div>
   );
 }
@@ -617,14 +812,12 @@ function ApproveRow({
 /**
  * Revert an approved or scheduled post back to draft, from the calendar - the
  * same Unschedule the staff Assets list offers (asset-card.tsx). Staff only,
- * same gate as PublishNowRow.
+ * same gate as PublishNowInline; the caller has checked the status.
  */
-function UnscheduleRow({ asset, canApprove }: { asset: Asset; canApprove: boolean }) {
+function UnscheduleInline({ asset }: { asset: Asset }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  if (!canApprove || (asset.status !== "approved" && asset.status !== "scheduled")) return null;
 
   async function unschedule() {
     setBusy(true);
@@ -640,21 +833,12 @@ function UnscheduleRow({ asset, canApprove }: { asset: Asset; canApprove: boolea
   }
 
   return (
-    <div className="border-t border-border pt-3">
-      <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
-        Change of plans?
-      </p>
-      <button
-        type="button"
-        onClick={unschedule}
-        disabled={busy}
-        className="inline-flex h-11 items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground disabled:opacity-60"
-      >
+    <div className="flex flex-col gap-1">
+      <Button size="sm" variant="outline" onClick={unschedule} loading={busy} title="Pulls it off the calendar and reverts it to draft">
         <Icon name="RotateCcw" className="h-3.5 w-3.5" />
-        {busy ? "Working…" : "Unschedule"}
-      </button>
-      <p className="mt-1.5 text-[11px] text-muted-2">Pulls it off the calendar and reverts it to draft.</p>
-      {error && <p className="mt-1.5 text-[11px] text-danger">{error}</p>}
+        Unschedule
+      </Button>
+      {error && <p className="text-[11px] text-danger">{error}</p>}
     </div>
   );
 }
@@ -664,13 +848,13 @@ function UnscheduleRow({ asset, canApprove }: { asset: Asset; canApprove: boolea
  * user to use here ("On the calendar, you push it live with Publish Now").
  *
  * Staff only, and deliberately so: `publishAssetNowAction` is `requireStaff()`,
- * so a client-facing button could only ever error. It sits ABOVE MarkPostedRow
+ * so a client-facing button could only ever error. It sits BESIDE MarkPostedRow
  * and does not replace it - the two answer different questions. Publish Now is
  * "Karos pushes this through the connected integration now"; Mark as posted is
  * the client's attestation that they posted it by hand, and stays the only
  * control a client sees.
  */
-function PublishNowRow({
+function PublishNowInline({
   asset,
   canPublish,
   connectedPlatforms,
@@ -711,33 +895,16 @@ function PublishNowRow({
   }
 
   return (
-    <div className="border-t border-border pt-3">
-      <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
-        Manual push
-      </p>
-      <button
-        type="button"
-        onClick={publishNow}
-        disabled={busy}
-        className="inline-flex h-11 items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground disabled:opacity-60"
-      >
+    <div className="flex flex-col gap-1">
+      <Button size="sm" variant="outline" onClick={publishNow} loading={busy} title={`Pushes it live via ${PLATFORM_LABELS[target] ?? target} right now, whatever the schedule says`}>
         <Icon name="Send" className="h-3.5 w-3.5" />
-        {busy ? "Publishing…" : "Publish Now"}
-      </button>
-      <p className="mt-1.5 text-[11px] text-muted-2">
-        Pushes it live via {PLATFORM_LABELS[target] ?? target} right now, whatever the schedule says.
-      </p>
-      {error && <p className="mt-1.5 text-[11px] text-danger">{error}</p>}
+        Publish now
+      </Button>
+      <p className="text-[11px] text-muted-2">Live via {PLATFORM_LABELS[target] ?? target} now, whatever the schedule says.</p>
+      {error && <p className="text-[11px] text-danger">{error}</p>}
     </div>
   );
 }
-
-/**
- * "I posted this myself." The calendar → modal path is how a post gets read on
- * a phone, and posting is done by hand from there (copy the caption, paste it
- * into the platform), so this is where the loop has to be closed - without it
- * nothing the user does can ever move the asset off approved/scheduled.
- */
 
 function Meta({ icon, label, value }: { icon: string; label: string; value: string }) {
   return (

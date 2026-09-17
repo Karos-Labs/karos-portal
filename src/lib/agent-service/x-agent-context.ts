@@ -152,20 +152,25 @@ async function priorBatchFiles(
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, PRIOR_BATCHES);
 
-  const files: AgentServiceContextFile[] = [];
-  for (const job of jobs) {
-    const asset = await getAsset(job.assetIds[0]);
-    if (!asset?.content?.trim()) continue;
-    const when = new Date(job.createdAt).toISOString().slice(0, 10);
-    const name = `prior-batch-${when}-${job.id.slice(0, 6)}.md`;
-    files.push({
-      name,
-      url: await upload(clientId, runKey, name, asset.content.slice(0, PRIOR_BATCH_MAX_CHARS), "text/markdown"),
-      content_type: "text/markdown",
-      description: `A previous portal draft batch for this client (${when}). NEVER reuse its subjects, sources, quoted posts, or phrasings — treat every entry as already used.`,
-    });
-  }
-  return files;
+  // Read and upload the prior batches in PARALLEL rather than one at a time
+  // (review, 2026-09): this runs inside the submit action, so every sequential
+  // asset read plus GCS upload was wall-clock the person launching the run sat
+  // through. Mapping preserves order, so the files still arrive newest first.
+  const files = await Promise.all(
+    jobs.map(async (job): Promise<AgentServiceContextFile | null> => {
+      const asset = await getAsset(job.assetIds[0]);
+      if (!asset?.content?.trim()) return null;
+      const when = new Date(job.createdAt).toISOString().slice(0, 10);
+      const name = `prior-batch-${when}-${job.id.slice(0, 6)}.md`;
+      return {
+        name,
+        url: await upload(clientId, runKey, name, asset.content.slice(0, PRIOR_BATCH_MAX_CHARS), "text/markdown"),
+        content_type: "text/markdown",
+        description: `A previous portal draft batch for this client (${when}). NEVER reuse its subjects, sources, quoted posts, or phrasings — treat every entry as already used.`,
+      };
+    }),
+  );
+  return files.filter((f): f is AgentServiceContextFile => f !== null);
 }
 
 /**

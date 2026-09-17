@@ -33,6 +33,7 @@ import {
   perClientAgentSlug,
 } from "@/lib/custom-agent-launch";
 import type { Client, CustomAgent, JobRunType } from "@/lib/types";
+import { webhookCallbackOrigin } from "@/lib/app-origin";
 
 /* limits — mirror agent-service/src/schemas/task-types/custom.json */
 const MAX_INSTRUCTIONS_CHARS = 12_000;
@@ -105,10 +106,11 @@ export async function submitCustomAgentRun(args: {
     return { error: `Prompt is too long (max ${MAX_PROMPT_CHARS.toLocaleString()} characters).` };
   }
 
-  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.APP_URL;
-  if (!appUrl) {
-    return { error: "AGENT_SERVICE_CALLBACK_URL (or APP_URL) must be set for webhook callbacks." };
-  }
+  // SCRUM-332 (AU49) follow-up: see webhook-callback-origin.ts. Four sites
+  // wrote this by hand and one of them had drifted onto an unwired variable.
+  const callback = webhookCallbackOrigin();
+  if ("error" in callback) return { error: callback.error };
+  const appUrl = callback.origin;
 
   // X agent (e13): attach the portal-collected intake, ongoing boxes, and
   // per-account learning logs as context files (see x-agent-context.ts) so

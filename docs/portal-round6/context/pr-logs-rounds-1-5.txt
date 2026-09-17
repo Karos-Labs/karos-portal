@@ -1,0 +1,102 @@
+KAROS PORTAL — PR LOG (Albert's PRs, 2–4 Sep 2026)
+Repo: Karos-Labs/karos-portal · all three merged to main · main deploys to PREP only; production moves only via the manual Promote to Production workflow.
+
+================================================================
+PR #73 — Parity pass: staff client context == client portal; copilot rail collapse fix
+https://github.com/Karos-Labs/karos-portal/pull/73
+Merged: 2026-09-02T11:41:01Z · merge commit 6725d22 · 49 files · +2069 / -747
+
+COMMITS
+  8016ae8  Parity pass: staff client context == client portal; copilot rail coll…
+
+DESCRIPTION
+## Summary
+- **AI Copilot dock**: collapsed rail no longer shows a slice of the chat (root cause: the `overflow-hidden` clip frame was a scroll container that the chat's `scrollIntoView()`/`focus()` scrolled sideways). Now `overflow-clip` + `inert`; the whole collapsed strip expands on click, the round handle still toggles both ways. Model picker is one segmented Auto/Fast/Quality control on the composer's footer line.
+- **Staff "client context" mirrors the real client portal** (product owner ruling): same w-72 rail, sections, nav rows (shared `NavLink`), starred agents roster, credits pill + bell + `AccountMenu`, mobile top bar / 3-tab bar / Company sheet. Home renders the client's IA with the operator extras in one `StaffOnlySection`. Agents, agent detail, intakes, dynamic agents, Calendar and Account Center use the client's titles/copy; staff-only controls are fenced in `StaffOnlySection` or badged Internal.
+- Fixes along the way: employees' client picker was always empty; `toggleStarredAgentAction` now requires `canViewClient` for staff; dead `carousel-agent` route removed; roster/detail readiness contradiction fixed.
+- Open product decision: the calendar's "Schedule a run" stays staff-only (de-accented, badged Internal) even though the server action already allows clients.
+
+## Test plan
+- [x] `npx vitest run` — 5058 passed
+- [x] `npx tsc --noEmit` clean, eslint clean on all changed files
+- [ ] Visual pass in the browser (staff client context vs a real client sign-in) — pending a signed-in preview session
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+
+================================================================
+PR #76 — Portal feedback round 2: rail, Home tasks, Account Center side nav, Facebook out
+https://github.com/Karos-Labs/karos-portal/pull/76
+Merged: 2026-09-02T18:31:22Z · merge commit d5584c9 · 53 files · +1990 / -583
+
+COMMITS
+  df01b59  Portal feedback round 2: rail, Home tasks, Account Center side nav, F…
+  6b04b93  One calm "runs are paused" notice instead of three amber paragraphs
+
+DESCRIPTION
+## Summary
+- **Rail (both shells)**: account row is one menu control; AI agents list always open; brand card shows category + logo-only social squares that open each profile.
+- **Home**: recommended tasks listed on Home with X / "Let's do this" (navigates to the agent page with the task attached; a kickoff strip there starts it after context is added). Calendar-linked banner and "Generate more" removed from Home. Next actions uses the same row pattern.
+- **Agent detail**: connectors scoped to the agent's own platform; no Google on an Instagram agent.
+- **Account Center**: Archive tab removed (archive lives on the calendar at `?view=archive`, old links redirect), Meetings folded into Settings, tab strip replaced by a grouped side navigation (NN/g: no carousel tabs, no stacked rows) with a native picker below `md`.
+- **Facebook** removed from every user-facing list; stored data types/labels kept.
+- Fix: calendar view modes moved to a plain module so the server page stops importing a value across the client-module boundary (`/calendar` crashed with "find is not a function").
+
+## Test plan
+- [x] `npx vitest run` — 5125 passed
+- [x] `npx tsc --noEmit` clean, eslint clean on changed files
+- [x] Reviewed on localhost by the product owner
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+
+================================================================
+PR #79 — Portal flow-audit recommendations, rounds 4-5, credits rework (flagged), review wave
+https://github.com/Karos-Labs/karos-portal/pull/79
+Merged: 2026-09-04T09:49:22Z · merge commit e15f0d9 · 183 files · +18200 / -2008
+
+COMMITS
+  eb17f7f  Flow-audit recommendations, rounds 4-5, credits rework, and review wave
+  1f7c6c4  Merge remote-tracking branch 'origin/main' into claude/portal-flow-au…
+
+DESCRIPTION
+## Deployment scope
+**Prep only.** Merging to `main` deploys to `app-prep.karoslabs.com` via `deploy-prep.yml`. Production (`app.karoslabs.com`) moves only when someone runs the manual **Promote to Production** workflow. Do not run it for this change until it has been verified on prep.
+
+The credits rework ships **dark**: `CREDITS_PLAN_V2_ENABLED` is empty/`"0"` in `.env.example`, `cloudbuild.yaml`, `cloudbuild.promote.yaml` and the prep deploy substitution (`vars.PREP_CREDITS_PLAN_V2_ENABLED`, currently unset). Set the prep variable to `1` to test it there; production keeps the literal `"0"` default in the promote config and cannot inherit prep's value.
+
+## Summary
+- **Flow audit R1–R17** implemented (intake polling, in-app dynamic Run, prices on every metered control, undo instead of confirm, calendar state in the URL + Archive as its own control, one vocabulary, one row affordance, empty-state actions, honest bell rows, Team/meetings routes, copilot deliverable chip via a fenced read-only `GET /api/assets/[id]`, inline document reader, two-Save branding dialog, run button names its format).
+- **Reporting**: the canned "What we're fixing" plan is replaced by "Things only you can do" (client-owned, confirmed-confidence, capped at 5, no task creation); Performance/Connected channels removed from Reporting; one measurement line with engine logos; sans tabular numerals.
+- **Fonts**: DM Mono replaces JetBrains Mono for labels; numbers are sans + tabular.
+- **Home**: one "Get set up" checklist (6 steps, progress bar, per-client order written at onboarding) replaces Next actions + Recommended tasks; KPI cells link to their sources with a real 30-day chart; calendar preview rows carry platform marks and agent captions.
+- **Account Center**: all competitors with stored data + same-capture AI-mention share; Documents inside Profile; grouped side navigation with full tab ARIA.
+- **Credits (flagged)**: 2600/month cap + top-up, hold at dispatch settled to actual cost × 20 credits, seat/launch exempt, self-calibrating estimates, staff "cost to us" panel, agent-engine cost persisted, bounded and flag-gated settlement sweep.
+- **Review wave**: six area reviews over this branch plus PRs #73/#76, six fix rounds (employee bell scope, stale staff rail, pins on staff routes, timezone-safe calendar dates, archive filters on Back, open-redirect guard, competitor meter capture match, ladder never stuck, client-only reversible Hide, quote == hold).
+
+## Before enabling `CREDITS_PLAN_V2_ENABLED` on prep (from the money-code review)
+1. Dry-run `rollCreditWindows` against a snapshot of `clientCredits`: confirm no `monthSpent` reset outside a real month roll, and count docs whose caps equal the legacy 150/400 defaults (those migrate to 2600).
+2. Verify the month-roll top-up fires once under concurrent reads/charges.
+3. Exercise refund-then-settle and settle-then-refund on real Firestore; neither may produce both rows.
+4. Confirm every delivered agent-service run lands on `status === "review"` (the settlement key).
+5. View the Credits tab as a real client and check the page source for `actualUsd`.
+
+## Test plan
+- [x] `npx vitest run` — 5609 passed
+- [x] `npx tsc --noEmit` clean; eslint clean on changed files
+- [x] Reviewed on localhost by the product owner through rounds 2–5
+- [ ] Prep verification (above) before any production promotion
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+
+================================================================
+DEPLOYMENTS
+  prep  2026-09-04T13:34:56Z  19450d4  success
+  prep  2026-09-04T09:49:25Z  e15f0d9  success
+  prep  2026-09-03T08:00:54Z  957f1f4  success
+  prep  2026-09-03T06:02:01Z  3186496  success
+  prep  2026-09-02T18:46:10Z  0fef40a  success
+  prep  2026-09-02T18:31:31Z  d5584c9  success
+  PROD  2026-09-02T19:58:54Z  0fef40a  success  (workflow_dispatch)
+  PROD  2026-08-24T21:14:04Z  6a76387  success  (workflow_dispatch)

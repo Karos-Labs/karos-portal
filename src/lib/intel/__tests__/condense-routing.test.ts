@@ -64,7 +64,7 @@ const streamTextMock = vi.fn((opts: { model: TaggedModel }) => {
 });
 vi.mock("ai", () => ({ streamText: (opts: { model: TaggedModel }) => streamTextMock(opts) }));
 
-const { condenseDocs } = await import("../condense");
+const { condenseDocs, isTransientCondensationError, CONDENSATION_RETRY_DELAY_MS } = await import("../condense");
 const { HIGH_COMPLEXITY_MODEL, LARGE_CONTEXT_MODEL } = await import("../context-doc-routing");
 
 const CLIENT = { id: "acme", name: "Acme" } as never;
@@ -88,6 +88,8 @@ beforeEach(() => {
   streamTextMock.mockClear();
   trackStreamMock.mockClear();
   structuredLogMock.mockClear();
+  // The same-vendor retry waits 1.5s in production; the suite asserts call order, not wall-clock.
+  CONDENSATION_RETRY_DELAY_MS.current = 0;
 });
 
 describe("baseline routing — Vertex-primary, Anthropic-fallback (AC1)", () => {
@@ -114,9 +116,9 @@ describe("baseline routing — Vertex-primary, Anthropic-fallback (AC1)", () => 
     const [doc] = await condenseDocs(CLIENT, ["brand-voice"] as never, { "brand-voice": SIMPLE_DOC }, "rules");
 
     expect(doc.content).toBe(SIMPLE_DOC);
-    expect(streamTextMock).toHaveBeenCalledTimes(2);
-    expect(streamTextMock.mock.calls[0]![0].model.__vendor).toBe("vertex");
-    expect(streamTextMock.mock.calls[1]![0].model.__vendor).toBe("anthropic");
+    // A 503 is transient, so Vertex gets one same-vendor retry before the fallback vendor is tried.
+    expect(streamTextMock).toHaveBeenCalledTimes(3);
+    expect(streamTextMock.mock.calls.map((c) => c[0]!.model.__vendor)).toEqual(["vertex", "vertex", "anthropic"]);
     // The successful attempt (anthropic) is what gets billed/logged.
     expect(trackStreamMock).toHaveBeenCalledTimes(1);
     expect(trackStreamMock.mock.calls[0]![1]).toMatchObject({ vendor: "anthropic" });
@@ -128,14 +130,53 @@ describe("baseline routing — Vertex-primary, Anthropic-fallback (AC1)", () => 
     expect(fallbackCall![2]).toMatchObject({ from: "vertex", to: "anthropic" });
   });
 
-  it("rejects with the last vendor's real error when EVERY candidate fails", async () => {
+  it("returns the document EMPTY (no client-tier copy) and logs the last vendor's real error when EVERY candidate fails — never fails the run", async () => {
     handleCall = (model) => {
       throw new Error(`${model.__vendor} exploded`);
     };
-    await expect(
-      condenseDocs(CLIENT, ["brand-voice"] as never, { "brand-voice": SIMPLE_DOC }, "rules"),
-    ).rejects.toThrow(/anthropic exploded/);
+    const [doc] = await condenseDocs(CLIENT, ["brand-voice"] as never, { "brand-voice": SIMPLE_DOC }, "rules");
+    expect(doc).toEqual({ docType: "brand-voice", content: "" });
+    // "exploded" is not a transient failure, so each vendor is tried exactly once.
     expect(streamTextMock).toHaveBeenCalledTimes(2);
+    const failed = structuredLogMock.mock.calls.find((c) => (c[2] as { event?: string } | undefined)?.event === "context_document.condense_failed");
+    expect(failed).toBeDefined();
+    expect(failed![0]).toBe("ERROR");
+    expect(failed![2]).toMatchObject({ docType: "brand-voice", error: "anthropic exploded" });
+  });
+
+  it("retries a transient failure once on the same vendor before falling back — the 2026-09-07 'No output generated' shape", async () => {
+    CONDENSATION_RETRY_DELAY_MS.current = 0;
+    let vertexCalls = 0;
+    handleCall = (model) => {
+      if (model.__vendor === "vertex") {
+        vertexCalls += 1;
+        if (vertexCalls === 1) throw new Error("No output generated. Check the stream for errors.");
+        return SIMPLE_DOC;
+      }
+      return "WRONG VENDOR";
+    };
+    const [doc] = await condenseDocs(CLIENT, ["brand-voice"] as never, { "brand-voice": SIMPLE_DOC }, "rules");
+    expect(doc.content).toBe(SIMPLE_DOC);
+    // vertex(transient) + vertex(retry, ok) — Anthropic never needed.
+    expect(streamTextMock).toHaveBeenCalledTimes(2);
+    expect(streamTextMock.mock.calls.map((c) => c[0]!.model.__vendor)).toEqual(["vertex", "vertex"]);
+    const retry = structuredLogMock.mock.calls.find((c) => (c[2] as { event?: string } | undefined)?.event === "context_document.condense_attempt_retry");
+    expect(retry).toBeDefined();
+    expect(isTransientCondensationError(new Error("Cannot connect to API: other side closed"))).toBe(true);
+    expect(isTransientCondensationError(new Error("invalid api key"))).toBe(false);
+  });
+
+  it("an escalated document that Opus cannot answer is condensed by the Sonnet baseline instead of failing", async () => {
+    CONDENSATION_RETRY_DELAY_MS.current = 0;
+    handleCall = (model) => {
+      if (model.__id === HIGH_COMPLEXITY_MODEL) throw new Error("No output generated. Check the stream for errors.");
+      if (model.__vendor === "vertex") throw new Error("vertex unavailable (503)");
+      return COMPLEX_DOC;
+    };
+    const [doc] = await condenseDocs(CLIENT, ["competitor-analysis"] as never, { "competitor-analysis": COMPLEX_DOC }, "rules");
+    expect(doc.content).toBe(COMPLEX_DOC);
+    // opus(transient) + opus(retry) + vertex(503) + vertex(retry) + anthropic sonnet(ok)
+    expect(streamTextMock.mock.calls.map((c) => c[0]!.model.__id === HIGH_COMPLEXITY_MODEL ? "opus" : c[0]!.model.__vendor)).toEqual(["opus", "opus", "vertex", "vertex", "anthropic"]);
   });
 
   it("re-attempts Vertex first on the truncation retry too — the fallback is not sticky across passes", async () => {

@@ -94,6 +94,12 @@ export interface AgentEngineScoreBreakdown {
   score: number;
   dataCoveragePct: number;
   inputs?: AgentEngineEvaluatedInput[];
+  /**
+   * The same points over the MEASURED weight only (engine 2026-09-07+): what
+   * the site scored on the checks that actually ran. `null` when nothing was
+   * measured; absent on deliverables from before the field existed.
+   */
+  measuredBasisScore?: number | null;
 }
 
 /** `SeoGeoPrompt` — one entry of `promptSet.prompts`. */
@@ -117,6 +123,8 @@ export interface AgentEngineSeoGeoReport {
   promptSet?: {
     prompts?: AgentEngineSeoGeoPrompt[];
   };
+  /** Plain-language observations from the engine's four reads (technical crawl, on-page audit, Core Web Vitals, Wikidata) — engine 2026-09-07+. */
+  measuredFacts?: string[];
 }
 
 /**

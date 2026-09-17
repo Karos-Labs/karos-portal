@@ -141,7 +141,26 @@ export async function dispatchViaMiddleware(
   }
 
   const headers: Record<string, string> = { "content-type": "application/json" };
-  const idToken = await iamIdToken();
+  /**
+   * A MINT THAT FAILS IS RECOVERABLE, exactly like the 401 it would have
+   * produced (SCRUM-330 / AU47). `middlewareIdToken` used to answer `undefined`
+   * on a failed mint and the request went out unauthenticated; it now throws,
+   * which is right - but a raw throw here would escape as a failed JOB, where
+   * the same condition arriving as a 401 falls back to direct Pub/Sub and the
+   * client's post still gets made. `statusIsRecoverable` says why 401 is on
+   * that list: "no/expired identity token — a config problem, not the job's
+   * fault." Nothing has been dispatched at this point, so falling back cannot
+   * double-run.
+   */
+  let idToken: string | undefined;
+  try {
+    idToken = await iamIdToken();
+  } catch (cause) {
+    throw new MiddlewareDispatchError(
+      `Agent middleware credentials unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { shouldFallBack: true, cause },
+    );
+  }
   if (idToken) headers.authorization = `Bearer ${idToken}`;
 
   const body = {

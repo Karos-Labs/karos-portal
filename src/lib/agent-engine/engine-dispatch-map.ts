@@ -11,9 +11,10 @@
  * ## Why this type exists at all (T-B21)
  *
  * The real gate is `resolveDispatchedAgentEngineProductId` (./health.ts): the
- * three-part predicate `submit-custom.ts` applies per run — dispatch enabled,
- * AND this client on `AGENT_ENGINE_CUSTOM_AGENT_CLIENTS`, AND the agent key
- * routable. That module is `import "server-only"` and reads `process.env`, so
+ * predicate `submit-custom.ts` applies per run — dispatch enabled, AND this
+ * client has a lab slug to run as, AND the agent key routable (the per-client
+ * allowlist that used to sit between those was removed 2026-09-06; see
+ * health.ts). That module is `import "server-only"` and reads `process.env`, so
  * a `"use client"` run dialog cannot ask it and must be told the answer.
  *
  * Before this, the dialog asked `resolveAgentEngineProductIdForCustomAgent(

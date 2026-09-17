@@ -514,3 +514,73 @@ describe("updateSeatAssignmentAction — linking a login to a seat", () => {
     expect(data.upsertUser).not.toHaveBeenCalled();
   });
 });
+
+describe("updateTeamMemberAction — writes the three team-page fields and nothing else", () => {
+  const TARGET = { ...EMPLOYEE, uid: "u-target", assignedClientIds: ["c1"] };
+
+  beforeEach(() => {
+    vi.mocked(data.getUser).mockResolvedValue(TARGET as any);
+  });
+
+  it("drops every AppUser field that is not role, disabled or assignedClientIds", async () => {
+    // Each of these used to land: `uid` would have written a DIFFERENT document
+    // (`upsertUser` keys on it), `clientId` would have re-homed a login into
+    // another tenant, and the rest are the record's own bookkeeping.
+    await userActions.updateTeamMemberAction("u-target", {
+      role: "KAROS_ADMIN",
+      uid: "u-someone-else",
+      clientId: "c-other",
+      email: "attacker@evil.test",
+      approvedAt: 1,
+      createdAt: 1,
+      isGroupAdmin: true,
+      impersonatedBy: "x",
+    } as any);
+
+    const written = vi.mocked(data.upsertUser).mock.calls[0]![0] as unknown as Record<string, unknown>;
+    expect(written).toMatchObject({ uid: "u-target", role: "KAROS_ADMIN", clientId: null, email: EMPLOYEE.email });
+    for (const key of ["approvedAt", "createdAt", "isGroupAdmin", "impersonatedBy"]) {
+      expect(written, key).not.toHaveProperty(key);
+    }
+  });
+
+  it("refuses an unknown role rather than storing the string", async () => {
+    await expect(userActions.updateTeamMemberAction("u-target", { role: "SUPERUSER" } as any)).rejects.toThrow(
+      "Unknown role",
+    );
+    expect(data.upsertUser).not.toHaveBeenCalled();
+  });
+
+  it("refuses a non-list of client ids, and dedupes and trims a real one", async () => {
+    await expect(
+      userActions.updateTeamMemberAction("u-target", { assignedClientIds: "c1" } as any),
+    ).rejects.toThrow("assignedClientIds");
+    expect(data.upsertUser).not.toHaveBeenCalled();
+
+    await userActions.updateTeamMemberAction("u-target", { assignedClientIds: [" c1", "c2", "c1", ""] });
+    expect(vi.mocked(data.upsertUser).mock.calls[0]![0]).toMatchObject({ assignedClientIds: ["c1", "c2"] });
+  });
+
+  it("will not let an admin demote or disable their own account", async () => {
+    // The UI already greys out the self row; the server is where the rule has to
+    // hold, because the failure mode is an agency with no admin left to fix it.
+    vi.mocked(data.getUser).mockResolvedValue(ADMIN as any);
+
+    await expect(userActions.updateTeamMemberAction(ADMIN.uid, { role: "KAROS_EMPLOYEE" })).rejects.toThrow(
+      "your own role",
+    );
+    await expect(userActions.updateTeamMemberAction(ADMIN.uid, { disabled: true })).rejects.toThrow(
+      "your own account",
+    );
+    expect(data.upsertUser).not.toHaveBeenCalled();
+    // Re-enabling oneself is not a lockout and stays allowed.
+    await userActions.updateTeamMemberAction(ADMIN.uid, { disabled: false });
+    expect(data.upsertUser).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes nothing when the patch names none of the three fields", async () => {
+    await userActions.updateTeamMemberAction("u-target", { name: "Renamed" } as any);
+    expect(data.upsertUser).not.toHaveBeenCalled();
+    expect(firebase().updateUser).not.toHaveBeenCalled();
+  });
+});

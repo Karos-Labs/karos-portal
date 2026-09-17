@@ -33,6 +33,14 @@ export function isBillableClientActor(
   return user.role === "CLIENT_USER" && !user.impersonatedBy;
 }
 
+/**
+ * What staff read beside a run's price. The figure is what a CLIENT is held
+ * for the same run; a staff member's own run charges nobody (see
+ * `isBillableClientActor`), so the "· billed to the client" this replaced said,
+ * beside their own Run button, the opposite of what happens (2026-09-11).
+ */
+export const STAFF_RUN_PRICE_NOTE = " · free for staff";
+
 /* ── Pricing ─────────────────────────────────────────────────────── */
 
 /* ── What a credit IS (credits rework, 2026-09) ───────────────────── */

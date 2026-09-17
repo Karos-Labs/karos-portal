@@ -278,28 +278,74 @@ function materializeDraftBatch(
   };
 }
 
-function materializeXPost(deliverable: Record<string, unknown>): AssetMaterialization {
-  return materializeDraftBatch(deliverable, {
+/**
+ * The picture an X or LinkedIn deliverable resolved for itself (agent-engine
+ * RFC-12, 2026-09): `deliverable.media` carries the staged signed URL of the
+ * screenshot / article image / stock photo / generated frame the run chose,
+ * plus its provenance. The signed URL expires in seven days and points at a
+ * bucket this portal does not control, so it is re-hosted the same way a
+ * carousel slide is, and lands in two places the reader already understands:
+ * `imageUrl` (the card's cover) and `meta.artifacts` (the LinkedIn reader's
+ * "attach when posting" list, `assetLiMedia`). Provenance rides in `meta.media`
+ * so a reviewer can see WHY this picture (a credited screenshot of the cited
+ * page is not the same thing as a licensed stock photo).
+ *
+ * Before this, prep job eIruxfiBhYTFHgfXKWK5 resolved a TechCrunch screenshot,
+ * staged it, wrote `Media: <signed url>` into the DRAFTS.md — and the asset
+ * showed no image at review, because nothing here ever read `media`.
+ */
+async function rehostDeliverableMedia(
+  job: Job,
+  deliverable: Record<string, unknown>,
+): Promise<{ imageUrl: string; artifact: { name: string; url: string; contentType: string } } | undefined> {
+  const media = rec(deliverable.media);
+  const url = typeof media.url === "string" ? media.url : undefined;
+  if (!url || !url.startsWith("https://")) return undefined;
+  const source = typeof media.path === "string" ? media.path : url.split("?")[0] ?? "";
+  const ext = /\.(jpe?g|png|webp)$/i.exec(source)?.[1]?.toLowerCase() ?? "png";
+  const contentType = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+  const name = `media.${ext === "jpeg" ? "jpg" : ext}`;
+  const rehosted = await rehostIfFetchable(url, `agent-engine/${job.id}/${name}`, contentType);
+  if (!rehosted) return undefined;
+  return { imageUrl: rehosted, artifact: { name, url: rehosted, contentType } };
+}
+
+async function withDeliverableMedia(job: Job, deliverable: Record<string, unknown>, base: AssetMaterialization): Promise<AssetMaterialization> {
+  const media = await rehostDeliverableMedia(job, deliverable);
+  if (!media) return base;
+  return {
+    ...base,
+    imageUrl: media.imageUrl,
+    meta: { ...base.meta, artifacts: [media.artifact] },
+  };
+}
+
+async function materializeXPost(job: Job, deliverable: Record<string, unknown>): Promise<AssetMaterialization> {
+  const base = materializeDraftBatch(deliverable, {
     readerField: "draftsMarkdown",
     rawTextFields: ["text", "mainPostText"],
     channels: ["twitter"],
     titleFrom: ["hook", "text", "mainPostText"],
     titleWhenAbsent: "X post",
-    metaFields: ["lane", "angle", "targetHandle", "hook", "mediaRefs"],
+    // `media`/`mediaStatus`/`mediaRationale`/`contentMode`/`thread`: RFC-12's
+    // additions — provenance of the picture, the kind of post, the thread parts.
+    metaFields: ["lane", "angle", "targetHandle", "hook", "mediaRefs", "media", "mediaStatus", "mediaRationale", "contentMode", "thread"],
   });
+  return withDeliverableMedia(job, deliverable, base);
 }
 
-function materializeLinkedInPost(deliverable: Record<string, unknown>): AssetMaterialization {
+async function materializeLinkedInPost(job: Job, deliverable: Record<string, unknown>): Promise<AssetMaterialization> {
   // `hashtags` keeps that exact key: the AssetCard reads `meta.hashtags`
   // directly for its own chip row, so it may not travel inside a nested blob.
-  return materializeDraftBatch(deliverable, {
+  const base = materializeDraftBatch(deliverable, {
     readerField: "draftsMarkdown",
     rawTextFields: ["text", "body"],
     channels: ["linkedin"],
     titleFrom: ["headline", "hook", "text"],
     titleWhenAbsent: "LinkedIn post",
-    metaFields: ["archetype", "hook", "hashtags", "callToAction", "targetAudience"],
+    metaFields: ["archetype", "hook", "hashtags", "callToAction", "targetAudience", "takeaway", "media", "mediaStatus", "mediaRationale", "contentMode", "formattingNotes"],
   });
+  return withDeliverableMedia(job, deliverable, base);
 }
 
 function materializeRedditReply(deliverable: Record<string, unknown>): AssetMaterialization {
@@ -339,6 +385,11 @@ function materializeBlogPost(deliverable: Record<string, unknown>): AssetMateria
  * The newsletter edition. `text` is the agent's own assembled body; when it is
  * absent the intro/sections/signoff are stitched into one readable document
  * rather than handing over an empty asset with the real content buried in meta.
+ *
+ * `html` / `htmlDark` (2026-09-05) are the engine's email-safe renders of the
+ * same edition (600px table layout, inline styles, both themes), carried in
+ * meta so the asset modal can show the real email and hand the customer the
+ * HTML to paste into their email platform. `content` stays the markdown text.
  */
 function materializeNewsletterEdition(deliverable: Record<string, unknown>): AssetMaterialization {
   const stitched = joinBlocks([
@@ -362,6 +413,8 @@ function materializeNewsletterEdition(deliverable: Record<string, unknown>): Ass
       "footerDisclaimer",
       "unsubscribeUrl",
       "companyAddress",
+      "html",
+      "htmlDark",
     ]),
   };
 }
@@ -640,12 +693,27 @@ export function materializeSeoGeoReport(deliverable: Record<string, unknown>): A
   const geoScore = rec(deliverable["geoReadiness"])["score"];
   const recommendations = objArray(deliverable["firedRecommendations"]);
 
-  const scoreLine = [
-    typeof seoScore === "number" ? `SEO ${seoScore}` : undefined,
-    typeof geoScore === "number" ? `GEO readiness ${geoScore}` : undefined,
-  ]
+  const seoBasis = rec(deliverable["seoScore"])["measuredBasisScore"];
+  const geoBasis = rec(deliverable["geoReadiness"])["measuredBasisScore"];
+  const seoCoverage = rec(deliverable["seoScore"])["dataCoveragePct"];
+  const geoCoverage = rec(deliverable["geoReadiness"])["dataCoveragePct"];
+  const withBasis = (label: string, score: unknown, coverage: unknown, basis: unknown): string | undefined => {
+    if (typeof score !== "number") return undefined;
+    // Both halves when the engine reported them: the coverage-weighted score
+    // alone reads low for a site that passed everything the audit could see.
+    const detail = [
+      typeof coverage === "number" ? `${Math.round(coverage)}% measured` : undefined,
+      typeof basis === "number" ? `${basis} on measured checks` : undefined,
+    ].filter((part): part is string => Boolean(part));
+    return `${label} ${score}${detail.length ? ` (${detail.join(", ")})` : ""}`;
+  };
+  const scoreLine = [withBasis("SEO", seoScore, seoCoverage, seoBasis), withBasis("GEO readiness", geoScore, geoCoverage, geoBasis)]
     .filter((part): part is string => Boolean(part))
     .join(" · ");
+  const measuredFactsBlock = (Array.isArray(deliverable["measuredFacts"]) ? deliverable["measuredFacts"] : [])
+    .filter((fact): fact is string => typeof fact === "string" && fact.trim().length > 0)
+    .map((fact) => `- ${fact}`)
+    .join("\n");
 
   // Never narrower than the raw payload: an older/partial record (missing
   // `recommendation`, or predating C2's routing fields entirely) still gets
@@ -696,6 +764,9 @@ export function materializeSeoGeoReport(deliverable: Record<string, unknown>): A
     content: joinBlocks([
       scoreLine ? `**${scoreLine}**` : undefined,
       str(deliverable["narrative"]),
+      // The engine's own observations (2026-09-07+): what the crawl, the page
+      // audit, Core Web Vitals and Wikidata actually saw. Absent on older reports.
+      measuredFactsBlock ? `## What the audit measured\n\n${measuredFactsBlock}` : undefined,
       recommendationBlock ? `## Recommendations (${recommendations.length})\n\n${recommendationBlock}` : undefined,
       ownerMixLine,
     ]),
@@ -836,9 +907,9 @@ async function buildMaterialization(job: Job, productId: string, deliverable: un
   const fields = rec(deliverable);
   switch (productId) {
     case "x-agent":
-      return materializeXPost(fields);
+      return materializeXPost(job, fields);
     case "linkedin-agent":
-      return materializeLinkedInPost(fields);
+      return materializeLinkedInPost(job, fields);
     case "reddit-agent":
       return materializeRedditReply(fields);
     case "blog-agent":

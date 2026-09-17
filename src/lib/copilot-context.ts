@@ -229,9 +229,9 @@ export function buildCopilotSystemPrompt(
       // read, asked here so the dock and the badge cannot say different words
       // about the same run ("review" vs "In review").
       //
-      // Not viewer-split, because that register is not: unlike a deliverable's
-      // publish status, a run's state reads the same to whoever is watching it.
-      parts.push(`- ${j.agentName}: "${j.title}" — **${jobStatusLabel(j.status)}**`);
+      // Viewer-split, because that register is: a client is never told a run
+      // is in review or approved, so the model gets the client's word ("Done").
+      parts.push(`- ${j.agentName}: "${j.title}" — **${jobStatusLabel(j.status, viewerIsClient)}**`);
     }
     parts.push("");
   }

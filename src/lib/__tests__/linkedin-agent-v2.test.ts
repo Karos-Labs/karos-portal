@@ -11,7 +11,6 @@ import {
   isSupersededAgentKey,
   isUnlistedAgent,
   isLinkedInAgentIdentity,
-  groupAgentsByParent,
   listableAgents,
   launchProfileFor,
   linkedInSeatIdentityToken,
@@ -130,23 +129,6 @@ describe("the LinkedIn agent is ONE agent on the portal", () => {
     const listed = listableAgents(roster).map((a) => a.key);
     expect(listed).toEqual([WRITER, "karos-x-agent-v2"]);
     expect(listed.filter((k) => k.includes("linkedin"))).toHaveLength(1);
-  });
-
-  it("nests steps under their parent for the library, and never drops an orphan", () => {
-    const agents = [
-      { key: WRITER, name: "LinkedIn Agent" },
-      { key: SETUP, name: "LinkedIn Setup", parentKey: WRITER },
-      { key: "karos-x-agent-v2", name: "X Agent" },
-      { key: "stray", name: "Stray Step", parentKey: "karos-typo-agent" },
-    ];
-    const { parents, orphans } = groupAgentsByParent(agents);
-    expect(parents.map((p) => p.agent.key)).toEqual([WRITER, "karos-x-agent-v2"]);
-    expect(parents[0].children.map((c) => c.name)).toEqual(["LinkedIn Setup"]);
-    expect(parents[1].children).toEqual([]);
-    // A step whose parentKey matches nothing is RETURNED, not swallowed: a
-    // dropped orphan is an agent nobody can find or fix, and a typo'd parentKey
-    // is the usual cause.
-    expect(orphans.map((o) => o.key)).toEqual(["stray"]);
   });
 
   it("keeps every unlisted key inside the FAMILY, so its runs are still gated and fed", () => {
@@ -486,41 +468,14 @@ describe("the instructions doc", () => {
   });
 });
 
-describe("the admin library drops superseded agents entirely", () => {
-  const hub = readFileSync(join(process.cwd(), "src/components/custom-agents.tsx"), "utf8");
-
-  it("renders only the active entries, with no archive section", () => {
-    // The rule changed (Ben, 2026-08-05): a superseded agent is DELETED from
-    // Firestore, not archived, so a "legacy" section would only ever be empty.
-    // The filter stays as the belt to that braces — a doc that survives a
-    // deletion, or a key added to the predicate before its cleanup runs, must not
-    // reappear on the hub.
-    expect(hub).toContain("libraryEntries.filter((e) => !isSupersededAgentKey(e.agent.key))");
-    expect(hub).toContain("{activeEntries.map(renderEntry)}");
-    // Nothing renders them, and no second grid exists to.
-    expect(hub).not.toContain("legacyEntries");
-    expect(hub).not.toContain("Legacy and superseded");
-  });
-
+describe("superseded agents stay off every roster", () => {
   it("still filters them OUT of the surfaces a client sees", () => {
-    // The library is the one place they stay reachable. Every client-facing roster
-    // drops them, and that asymmetry is the design, not an oversight.
+    // A superseded agent is DELETED from Firestore, not archived (Ben,
+    // 2026-08-05), and the staff library that once listed them was deleted with
+    // CustomAgentsHub. The predicate is the belt to those braces: a doc that
+    // survives its deletion, or a key added here before its cleanup runs, must
+    // not come back as a live card on any roster.
     expect(isUnlistedAgent({ key: "karos-linkedin-company-karoslabs" })).toBe(true);
     expect(isUnlistedAgent({ key: "karos-reddit-agent" })).toBe(true);
-  });
-
-  it("shows the manifest's REASON for a block, not just the word", () => {
-    // "blocked" is overloaded: an egress constraint on the Reddit agents, "in
-    // build, no pilot run yet" on the v2 skills. Neither is a broken build, which
-    // is what a bare danger-red "Blocked in repo" implied.
-    expect(hub).toContain("blockedLabel(agent.source.blocked_reason)");
-    expect(hub).toContain('<Badge tone="warning">');
-    // Asserted on the RENDERED text, not the file: the comment above the badge
-    // quotes the old label to explain what changed, and a whole-file match would
-    // be kept red by the explanation.
-    expect(hub).not.toContain(">Blocked in repo<");
-    // The full reason has to be reachable: the stored values run 374-731 chars, so
-    // the badge shows a lead and the title carries the rest.
-    expect(hub).toContain("title={agent.source.blocked_reason ??");
   });
 });

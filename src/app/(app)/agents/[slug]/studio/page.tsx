@@ -64,11 +64,15 @@ export default async function AgentStudioPage({
   });
   if (!agent) notFound();
 
+  /** Panels the control plane did not answer for, by name; the Studio says so instead of showing an empty editor. */
+  const unavailable: string[] = [];
+
   /** A panel's data, or null — never a thrown error that takes the page with it. */
   async function soft<T>(load: () => Promise<T>, panel: string): Promise<T | null> {
     try {
       return await load();
     } catch (error) {
+      unavailable.push(panel);
       console.warn(
         JSON.stringify({
           severity: "WARNING",
@@ -107,6 +111,7 @@ export default async function AgentStudioPage({
         templates={(templates as MiddlewareTemplate[] | null) ?? []}
         models={(models as MiddlewareModel[] | null) ?? []}
         feedback={(feedback as MiddlewareFeedback[] | null) ?? []}
+        unavailable={unavailable}
       />
     </>
   );

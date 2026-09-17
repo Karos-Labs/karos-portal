@@ -108,7 +108,7 @@ describe("a Vertex-resolved model id is costed at its own rate", () => {
     biRows.length = 0;
   });
 
-  it("prices claude-haiku-4-5@20251001 as Haiku ($0.80/$4.00), not as the Sonnet default", async () => {
+  it("prices claude-haiku-4-5@20251001 as Haiku ($1/$5), not as the Sonnet default", async () => {
     logger.logUsage({
       clientId: null,
       agentId: null,
@@ -123,8 +123,8 @@ describe("a Vertex-resolved model id is costed at its own rate", () => {
 
     const row = usageRow();
     expect(row, "logUsage wrote no usageLogs row").toBeDefined();
-    // 1M in * $0.80 + 1M out * $4.00 = $4.80.
-    expect(row!["estimatedCostUsd"]).toBe(4.8);
+    // 1M in * $1.00 + 1M out * $5.00 = $6.00 (Haiku 4.5, published 2026-09-08).
+    expect(row!["estimatedCostUsd"]).toBe(6);
     // What the flat `?? _default` lookup produced for the same call: $18.00.
     expect(row!["estimatedCostUsd"]).not.toBe(18);
   });
@@ -143,6 +143,6 @@ describe("a Vertex-resolved model id is costed at its own rate", () => {
 
     expect(biRows).toHaveLength(1);
     expect(biRows[0]!["model"]).toBe("claude-haiku-4-5@20251001");
-    expect(biRows[0]!["costUsd"]).toBe(0.0048);
+    expect(biRows[0]!["costUsd"]).toBe(0.006);
   });
 });

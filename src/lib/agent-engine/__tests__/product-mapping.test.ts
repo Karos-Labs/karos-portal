@@ -1,9 +1,14 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { launchProfileFor, withEngineRunFields, BATCH_SIZE_FIELD_KEY } from "@/lib/custom-agent-launch";
 import {
-  isClientEnabledForEngineCustomAgents,
+  ALL_LAUNCH_PROFILES,
+  BATCH_SIZE_FIELD_KEY,
+  launchProfileFor,
+  requestSteersRun,
+  withEngineRunFields,
+} from "@/lib/custom-agent-launch";
+import {
   KNOWN_ENGINE_PRODUCT_IDS,
   resolveAgentEngineProductId,
   resolveAgentEngineProductIdForCustomAgent,
@@ -65,7 +70,7 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
       "karos-linkedin-setup-v2", "karos-reddit-setup", "karos-instagram-agent",
       "landing-builder", "branded-shorts", "karos-blog-writer-v2",
       "karos-newsletter-writer-v2", "karos-reputation-runner", "seo-geo-agent-v2",
-      "karos-tiktok-agent", "karos-reputation-setup",
+      "karos-tiktok-agent", "karos-reputation-setup", "karos-campaign-orchestrator",
     ]) {
       const productId = resolveAgentEngineProductIdForCustomAgent(key);
       expect(KNOWN.has(productId!), `${key} -> ${productId}`).toBe(true);
@@ -251,44 +256,6 @@ describe("toEngineRunInput", () => {
   });
 });
 
-describe("isClientEnabledForEngineCustomAgents", () => {
-  it("routes nobody when unset, so shipping the code is not the cutover", () => {
-    // Production has all seven clients granted the X agent and engine context
-    // for one. Deploying the routing must change nothing until a human names
-    // a client.
-    expect(isClientEnabledForEngineCustomAgents("karoslabs", {})).toBe(false);
-    expect(isClientEnabledForEngineCustomAgents("karoslabs", { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "" })).toBe(false);
-    expect(isClientEnabledForEngineCustomAgents("karoslabs", { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "   " })).toBe(false);
-  });
-
-  it("routes only the named clients", () => {
-    const env = { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "karoslabs,geektime" };
-    expect(isClientEnabledForEngineCustomAgents("karoslabs", env)).toBe(true);
-    expect(isClientEnabledForEngineCustomAgents("geektime", env)).toBe(true);
-    expect(isClientEnabledForEngineCustomAgents("sitti", env)).toBe(false);
-  });
-
-  it("tolerates spacing in the list", () => {
-    const env = { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: " karoslabs , geektime " };
-    expect(isClientEnabledForEngineCustomAgents("geektime", env)).toBe(true);
-  });
-
-  it("supports * once every client is ready", () => {
-    expect(isClientEnabledForEngineCustomAgents("anyone", { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "*" })).toBe(true);
-  });
-
-  it("never routes a client with no slug", () => {
-    // agentsRepoSlug is what the engine resolves its workspace against; without
-    // one there is no tenant to run as.
-    expect(isClientEnabledForEngineCustomAgents(undefined, { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "*" })).toBe(false);
-  });
-
-  it("does not match on a prefix", () => {
-    const env = { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "karos" };
-    expect(isClientEnabledForEngineCustomAgents("karoslabs", env)).toBe(false);
-  });
-});
-
 describe("resolveAgentEngineRunKind", () => {
   it("sends landing-builder a first build, not a rebuild", () => {
     // agent-engine's landing-builder reads runKind "recurring" as MODE=rebuild
@@ -330,26 +297,31 @@ const ENGINE_ROUTED_DIALOGS: ReadonlyArray<{
   productId: string;
   visibleFields: readonly string[];
 }> = [
-  { key: "karos-x-agent-v2", name: "X Agent", productId: "x-agent", visibleFields: ["run_scope", "requestedMode", "batch_size", "request", "customPrompt", "mediaAssets"] },
-  { key: "karos-linkedin-writer-v2", name: "LinkedIn Writer", productId: "linkedin-agent", visibleFields: ["li_identity", "requestedMode", "batch_size", "request", "customPrompt", "mediaAssets"] },
-  { key: "karos-linkedin-setup-v2", name: "LinkedIn Setup", productId: "linkedin-agent", visibleFields: ["li_identity", "request", "customPrompt", "mediaAssets"] },
-  { key: "karos-reddit-runner", name: "Reddit Runner", productId: "reddit-agent", visibleFields: ["request", "customPrompt"] },
+  { key: "karos-x-agent-v2", name: "X Agent", productId: "x-agent", visibleFields: ["run_scope", "requestedMode", "batch_size", "request", "media_source", "mediaAssets"] },
+  { key: "karos-linkedin-writer-v2", name: "LinkedIn Writer", productId: "linkedin-agent", visibleFields: ["li_identity", "requestedMode", "batch_size", "request", "media_source", "mediaAssets"] },
+  { key: "karos-linkedin-setup-v2", name: "LinkedIn Setup", productId: "linkedin-agent", visibleFields: ["li_identity", "request", "customPrompt", "media_source", "mediaAssets"] },
+  { key: "karos-reddit-runner", name: "Reddit Runner", productId: "reddit-agent", visibleFields: ["request"] },
   { key: "karos-reddit-setup", name: "Reddit Setup", productId: "reddit-agent", visibleFields: ["request", "audience", "success_criteria", "customPrompt"] },
-  { key: "karos-instagram-agent", name: "Instagram Agent", productId: "instagram-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "batch_size", "audience", "must_include", "customPrompt", "mediaAssets"] },
-  { key: "karos-tiktok-agent", name: "TikTok Agent", productId: "tiktok-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "batch_size", "audience", "must_include", "customPrompt", "mediaAssets"] },
-  { key: "branded-shorts", name: "Branded Shorts", productId: "branded-shorts-agent", visibleFields: ["request", "source_url", "platform", "duration", "cta", "editing_notes", "customPrompt", "mediaAssets"] },
+  { key: "karos-instagram-agent", name: "Instagram Agent", productId: "instagram-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "batch_size", "audience", "must_include", "customPrompt", "media_source", "mediaAssets"] },
+  { key: "karos-tiktok-agent", name: "TikTok Agent", productId: "tiktok-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "batch_size", "audience", "must_include", "customPrompt", "media_source", "mediaAssets"] },
+  { key: "branded-shorts", name: "Branded Shorts", productId: "branded-shorts-agent", visibleFields: ["request", "source_url", "platform", "duration", "cta", "editing_notes", "customPrompt", "media_source", "mediaAssets"] },
   { key: "landing-builder", name: "Landing Page Builder", productId: "landing-builder-agent", visibleFields: ["request", "offer", "audience", "cta", "proof", "references", "customPrompt"] },
   { key: "karos-blog-writer-v2", name: "Blog Writer", productId: "blog-agent", visibleFields: ["run_mode", "request", "audience", "keywords", "point_of_view", "sources", "customPrompt"] },
   { key: "karos-newsletter-writer-v2", name: "Newsletter Writer", productId: "newsletter-agent", visibleFields: ["request", "audience", "must_include", "cta", "tone", "customPrompt"] },
-  { key: "karos-reputation-runner", name: "Reputation Runner", productId: "reputation-agent", visibleFields: ["request", "customPrompt"] },
+  { key: "karos-reputation-runner", name: "Reputation Runner", productId: "reputation-agent", visibleFields: ["request"] },
   { key: "karos-reputation-setup", name: "Reputation Setup", productId: "reputation-agent", visibleFields: ["request", "customPrompt"] },
   { key: "seo-geo-agent-v2", name: "SEO GEO Agent", productId: "seo-geo-agent", visibleFields: ["website", "scope", "request", "market", "competitors", "customPrompt"] },
+  // The generic profile: the campaign has no bespoke dialog, and its three
+  // generic answers all reach the plan step through the run direction.
+  { key: "karos-campaign-orchestrator", name: "Campaign", productId: "campaign-orchestrator", visibleFields: ["request", "audience", "success_criteria", "customPrompt"] },
 ];
 
 /** A plausible answer for one dialog field — typed where the field is typed. */
 function answerFor(key: string): string {
   if (key === "batch_size") return "3";
   if (key === "mediaAssets") return '[{"uri": "gs://bucket/probe-mediaAssets.mp4", "role": "source"}]';
+  // The non-default value, so dropping the field changes the payload.
+  if (key === "media_source") return "client";
   if (key === "source_url" || key === "references" || key === "sources") {
     return `https://example.com/probe-${key}`;
   }
@@ -372,7 +344,9 @@ describe("toEngineRunInput — every visible dialog field reaches the engine (C3
       const answers = Object.fromEntries(
         profile.fields.filter((f) => !f.hidden).map((f) => [f.key, answerFor(f.key)]),
       );
-      const full = JSON.stringify(toEngineRunInput(answers, pageProductId));
+      // And the server's call exactly: the same profile answers `requestSteersRun`.
+      const opts = { requestSteersRun: requestSteersRun(launchProfileFor(dialog)) };
+      const full = JSON.stringify(toEngineRunInput(answers, pageProductId, opts));
 
       // Coverage stated so it cannot be faked by a substring match: dropping
       // ANY visible answer must change what the engine is sent. A field that
@@ -386,7 +360,7 @@ describe("toEngineRunInput — every visible dialog field reaches the engine (C3
         const without = { ...answers };
         delete without[field];
         expect(
-          JSON.stringify(toEngineRunInput(without, pageProductId)),
+          JSON.stringify(toEngineRunInput(without, pageProductId, opts)),
           `${dialog.key}: "${field}" is rendered in the run dialog but changes nothing in the engine input`,
         ).not.toBe(full);
       }
@@ -410,6 +384,25 @@ describe("toEngineRunInput — every visible dialog field reaches the engine (C3
     expect(toEngineRunInput({ request: "a topic", batch_size: "5" }, "x-agent")).toEqual({
       requestedTopic: "a topic",
     });
+  });
+});
+
+describe("toEngineRunInput — media_source → mediaSource (2026-09-06)", () => {
+  it("passes exactly the two legal values through under the engine's key", () => {
+    expect(toEngineRunInput({ media_source: "client" }, "x-agent")).toEqual({ mediaSource: "client" });
+    expect(toEngineRunInput({ media_source: "system" }, "instagram-agent")).toEqual({ mediaSource: "system" });
+  });
+
+  it("omits anything else, so the engine applies its own default rather than a third mode nobody defined", () => {
+    expect(toEngineRunInput({ media_source: "" }, "x-agent")).toEqual({});
+    expect(toEngineRunInput({ media_source: "CLIENT" }, "x-agent")).toEqual({});
+    expect(toEngineRunInput({ media_source: "generate" }, "x-agent")).toEqual({});
+  });
+
+  it("travels alongside the attachments it governs", () => {
+    expect(
+      toEngineRunInput({ media_source: "client", mediaAssets: '[{"uri":"gs://b/pic.png","role":"source"}]' }, "linkedin-agent"),
+    ).toEqual({ mediaSource: "client", mediaAssets: [{ uri: "gs://b/pic.png", role: "source" }] });
   });
 });
 
@@ -504,21 +497,29 @@ describe("toEngineRunInput — the C3 wire shape", () => {
     });
   });
 
-  it("folds link lists into mediaAssets, and the non-link remainder into customPrompt", () => {
+  it("folds link lists into mediaAssets for a product that reads them, and into customPrompt for one that never does (2026-09-07)", () => {
+    // blog-agent never opens `mediaAssets`, so a source URL there was a
+    // question asked and dropped. It now stays with the words around it.
     expect(
       toEngineRunInput(
         { sources: "https://example.com/study\nverify the 40% claim", mediaAssets: '[{"uri":"gs://b/a.png","role":"logo"}]' },
         "blog-agent",
       ),
     ).toEqual({
-      mediaAssets: [
-        { uri: "gs://b/a.png", role: "logo" },
-        { uri: "https://example.com/study", role: "reference" },
-      ],
-      customPrompt: "Required sources or internal links\nverify the 40% claim",
+      mediaAssets: [{ uri: "gs://b/a.png", role: "logo" }],
+      customPrompt: "Required sources or internal links\nhttps://example.com/study\nverify the 40% claim",
     });
+    expect(toEngineRunInput({ references: "https://example.com/inspiration" }, "landing-builder-agent")).toEqual({
+      customPrompt: "Reference URLs\nhttps://example.com/inspiration",
+    });
+    // A product that reads media still gets the link as an asset — for
+    // branded-shorts the source_url IS the footage.
     expect(toEngineRunInput({ source_url: "https://example.com/ep12" }, "branded-shorts-agent")).toEqual({
       mediaAssets: [{ uri: "https://example.com/ep12", role: "source" }],
+    });
+    // The legacy path (no product named) keeps its historical shape.
+    expect(toEngineRunInput({ sources: "https://example.com/study" })).toEqual({
+      mediaAssets: [{ uri: "https://example.com/study", role: "reference" }],
     });
   });
 
@@ -530,6 +531,38 @@ describe("toEngineRunInput — the C3 wire shape", () => {
     expect(toEngineRunInput({ request: "why are high-intent pages not converting" }, "blog-agent")).toEqual({
       requestedTopic: "why are high-intent pages not converting",
     });
+  });
+});
+
+describe("one direction box per run form (Albert, 2026-09-10)", () => {
+  it("never asks the same question twice on any agent's form", () => {
+    // X, LinkedIn, Reddit and Reputation showed their own "Direction for this
+    // run (optional)" box and then the engine's, under the same label.
+    for (const profile of ALL_LAUNCH_PROFILES) {
+      for (const product of [undefined, ...KNOWN_ENGINE_PRODUCT_IDS]) {
+        const labels = withEngineRunFields(profile, product).fields.map((f) => f.label);
+        const repeated = labels.filter((label, i) => labels.indexOf(label) !== i);
+        expect(repeated, `${profile.eyebrow} on ${product ?? "the legacy path"}`).toEqual([]);
+      }
+    }
+  });
+
+  it("sends that one box as the topic AND the direction", () => {
+    const steer = { requestSteersRun: true };
+    expect(toEngineRunInput({ request: "our new hire" }, "linkedin-agent", steer)).toEqual({
+      requestedTopic: "our new hire",
+      customPrompt: "our new hire",
+    });
+    // A direction typed in the old second box (a saved schedule) still leads.
+    expect(toEngineRunInput({ customPrompt: "keep it short", request: "our new hire" }, "x-agent", steer)).toEqual({
+      requestedTopic: "our new hire",
+      customPrompt: "keep it short\n\nour new hire",
+    });
+    expect(toEngineRunInput({ customPrompt: "same", request: "same" }, "x-agent", steer).customPrompt).toBe("same");
+    // A profile whose box asks for a TOPIC keeps sending only the topic.
+    expect(toEngineRunInput({ request: "a topic" }, "blog-agent")).toEqual({ requestedTopic: "a topic" });
+    // Blank sends nothing, so a scheduled run follows the saved strategy.
+    expect(toEngineRunInput({ request: "  " }, "x-agent", steer)).toEqual({});
   });
 });
 
@@ -559,7 +592,10 @@ describe("page/server engineProductId consistency (C3 mandatory fix #2)", () => 
     expect(submitCustomSource).toContain(
       "resolveDispatchedAgentEngineProductId(agent.key, client.agentsRepoSlug)",
     );
-    expect(submitCustomSource).toContain("toEngineRunInput(engineBriefValues, engineProductId)");
+    const flat = submitCustomSource.replace(/\s+/g, " ");
+    expect(flat).toContain("toEngineRunInput(engineBriefValues, engineProductId, {");
+    // And the one-direction-box answer comes off the same profile the page uses.
+    expect(flat).toContain("requestSteersRun: requestSteersRun(launchProfileFor(agent))");
 
     const healthSource = readFileSync(resolve(__dirname, "../health.ts"), "utf8");
     expect(healthSource).toContain("resolveAgentEngineProductIdForCustomAgent(agentKey)");
@@ -572,7 +608,7 @@ describe("page/server engineProductId consistency (C3 mandatory fix #2)", () => 
       "karos-linkedin-setup-v2", "karos-reddit-setup", "karos-instagram-agent",
       "landing-builder", "branded-shorts", "karos-blog-writer-v2",
       "karos-newsletter-writer-v2", "karos-reputation-runner", "seo-geo-agent-v2",
-      "karos-tiktok-agent", "karos-reputation-setup",
+      "karos-tiktok-agent", "karos-reputation-setup", "karos-campaign-orchestrator",
     ]) {
       expect(swept.has(key), `${key} routes to agent-engine but has no dialog-coverage case`).toBe(true);
     }

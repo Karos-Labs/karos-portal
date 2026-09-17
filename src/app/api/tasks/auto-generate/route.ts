@@ -5,10 +5,12 @@ import {
   listClientIntegrations,
   listAssets,
   listClientTasks,
+  listCustomAgents,
   tryAcquireAiProcessingLock,
   releaseAiProcessingLock,
 } from "@/lib/data";
 import { integrationIsUsable } from "@/lib/integration-status";
+import { servedPlatformKeys } from "@/lib/served-platforms";
 import { computePlatformGaps, gapPlatformNames, CONTENT_GAP_HORIZON_DAYS } from "@/lib/calendar-gaps";
 import { buildSwarmContext, runSwarmToCompletion } from "@/lib/agent-swarm";
 import { logger } from "@/services/logger";
@@ -92,7 +94,7 @@ export async function GET(req: NextRequest) {
   const sweepCap = resolveSweepCap(process.env.TASKMAP_AUTOGEN_SWEEP_CAP);
   const now = Date.now();
 
-  const clients = await listClients();
+  const [clients, customAgents] = await Promise.all([listClients(), listCustomAgents()]);
   const results: ClientResult[] = [];
   let generated = 0;
 
@@ -124,8 +126,14 @@ export async function GET(req: NextRequest) {
         listClientIntegrations(client.id),
         listAssets({ clientId: client.id }),
       ]);
+      // Gaps only on the channels an agent posts to (lib/served-platforms.ts):
+      // a connected YouTube nobody posts to must not fire a paid War Room run
+      // that then persists nothing.
+      const served = servedPlatformKeys(
+        customAgents.filter((a) => a.enabled && client.customAgentIds?.includes(a.id)),
+      );
       const connectedPlatforms = integrations
-        .filter((i) => i.platform !== "google" && integrationIsUsable(i))
+        .filter((i) => i.platform !== "google" && integrationIsUsable(i) && served.has(i.platform))
         .map((i) => i.platform);
       const gapPlatforms = gapPlatformNames(computePlatformGaps(assets, connectedPlatforms, now));
 

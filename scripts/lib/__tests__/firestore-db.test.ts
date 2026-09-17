@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { resolveScriptDatabaseId, getScriptFirestore } from "../firestore-db";
+import { resolveScriptDatabaseId } from "../firestore-db";
 
 /**
  * SCRUM-374 — maintenance scripts default to PRODUCTION Firestore.

@@ -3,11 +3,12 @@ import { listScheduledAssets, listAssets, listClientIntegrations, updateAsset, m
 import { publishHoldMessage } from "@/lib/asset-status-copy";
 import { isInClientArchive } from "@/lib/asset-visibility";
 import { blockingPredecessor } from "@/lib/post-chain";
+import { inferPlatform, publishAssetToPlatform } from "@/lib/integrations/publishers";
 import {
-  TokenExpiredError,
-  inferPlatform,
-  publishAssetToPlatform,
-} from "@/lib/integrations/publishers";
+  integrationMayBeRevivable,
+  isIntegrationDeadError,
+  runWithFreshCredentials,
+} from "@/lib/integrations/token-refresh";
 import { requireCronSecret } from "@/lib/cron-auth";
 import { integrationIsUsable } from "@/lib/integration-status";
 
@@ -107,10 +108,19 @@ export async function GET(req: NextRequest) {
       }
 
       const integrations = integrationsByClient.get(asset.clientId) ?? [];
-      // Auto-eligible = valid token AND the client hasn't turned off auto-publish
-      // for that platform (absent flag = enabled, for pre-toggle integrations).
+      // Auto-eligible = a token we can still use AND the client hasn't turned off
+      // auto-publish for that platform (absent flag = enabled, for pre-toggle
+      // integrations).
+      //
+      // "Still usable" now includes a channel already flagged expired whose
+      // refresh token is on record (integrationMayBeRevivable): that flag was set
+      // by a 401 on the ACCESS token, and before CN1 every short-lived channel
+      // earned it on its first tick. Gating the refresh behind the flag the
+      // missing refresh produced would leave the whole existing fleet waiting on
+      // a manual reconnect. runWithFreshCredentials forces the exchange for those;
+      // a refusal re-marks the channel, so a genuinely dead one costs one request.
       const autoEligible = integrations.filter(
-        (i) => integrationIsUsable(i) && i.autoPublish !== false,
+        (i) => (integrationIsUsable(i) || integrationMayBeRevivable(i)) && i.autoPublish !== false,
       );
       const connectedPlatforms = autoEligible.map((i) => i.platform);
 
@@ -153,13 +163,25 @@ export async function GET(req: NextRequest) {
       }
 
       try {
-        const { postId } = await publishAssetToPlatform(platform, integration, asset);
+        // Fresh credentials before the call, and one forced refresh + retry if
+        // the platform 401s anyway (see runWithFreshCredentials). Short-lived
+        // tokens — X's two hours, Reddit's and Google's one — expire between
+        // ticks as a matter of course; a tick that hits one used to end the
+        // channel until someone reconnected it by hand.
+        const { postId } = await runWithFreshCredentials(integration, (fresh) =>
+          publishAssetToPlatform(platform, fresh, asset),
+        );
         await markAssetPublished(asset.id, postId);
         return { assetId: asset.id, platform, status: "published" };
       } catch (e) {
         // Release the claim so a later attempt can retry this asset.
         await releaseAssetPublishClaim(asset.id).catch(() => {});
-        if (e instanceof TokenExpiredError) {
+        // Dead = the platform 401'd through a refresh, or the provider itself
+        // refused the refresh token. A refresh that merely could not be
+        // ATTEMPTED (token endpoint down, app credentials unset) is not dead and
+        // falls through to the transient branch below, so an X outage does not
+        // ask every client to reconnect.
+        if (isIntegrationDeadError(e)) {
           // Mark the integration expired so the UI surfaces it and the next
           // cron tick skips the dead token rather than retrying indefinitely.
           await markIntegrationExpired(asset.clientId, platform).catch(() => {});
@@ -167,7 +189,7 @@ export async function GET(req: NextRequest) {
             assetId: asset.id,
             platform,
             status: "expired",
-            error: e.message,
+            error: e instanceof Error ? e.message : "Token expired",
           };
         }
         // Transient error — leave as "scheduled" so the next cron tick retries,

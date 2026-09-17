@@ -13,6 +13,7 @@ import { BrandFavicon } from "@/components/brand-favicon";
 import { ClientProfilePanel } from "@/components/client-profile-panel";
 import { BrandColorsSection } from "@/components/client-context-sections";
 import { ClientRailAgentsNav } from "@/components/client-rail-agents-nav";
+import { ACCOUNT_CENTER_ICON, ClientRailAccountNav } from "@/components/client-rail-account-nav";
 import { AccountMenu } from "@/components/account-menu";
 import { useMenuDismiss } from "@/components/use-menu-dismiss";
 import { NavLink } from "@/components/rail-nav-link";
@@ -115,8 +116,9 @@ const NAV: NavItem[] = [
 // It used to be a plain row here on the reasoning that the staff shell is a
 // "quick-preview strip, not the client's own nav" — the product owner ruled the
 // opposite: the client-context shell IS the client's nav, so this arm mounts
-// the client's real ClientRailAgentsNav (roster, stars and all) between Home
-// and Calendar, exactly where client-rail.tsx puts it. Same reason its absence
+// the client's real ClientRailAgentsNav between Home and Calendar, exactly
+// where client-rail.tsx puts it (round 6 took the stars off it; Pin lives on
+// the agent's own page and the nav reads the order it sets). Same reason its absence
 // from `tabNav` is deliberate over there.
 //
 // Calendar keeps the CLIENT-SCOPED route, and that href difference from the
@@ -264,7 +266,7 @@ function ClientContextPicker({
           {activeClient && (
             <span
               aria-hidden="true"
-              className="shrink-0 rounded border border-border px-1 font-mono text-[9px] uppercase leading-[1.4] tracking-[0.12em] text-muted-2"
+              className="shrink-0 rounded border border-border px-1 font-label text-[9px] uppercase leading-[1.4] tracking-[0.12em] text-muted-2"
             >
               Internal
             </span>
@@ -824,7 +826,6 @@ export function Sidebar({
           <nav className="flex flex-col gap-0.5 border-t border-border pt-4">
             <NavLink item={items[0]} pathname={pathname} />
             <ClientRailAgentsNav
-              clientId={clientCtx.client.id}
               home={clientHome!}
               agents={clientCtx.railAgents}
               starredIds={clientCtx.client.starredAgentIds ?? []}
@@ -832,6 +833,12 @@ export function Sidebar({
             {items.slice(1).map((item) => (
               <NavLink key={item.href} item={item} pathname={pathname} />
             ))}
+            {/* The client's Account Center group, folded off its route, the
+                same component the client rail mounts (parity, ruling D3's
+                shape). It used to be reachable here only from the avatar
+                menu, and that row is gone (2026-09-11): the rail is the one
+                place a destination is offered, in both shells. */}
+            <ClientRailAccountNav home={clientHome!} />
           </nav>
         </div>
       ) : (
@@ -870,18 +877,12 @@ export function Sidebar({
               dismissals={dismissals}
             />
           </div>
-          {/* The client's own identity row, so the sub-line reads
-              "{client} · Account Center" and the two affordances (name →
-              Account Center, chevron → menu) match theirs. UserMenu — and the
+          {/* The client's own identity row and menu, so a staff member in
+              client context meets the client's chrome. UserMenu — and the
               bell inside it — is deliberately NOT mounted in this arm: the bell
               is on the rail above, and a second one behind a dropdown is the
               F116 defect twice over. */}
-          <AccountMenu
-            user={user}
-            client={clientCtx.client}
-            settingsHref={clientSettingsHref!}
-            staffExtras={staffExtras}
-          />
+          <AccountMenu user={user} client={clientCtx.client} staffExtras={staffExtras} />
         </div>
       ) : (
         <div className="shrink-0 space-y-1.5 border-t border-border px-4 py-2">
@@ -1007,7 +1008,6 @@ export function Sidebar({
                 mobile — same one-line decision the client's sheet makes. */}
             <div className="border-t border-border pt-4">
               <ClientRailAgentsNav
-                clientId={clientCtx.client.id}
                 home={clientHome!}
                 agents={clientCtx.railAgents}
                 starredIds={clientCtx.client.starredAgentIds ?? []}
@@ -1026,7 +1026,7 @@ export function Sidebar({
                 onClick={() => setCompanyOpen(false)}
                 className="flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
               >
-                <Icon name="Settings" className="h-4 w-4 text-muted-2" />
+                <Icon name={ACCOUNT_CENTER_ICON} className="h-4 w-4 text-muted-2" />
                 Account Center
               </Link>
               {/* No Team row (ruling D21): /team is the CLIENT's group-admin
@@ -1061,7 +1061,7 @@ export function Sidebar({
                   the top of the page, which scrolls away. The caption is the
                   same mono "STAFF" the desktop group wears, so the rows read
                   as internal here too (alignment review, parity pass 2026-09). */}
-              <p className="mt-2 border-t border-border px-2 pb-1 pt-3 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-2">
+              <p className="mt-2 border-t border-border px-2 pb-1 pt-3 font-label text-[10px] uppercase tracking-[0.12em] text-muted-2">
                 Staff
               </p>
               <Link

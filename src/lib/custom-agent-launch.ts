@@ -12,14 +12,31 @@ import { isPublishHold } from "@/lib/asset-status-copy";
 import { isCreditDenialMessage } from "@/lib/credits";
 import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
 import type { CustomAgent } from "@/lib/types";
-import { RUN_ESTIMATE } from "@/lib/run-estimate";
+import {
+  STEER_RUN_HELPER_WITH_KIND,
+  STEER_RUN_LABEL,
+} from "@/lib/intake-steer-copy";
+import { ENGINE_PRODUCTS_READING_MEDIA_ASSETS } from "@/lib/agent-engine/product-mapping";
 
-export type AgentBriefFieldType = "text" | "textarea" | "number" | "select";
+/**
+ * `media` is the run-attachment control (`RunAttachments`): the value is the
+ * JSON array of uploaded assets the engine reads as `mediaAssets`. A field
+ * type rather than a special-cased key so the dialog paints it with the same
+ * renderer as every other answer and the submit reads it from the same brief.
+ */
+export type AgentBriefFieldType = "text" | "textarea" | "number" | "select" | "media";
 
 export interface AgentBriefField {
   key: string;
   label: string;
   type: AgentBriefFieldType;
+  /**
+   * This box is the run's direction (the shared "Direction for this run
+   * (optional)" steer), not a topic it asks for. Declared here rather than
+   * read off the label, so a copy edit can never change what the engine is
+   * sent (see `requestSteersRun`).
+   */
+  steersRun?: true;
   required?: boolean;
   placeholder?: string;
   helper?: string;
@@ -52,14 +69,28 @@ export interface AgentAttachmentProfile {
   satisfyWithFieldKey?: string;
 }
 
+/**
+ * What an untouched form sends on the legacy agent-service path, whose submit
+ * refuses an empty brief. The same words for every agent, and no steer. Each
+ * profile used to send its first "Try:" chip ("Lean into this week's
+ * announcement."), which was fine while the reader could see the chip; since
+ * the chips went (2026-09-10) it steered the run with words nobody chose. The
+ * engine path reads the brief's own fields, which stay empty.
+ */
+export const EMPTY_BRIEF_REQUEST = "No particular direction for this run. Work from the stored agent data.";
+
 export interface AgentLaunchProfile {
   eyebrow: string;
   intro: string;
   fields: AgentBriefField[];
-  quickStarts: string[];
   deliverables: string[];
-  estimate: string;
-  attachments: AgentAttachmentProfile;
+  /**
+   * The run's file slot. OPTIONAL since SCRUM-413 (2026-09-10): the reputation
+   * runner has none, because its only case — a screenshot of a review on a
+   * surface we do not watch — belongs in the roster, not in one run. An agent
+   * with no attachments renders no file box and has no file requirement.
+   */
+  attachments?: AgentAttachmentProfile;
 }
 
 type AgentIdentity = { key: string; name: string };
@@ -75,6 +106,17 @@ const DOCUMENTS_AND_IMAGES =
  * folding it into the prose too would just repeat the same fact twice).
  */
 export const BATCH_SIZE_FIELD_KEY = "batch_size";
+
+/**
+ * A field key reserved to mean "how many posts this run should produce".
+ *
+ * NOT the charge multiplier - `BATCH_SIZE_FIELD_KEY` is, and only the server
+ * reads that. This one is the social content system's own visible count (1 to
+ * 10, mapped to agent-engine's `postCount` in agent-engine/product-mapping.ts),
+ * and it is named here so the run dialog can QUOTE it without any surface being
+ * tempted to send it as a multiplier. See `quoteMultiplierFrom`.
+ */
+export const POST_COUNT_FIELD_KEY = "post_count";
 
 /**
  * The LinkedIn v2 writer's brief-field key for which identity a run posts as.
@@ -173,13 +215,7 @@ const genericProfile: AgentLaunchProfile = {
       placeholder: "Must include, avoid, match, or verify…",
     },
   ],
-  quickStarts: [
-    "Create a production-ready first draft for our current priority.",
-    "Improve an existing asset using the attached references.",
-    "Research the opportunity and recommend the strongest next move.",
-  ],
   deliverables: ["A production-ready result", "Supporting rationale and sources when relevant"],
-  estimate: RUN_ESTIMATE,
   attachments: generalAttachments,
 };
 
@@ -241,13 +277,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           placeholder: "Must-use quote, clips to avoid, captions, pacing, safe areas…",
         },
       ],
-      quickStarts: [
-        "Cut a product-launch short and preserve the founder's strongest claim.",
-        "Create a customer-outcome short from the clearest moment in the source.",
-        "Turn the source into a fast social teaser without changing the speaker's meaning.",
-      ],
       deliverables: ["Edited short-form video", "Platform-ready caption and publishing notes"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Source footage",
         hint: "Select or upload the source clip. For files over 4 MB, paste a shareable link above.",
@@ -275,8 +305,12 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           ],
         },
         {
+          // "What should this post be about?" (round 6): the dialog asks ONE
+          // question above the fold and this is it, so the label has to be the
+          // question a client would ask themselves rather than the operator's
+          // noun phrase ("Content goal or campaign").
           key: "request",
-          label: "Content goal or campaign",
+          label: "What should this post be about?",
           type: "textarea",
           required: true,
           placeholder: "Create content that introduces the new offer to first-time buyers.",
@@ -340,13 +374,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           placeholder: "Offer details, dates, approved claims, visual constraints…",
         },
       ],
-      quickStarts: [
-        "Introduce our newest offer with a clear, save-worthy carousel.",
-        "Build trust with a founder story grounded in a real company moment.",
-        "Create a post around the customer problem our product solves best.",
-      ],
       deliverables: ["On-brand social creative", "Caption, hashtags, and content rationale"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Creative inputs",
         hint: "Product photos, campaign briefs, visual references, and approved source material are especially useful.",
@@ -416,23 +444,37 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         },
         {
           key: "request",
-          label: "Anything to lean into this run?",
+          label: STEER_RUN_LABEL,
+          steersRun: true,
           type: "textarea",
-          helper:
-            "Optional, and it wins over everything else this run. For a standing steer, use \"What should we cover next?\" in your LinkedIn agent data instead.",
+          // THREE STATES OF ONE SENTENCE, each true of the engine at the time.
+          // (1) "it wins over everything else this run" — never true; the
+          // engine read `requestedMode` and `customPrompt` independently, so a
+          // client who chose a Kind of post and wrote a note got the shape they
+          // chose (SCRUM-409, reported from outside: "it still chooses one of
+          // the three and chose Hot News even though the text under the note
+          // box says what you type wins"). (2) "Kind of post still decides the
+          // shape." — SCRUM-409's correction. (3) Now: the note wins WHEN it
+          // names exactly one kind, because agent-engine PR #120 (SCRUM-430)
+          // made it so, for linkedin-agent and x-agent both, and
+          // engine-field-contract records where. The helper carries the
+          // condition in the engine's own terms; see lib/intake-steer-copy.ts.
+          //
+          // THE REDIRECT IS GONE (SCRUM-411). It sent the reader to "What
+          // should we cover next?" for a standing steer - which is true, and
+          // was also the sentence that made this field read as a duplicate of
+          // that box: a field whose own helper names another box as the real
+          // one has admitted it. Both boxes now state their own scope where the
+          // reader is (see lib/intake-steer-copy.ts), so there is nothing to
+          // point at.
+          helper: STEER_RUN_HELPER_WITH_KIND,
           placeholder: "A launch to build up to, a topic to hit.",
         },
-      ],
-      quickStarts: [
-        "Build up to the launch we have coming.",
-        "Take an educational angle this time.",
-        "Turn the latest milestone into the post.",
       ],
       deliverables: [
         "One post, ready to publish, with a linked source on every factual claim",
         "A suggested day to post it",
       ],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Extra material for this run (optional)",
         hint: "One-off references for this post. The page URL, off-limits, seats and news live in your LinkedIn agent data, not here.",
@@ -465,12 +507,10 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           placeholder: "A regulator to account for, a subject that is off the table.",
         },
       ],
-      quickStarts: [],
       deliverables: [
         "This client's LinkedIn foundation: lanes, signature series, cadence and compliance",
         "A seeded topic list, each row citing the document behind it",
       ],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Extra material for setup (optional)",
         hint: "Anything about how this client sells and speaks that is not already in their onboarding documents.",
@@ -492,22 +532,16 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       fields: [
         {
           key: "request",
-          label: "Anything to lean into this run?",
+          label: STEER_RUN_LABEL,
+          steersRun: true,
           type: "textarea",
-          helper: "Optional. The agent works from the stored LinkedIn agent data either way.",
           placeholder: "A launch to feature, a topic to hit.",
         },
-      ],
-      quickStarts: [
-        "Lean into this week's update.",
-        "Pick an educational angle this time.",
-        "Turn the latest milestone into the post.",
       ],
       deliverables: [
         "One company-page post draft with its native asset (carousel, document, or image)",
         "A linked source on every factual claim",
       ],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Extra material for this run (optional)",
         hint: "One-off references for this post. The page URL, off-limits, seats, and news live in your LinkedIn agent data, not here.",
@@ -560,13 +594,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           placeholder: "Phrases they use, topics to avoid, compliance constraints, CTA…",
         },
       ],
-      quickStarts: [
-        "Draft a thought-leadership post from a lesson the executive has genuinely earned.",
-        "Turn a recent company milestone into a credible first-person update.",
-        "Set up a founder-led LinkedIn system around this executive's expertise.",
-      ],
       deliverables: ["Executive-voice LinkedIn draft", "Hook, CTA, and claim-safety rationale"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Executive source material",
         hint: "A CV, bio, interview transcript, or past writing sample helps the agent match the person instead of writing generic brand copy.",
@@ -631,19 +659,19 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         },
         {
           key: "request",
-          label: "Anything to lean into this run?",
+          label: STEER_RUN_LABEL,
+          steersRun: true,
           type: "textarea",
-          helper: "Optional. The agent works from the stored X agent data either way.",
+          // Same line as the LinkedIn post dialog, since SCRUM-430: x-agent's
+          // 07b-select-content-mode reads `runDirection.modeOverride` before
+          // `intake.requestedMode` exactly as linkedin-agent's does
+          // (engine-field-contract, customPrompt -> x-agent). This profile had
+          // no helper before because it had nothing true to add; now it does.
+          helper: STEER_RUN_HELPER_WITH_KIND,
           placeholder: "A launch to feature, a topic to hit, a seat to focus on.",
         },
       ],
-      quickStarts: [
-        "Lean into this week's announcement.",
-        "Draft for one person's seat.",
-        "React to what happened in the industry this week.",
-      ],
       deliverables: ["One post draft, on the avenue the request calls for", "A linked source on every news, quote, and reply post"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Extra material for this run (optional)",
         hint: "One-off references for this run. Handles, off-limits, rosters, takes, and news live in your X agent data, not here.",
@@ -667,22 +695,21 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       fields: [
         {
           key: "request",
-          label: "Anything to steer this run?",
+          // Same name as every other per-run steer (SCRUM-411, and the shared
+          // constant in lib/intake-steer-copy.ts). This was a fourth spelling of
+          // the one field — "Anything to steer this run?" — and the only one
+          // without "(optional)". No helper line (2026-09-10): "(optional)"
+          // already says a blank box is fine.
+          label: STEER_RUN_LABEL,
+          steersRun: true,
           type: "textarea",
-          helper: "Optional. The agent picks the thread from the stored Reddit agent data either way.",
           placeholder: "A subreddit to prioritise, a question type to look for.",
         },
-      ],
-      quickStarts: [
-        "Find the freshest question you can answer well.",
-        "Prioritise the subreddits where we have the most standing.",
-        "Look for a question our product genuinely answers, value first.",
       ],
       deliverables: [
         "One reply drafted against a live thread, with the thread link and the subreddit's promo verdict",
         "A why-this-is-safe note and the gate results, so you can post it with confidence",
       ],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Extra material for this run (optional)",
         hint: "One-off references for this reply. The account, its history, off-limits subreddits and your disclosure wording live in your Reddit agent data, not here.",
@@ -702,13 +729,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "cta", label: "Primary call to action", type: "text", placeholder: "The one action the issue should earn" },
         { key: "tone", label: "Editorial tone", type: "text", placeholder: "e.g. founder note, sharp industry briefing, customer education" },
       ],
-      quickStarts: [
-        "Create a monthly roundup built around the most useful customer takeaway.",
-        "Turn the attached announcements into one coherent, reader-first issue.",
-        "Draft an educational issue that leads naturally to our primary offer.",
-      ],
       deliverables: ["Complete newsletter copy", "Subject-line options and rendered issue when supported"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Issue sources",
         hint: "Attach previous newsletters for voice, source articles for facts, and hero images for the final issue.",
@@ -739,13 +760,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "point_of_view", label: "Brand point of view and proof", type: "textarea", placeholder: "What can this client credibly say that ranking pages cannot?" },
         { key: "sources", label: "Required sources or internal links", type: "textarea", placeholder: "URLs, studies, product pages, claims to verify…" },
       ],
-      quickStarts: [
-        "Write a durable explainer that answers a high-intent customer question better than current results.",
-        "Create a comparison article grounded in our real differentiation.",
-        "Set up a blog system around the topics our audience asks before buying.",
-      ],
       deliverables: ["Sourced long-form article", "SEO metadata and answer-engine structure"],
-      estimate: RUN_ESTIMATE,
       attachments: generalAttachments,
     },
   },
@@ -762,13 +777,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "proof", label: "Proof and objections", type: "textarea", placeholder: "Testimonials, metrics, guarantees, objections to answer…" },
         { key: "references", label: "Reference URLs", type: "textarea", placeholder: "One URL per line: existing site, inspiration, offer details…" },
       ],
-      quickStarts: [
-        "Build a focused demo-booking page for our highest-intent audience.",
-        "Create a launch page that explains the offer and removes the main objections.",
-        "Improve our existing landing page around one clear conversion goal.",
-      ],
       deliverables: ["Complete page source and static build", "Conversion copy and build instructions"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Brand and page assets",
         hint: "Logos, product images, brand guidelines, testimonials, and wireframes help the page ship closer to final.",
@@ -799,13 +808,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "market", label: "Market, language, and geography", type: "text", placeholder: "e.g. English, US + UK, B2B SaaS" },
         { key: "competitors", label: "Known search competitors", type: "textarea", placeholder: "Domains or brands, one per line" },
       ],
-      quickStarts: [
-        "Audit our SEO and AI-answer visibility, then rank fixes by business impact.",
-        "Find the highest-value content gaps against the competitors listed below.",
-        "Diagnose why our priority pages are not ranking or being cited.",
-      ],
       deliverables: ["Prioritized search and answer-visibility audit", "Evidence, fixes, and implementation roadmap"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Search evidence",
         hint: "Analytics exports, Search Console data, keyword lists, and previous audits make recommendations more specific.",
@@ -825,13 +828,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "known_issues", label: "Known issues or hypotheses", type: "textarea", placeholder: "Drop-off points, support complaints, design concerns…" },
         { key: "devices", label: "Priority devices", type: "text", placeholder: "e.g. mobile Safari first, then desktop" },
       ],
-      quickStarts: [
-        "Audit our primary conversion journey for usability, accessibility, and trust gaps.",
-        "Review the mobile experience and prioritize the five highest-impact fixes.",
-        "Compare the current flow with the attached research and validate our hypotheses.",
-      ],
       deliverables: ["Evidence-backed UX and accessibility findings", "Prioritized fixes with implementation guidance"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Research and screens",
         hint: "Analytics, screenshots, recordings, support themes, and prior research help separate evidence from opinion.",
@@ -866,13 +863,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "budget", label: "Budget and target economics", type: "text", placeholder: "Monthly spend, target CPA/ROAS, margin constraints" },
         { key: "constraints", label: "Claims, compliance, and creative constraints", type: "textarea", placeholder: "Approved claims, prohibited language, asset requirements…" },
       ],
-      quickStarts: [
-        "Build a paid acquisition plan around our offer and target CPA.",
-        "Create campaign angles and ad concepts for the audience below.",
-        "Audit the attached performance export and recommend the next budget moves.",
-      ],
       deliverables: ["Campaign strategy and structure", "Ad angles, creative briefs, and testing plan"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Campaign evidence and creative",
         hint: "Performance exports, existing ads, product imagery, and the landing page brief help the agent make grounded decisions.",
@@ -892,13 +883,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "offer", label: "Offer and primary CTA", type: "text", placeholder: "What should they do or buy?" },
         { key: "must_include", label: "Required messages and constraints", type: "textarea", placeholder: "Dates, product facts, compliance, links, exclusions…" },
       ],
-      quickStarts: [
-        "Build a launch sequence that moves the target segment to one clear action.",
-        "Create a welcome flow around the customer's first successful outcome.",
-        "Audit the current lifecycle and design the highest-impact missing flow.",
-      ],
       deliverables: ["Lifecycle strategy and sequence map", "Complete campaign copy and testing plan"],
-      estimate: RUN_ESTIMATE,
       attachments: generalAttachments,
     },
   },
@@ -927,13 +912,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "competitors", label: "Competitive set and references", type: "textarea", placeholder: "Brands to differentiate from or learn from" },
         { key: "constraints", label: "Non-negotiables", type: "textarea", placeholder: "Elements to keep, legal constraints, rollout timing…" },
       ],
-      quickStarts: [
-        "Clarify our positioning against the competitors below and build a practical messaging system.",
-        "Refresh the brand without losing the equity in our strongest existing assets.",
-        "Define the voice and narrative for our next stage of growth.",
-      ],
       deliverables: ["Positioning and messaging system", "Brand direction with evidence and rollout guidance"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Brand evidence",
         hint: "Current guidelines, identity files, customer research, sales material, and competitor references make the strategy specific.",
@@ -953,13 +932,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "economics", label: "Economics and constraints", type: "textarea", placeholder: "Price, landed cost, margin, inventory, target ACOS…" },
         { key: "competitors", label: "Competitor ASINs or brands", type: "textarea", placeholder: "One per line" },
       ],
-      quickStarts: [
-        "Build a commercially realistic launch plan for this product and marketplace.",
-        "Audit the listing and prioritize changes most likely to improve conversion.",
-        "Create an A+ content and PPC plan around the economics below.",
-      ],
       deliverables: ["Marketplace strategy or launch plan", "Listing, creative, and advertising recommendations"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Product and marketplace inputs",
         hint: "Product photos, cost sheets, listing exports, keyword data, and competitor references are high-value inputs.",
@@ -993,29 +966,27 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       fields: [
         {
           key: "request",
-          label: "Anything to steer this pulse? (optional)",
+          // SCRUM-413 (Lola, decided by Albert 2026-09-10): the same words as
+          // every other agent's per-run steer. "Pulse" is what we call a
+          // reputation run internally; to a client it is one more word to
+          // learn for a field that works exactly like its siblings.
+          label: STEER_RUN_LABEL,
+          steersRun: true,
           type: "textarea",
           placeholder: "A surface to prioritise, a complaint you already know about, a week you care about.",
-          helper:
-            "Leave it empty and we cover every surface on your roster since the last pulse.",
+          helper: "Leave it empty and we cover every surface on your roster since the last run.",
         },
-      ],
-      quickStarts: [
-        "Run the usual pulse across every surface.",
-        "Prioritise anything that looks urgent, then the rest.",
-        "Focus on the surface with the most new reviews.",
       ],
       deliverables: [
         "A reply drafted for each review worth answering",
         "Anything urgent, flagged and routed to your named contact",
         "What we chose not to answer, and why",
       ],
-      estimate: RUN_ESTIMATE,
-      attachments: {
-        label: "Extra context (optional)",
-        hint: "A screenshot of a review that is not on a surface we watch, or a note about an incident in progress.",
-        accept: DOCUMENTS_AND_IMAGES,
-      },
+      // NO "Extra context" UPLOAD (SCRUM-413). Lola: remove the second box. It
+      // took a screenshot of a review on a surface we do not watch — a real
+      // but rare case, and a second box on a form she found cluttered. A
+      // review we should be watching belongs in the roster (the intake page),
+      // not in one run.
     },
   },
   {
@@ -1033,13 +1004,11 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           helper: "Everything else is derived from your own documents and your review history.",
         },
       ],
-      quickStarts: ["Set up reputation monitoring from what we already have."],
       deliverables: [
         "Your listings, found and confirmed per surface",
         "How a reply from you should sound",
         "What gets escalated to a person instead of drafted",
       ],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Reference material (optional)",
         hint: "Past replies you were happy with, your escalation policy, anything your legal team has ruled on.",
@@ -1059,13 +1028,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "concerns", label: "Known risks or incidents", type: "textarea", placeholder: "Escalations, sensitive claims, recurring complaints…" },
         { key: "response_rules", label: "Response and approval rules", type: "textarea", placeholder: "What may be drafted, what requires legal review, what must never be claimed" },
       ],
-      quickStarts: [
-        "Audit recent reputation signals and prioritize the issues that need action.",
-        "Analyze review themes and draft responses within the rules below.",
-        "Build a monitoring and escalation plan for the surfaces listed below.",
-      ],
       deliverables: ["Reputation or review findings", "Response drafts, monitoring plan, and escalation rules"],
-      estimate: RUN_ESTIMATE,
       attachments: generalAttachments,
     },
   },
@@ -1081,13 +1044,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "comparison", label: "Comparison baseline", type: "text", placeholder: "Previous period, target, forecast, or benchmark" },
         { key: "notes", label: "Known anomalies and context", type: "textarea", placeholder: "Launches, tracking gaps, promotions, outages…" },
       ],
-      quickStarts: [
-        "Turn the attached exports into an executive performance report with next actions.",
-        "Explain the largest changes versus the previous period and recommend reallocations.",
-        "Build a concise dashboard narrative for the leadership review.",
-      ],
       deliverables: ["Decision-ready performance report", "Trends, anomalies, and prioritized next actions"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Performance exports",
         hint: "Attach current analytics, ad-platform, CRM, and sales exports. Name each file clearly so the agent can reconcile them.",
@@ -1107,13 +1064,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "audience", label: "Target customer", type: "text", placeholder: "Buyer and use case" },
         { key: "competitors", label: "Known competitors", type: "textarea", placeholder: "One company or URL per line; the agent can discover more" },
       ],
-      quickStarts: [
-        "Map the competitive landscape and identify the clearest positioning whitespace.",
-        "Build a decision-ready intelligence report for the market defined below.",
-        "Turn the attached intelligence into a proposal and practical delivery scope.",
-      ],
       deliverables: ["Evidence-backed intelligence or scope", "Competitive map and prioritized recommendations"],
-      estimate: RUN_ESTIMATE,
       attachments: generalAttachments,
     },
   },
@@ -1253,44 +1204,6 @@ export function listableAgents<T extends AgentListingFields>(agents: readonly T[
 }
 
 /**
- * One parent with the steps that belong to it, for the admin library.
- *
- * Sub-agents are grouped under their parent rather than hidden, because /agents
- * is the LIBRARY and not a roster: it is where an admin edits an agent's
- * instructions and toggles it on. Hiding the setup step there would make its
- * prompt permanently uneditable, which is a worse failure than the clutter.
- *
- * A sub-agent whose `parentKey` matches no agent in the list is returned as an
- * ORPHAN rather than dropped. Silently swallowing it is how a typo'd parentKey
- * becomes an agent nobody can find or fix — the orphan is visible, editable, and
- * says what is wrong with it.
- */
-export function groupAgentsByParent<T extends AgentListingFields & { name: string }>(
-  agents: readonly T[],
-): { parents: Array<{ agent: T; children: T[] }>; orphans: T[] } {
-  const parents = agents.filter((a) => !isSubAgent(a));
-  const children = agents.filter((a) => isSubAgent(a));
-  const byKey = new Map(parents.map((p) => [p.key, p]));
-  const grouped = new Map<string, T[]>();
-  const orphans: T[] = [];
-  for (const child of children) {
-    const parentKey = child.parentKey!.trim();
-    if (!byKey.has(parentKey)) {
-      orphans.push(child);
-      continue;
-    }
-    grouped.set(parentKey, [...(grouped.get(parentKey) ?? []), child]);
-  }
-  return {
-    parents: parents.map((agent) => ({
-      agent,
-      children: (grouped.get(agent.key) ?? []).sort((a, b) => a.name.localeCompare(b.name)),
-    })),
-    orphans,
-  };
-}
-
-/**
  * The v2 writer's "Post as" options for ONE client: the company page, plus every
  * seat whose voice has been built.
  *
@@ -1318,6 +1231,99 @@ export const CUSTOM_PROMPT_FIELD_KEY = "customPrompt";
 export const MEDIA_ASSETS_FIELD_KEY = "mediaAssets";
 
 /**
+ * The run-dialog key for WHERE a media agent's visuals come from.
+ *
+ *   `system` — the agent sources, generates, scrapes or renders its own visuals
+ *              through the existing pipeline (stock, screenshots, generation,
+ *              the client's owned footage). Anything the client attaches is
+ *              still used first; the pipeline fills what they did not supply.
+ *   `client` — the agent uses ONLY what the client uploaded for this job. It
+ *              never sources or generates a picture or a clip. X and LinkedIn
+ *              ship as text when nothing was attached; Instagram, TikTok and
+ *              Branded Shorts have no typographic fallback and refuse the run
+ *              until something is.
+ *
+ * Wire key `mediaSource` (product-mapping.ts); read engine-side by
+ * `readRichRunInput` and honoured by every media agent.
+ */
+export const MEDIA_SOURCE_FIELD_KEY = "media_source";
+export type MediaSource = "system" | "client";
+export const MEDIA_SOURCE_DEFAULT: MediaSource = "system";
+
+export function isMediaSource(value: unknown): value is MediaSource {
+  return value === "system" || value === "client";
+}
+
+/**
+ * How the attach-media control behaves for one engine product — the same three
+ * shapes `RunAttachments` paints (`AttachmentMode`), decided here so the client
+ * run dialog and the admin engine card cannot disagree about which agent takes
+ * a stack of slides, one episode, or one picture.
+ */
+export type EngineAttachmentMode = "slides" | "source-video" | "picture";
+
+export function attachmentModeForEngineProduct(engineProductId: string | undefined): EngineAttachmentMode | undefined {
+  switch (engineProductId) {
+    case "instagram-agent":
+      return "slides";
+    case "tiktok-agent":
+    case "branded-shorts-agent":
+      return "source-video";
+    case "x-agent":
+    case "linkedin-agent":
+      return "picture";
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Whether "client-provided media only" is a run that CANNOT proceed with
+ * nothing attached. A text-first channel ships as text; a video or carousel
+ * agent has nothing to make.
+ */
+export function clientOnlyMediaIsRequired(engineProductId: string | undefined): boolean {
+  return engineProductId === "instagram-agent" || engineProductId === "tiktok-agent" || engineProductId === "branded-shorts-agent";
+}
+
+/** The sentence under the attach control, for this product and this choice of source. */
+export function mediaSourceHint(engineProductId: string | undefined, source: MediaSource): string {
+  const mode = attachmentModeForEngineProduct(engineProductId);
+  if (source === "client") {
+    if (mode === "slides") return "Only these images are used, in this order, first file on slide 1. Nothing is sourced or generated for the slides you leave uncovered.";
+    if (mode === "source-video") return "The footage this run works from. Nothing else is harvested or generated.";
+    return "Optional. Attach a picture and the post is written to it; leave it empty and the post ships as text — no picture is sourced or generated.";
+  }
+  if (mode === "slides") return "Optional. Anything you attach goes on the first slides; the rest is sourced or generated as usual.";
+  if (mode === "source-video") return "Optional. Attach footage to work from, or leave it empty and the agent finds or generates its own.";
+  return "Optional. Attach a picture and the post is written to it; leave it empty and the agent sources one when the post wants a visual.";
+}
+
+/** The dialog's JSON attachment list, parsed leniently — a malformed value is no attachments, never a crash in a client's dialog. */
+export function parseRunAttachmentsJson(raw: string | undefined): Array<{ uri: string; role: "source" | "reference"; contentType?: string; label?: string }> {
+  if (!raw?.trim()) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((entry) => {
+      if (typeof entry !== "object" || entry === null) return [];
+      const e = entry as Record<string, unknown>;
+      if (typeof e.uri !== "string" || !e.uri) return [];
+      return [
+        {
+          uri: e.uri,
+          role: e.role === "reference" ? ("reference" as const) : ("source" as const),
+          ...(typeof e.contentType === "string" && e.contentType ? { contentType: e.contentType } : {}),
+          ...(typeof e.label === "string" && e.label ? { label: e.label } : {}),
+        },
+      ];
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Which engine products work FROM a piece of media rather than producing one.
  *
  * Only these get the attachment field, because for everything else there is no
@@ -1329,7 +1335,11 @@ export const MEDIA_ASSETS_FIELD_KEY = "mediaAssets";
 // post TO it (agent-engine RFC-12). For them the upload is optional — a run
 // without one sources its own picture — but the field has to exist for a
 // client to be able to hand one over at all.
-const MEDIA_DEPENDENT_PRODUCTS = new Set(["instagram-agent", "branded-shorts-agent", "tiktok-agent", "x-agent", "linkedin-agent"]);
+//
+// 2026-09-07: the set itself moved to product-mapping.ts
+// (`ENGINE_PRODUCTS_READING_MEDIA_ASSETS`), because `toEngineRunInput` needs
+// the same answer to decide whether a dialog's link list is an asset or prose.
+const MEDIA_DEPENDENT_PRODUCTS = ENGINE_PRODUCTS_READING_MEDIA_ASSETS;
 
 /**
  * Whether an agent-engine product reads `mediaAssets` at all.
@@ -1354,6 +1364,20 @@ export function agentEngineProductAcceptsMediaAssets(engineProductId: string | u
 }
 
 /**
+ * Is this profile's own `request` box the run's direction (the optional
+ * "Direction for this run" steer), rather than a topic it asks for?
+ *
+ * Such a profile shows ONE direction box (Albert, 2026-09-10). It used to get
+ * the engine's `customPrompt` box too, under the same label, so the form asked
+ * the same question twice. What is typed in the one box is sent as both the
+ * requested topic and the direction (`toEngineRunInput`'s `requestSteersRun`),
+ * so neither field the two boxes used to fill goes empty.
+ */
+export function requestSteersRun(profile: AgentLaunchProfile): boolean {
+  return profile.fields.some((f) => f.key === "request" && f.steersRun === true);
+}
+
+/**
  * Adds the two run-scoped inputs agent-engine understands from any agent: a
  * free-text direction, and — for the media products — the source asset.
  *
@@ -1374,7 +1398,7 @@ export function withEngineRunFields(
   if (!engineProductId) return profile;
 
   const extra: AgentBriefField[] = [];
-  if (!profile.fields.some((f) => f.key === CUSTOM_PROMPT_FIELD_KEY)) {
+  if (!requestSteersRun(profile) && !profile.fields.some((f) => f.key === CUSTOM_PROMPT_FIELD_KEY)) {
     extra.push({
       key: CUSTOM_PROMPT_FIELD_KEY,
       label: "Direction for this run (optional)",
@@ -1383,15 +1407,30 @@ export function withEngineRunFields(
       helper: "How to treat the topic this time — an angle to take, something to avoid, a tone to hit.",
     });
   }
-  if (agentEngineProductAcceptsMediaAssets(engineProductId) && !profile.fields.some((f) => f.key === MEDIA_ASSETS_FIELD_KEY)) {
-    extra.push({
-      key: MEDIA_ASSETS_FIELD_KEY,
-      label: "Source media",
-      type: "textarea",
-      placeholder: '[{"uri": "gs://bucket/episode.mp4", "role": "source"}]',
-      helper:
-        "A gs:// or https:// URI per asset. For the video agents this is the footage to work from; for X, LinkedIn and Instagram it is optional — attach a picture and the post is written to it, leave it blank and the agent sources one.",
-    });
+  if (agentEngineProductAcceptsMediaAssets(engineProductId)) {
+    // The two media controls travel together: where the visuals come from, and
+    // the files themselves. Painted by the dialog as one "Media for this run"
+    // block under the primary question rather than behind "More options",
+    // because for a media agent this is the second question, not a detail.
+    if (!profile.fields.some((f) => f.key === MEDIA_SOURCE_FIELD_KEY)) {
+      extra.push({
+        key: MEDIA_SOURCE_FIELD_KEY,
+        label: "Media for this run",
+        type: "select",
+        defaultValue: MEDIA_SOURCE_DEFAULT,
+        options: [
+          { value: "system", label: "Karos sources or generates the visuals" },
+          { value: "client", label: "Only media I upload for this job" },
+        ],
+      });
+    }
+    if (!profile.fields.some((f) => f.key === MEDIA_ASSETS_FIELD_KEY)) {
+      extra.push({
+        key: MEDIA_ASSETS_FIELD_KEY,
+        label: "Your media",
+        type: "media",
+      });
+    }
   }
   if (extra.length === 0) return profile;
   return { ...profile, fields: [...profile.fields, ...extra] };
@@ -1767,6 +1806,65 @@ export function batchSizeFrom(values: Record<string, string>): number | undefine
   return Number.isInteger(n) && n > 0 ? n : undefined;
 }
 
+/** The same read for the visible post count, or undefined if absent/invalid. */
+export function postCountFrom(values: Record<string, string>): number | undefined {
+  const raw = values[POST_COUNT_FIELD_KEY];
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+/**
+ * How many outputs the brief in front of the reader asks for, FOR QUOTING.
+ *
+ * Round 6, decision 5. The dialog used to quote `cost × batch_size`, and
+ * `batch_size` is hidden on every agent that has one - so a client raising
+ * "Number of posts" from 1 to 10 read the same "about 25 credits" throughout.
+ * The two keys cannot both be answered: no profile declares both, so this reads
+ * whichever one the brief has and multiplies by it exactly once. `batch_size`
+ * wins where a profile ever declares both, because that one is also what the
+ * submit sends as `chargeMultiplier` - a quote must never be lower than the
+ * hold.
+ *
+ * Pass VISIBLE field values only (the dialog does): a hidden `batch_size` is a
+ * UI removal and stays inert for pricing, which is the 2026-08-05 ruling this
+ * helper must not quietly reverse.
+ *
+ * WHAT IT DOES NOT CHANGE: what the server charges. `post_count` is not a
+ * multiplier and is not sent as one. Under settlement (`priceIsEstimate`) a run
+ * reconciles to what it actually used, and ten posts use about ten times what
+ * one post uses, so this is the honest number to quote; with settlement off the
+ * hold stays flat per run, so a client who raises the count is quoted the
+ * ceiling and charged less than that. Overstating a price is the only direction
+ * of error this line is allowed to make.
+ */
+export function quoteMultiplierFrom(values: Record<string, string>): number {
+  return batchSizeFrom(values) ?? postCountFrom(values) ?? 1;
+}
+
+/**
+ * IS THE QUOTE ABOVE AN ESTIMATE, WHATEVER THIS DEPLOY'S SETTLEMENT SETTING?
+ *
+ * Round 6 review, D6. `priceIsEstimate` answers a different question — "does
+ * this deploy reconcile a run to what it used" — and with it off the footer
+ * printed the exact form, "N credits", for a `post_count` quote. That number
+ * is NOT what the client is charged and cannot be: only `batch_size` reaches
+ * the submit's `chargeMultiplier`, so a flat-hold deploy quoting ten posts
+ * holds one run's price and prints ten. The multiplier being a count the
+ * charge never sees is exactly what makes the figure an estimate, so it says
+ * "about N credits" on its own terms.
+ *
+ * `batch_size` keeps the exact form: it IS the charge multiplier, so the quote
+ * equals the hold. Neither key present means a multiplier of 1 and nothing to
+ * hedge. Reads the same two keys, in the same precedence, as
+ * `quoteMultiplierFrom` — one function decides the number and this one decides
+ * how it is worded, from the same input, so they cannot disagree about which
+ * key won.
+ */
+export function quoteIsEstimate(values: Record<string, string>): boolean {
+  return batchSizeFrom(values) === undefined && postCountFrom(values) !== undefined;
+}
+
 /**
  * The charge multiplier a FRESH, untouched run dialog submits for this agent —
  * the default of its VISIBLE batch_size selector, or 1.
@@ -1796,7 +1894,10 @@ export function buildCustomAgentPrompt(
   values: Record<string, string>,
 ): string {
   return profile.fields
-    .filter((field) => field.key !== BATCH_SIZE_FIELD_KEY)
+    // The count is read separately (see BATCH_SIZE_FIELD_KEY); the two media
+    // controls are DATA for the engine (`mediaSource`, `mediaAssets` on the
+    // wire), and a JSON array of gs:// URIs is not prose an agent should read.
+    .filter((field) => field.key !== BATCH_SIZE_FIELD_KEY && field.key !== MEDIA_ASSETS_FIELD_KEY && field.key !== MEDIA_SOURCE_FIELD_KEY)
     .map((field) => ({ label: field.label, value: values[field.key]?.trim() }))
     .filter((entry): entry is { label: string; value: string } => Boolean(entry.value))
     .map((entry) => `${entry.label}\n${entry.value}`)

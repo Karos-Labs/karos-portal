@@ -30,6 +30,7 @@ import {
 } from "@/lib/data";
 import { findDuplicateReason, normalizeTitleForDedup, queueCapacitySkipNote } from "@/lib/task-dedup";
 import { computePlatformGaps } from "@/lib/calendar-gaps";
+import { isServedPlatform, servedPlatformKeys, unservedPlatformSkipNote, withoutAgentIds } from "@/lib/served-platforms";
 import { computeAgentStaleness, agentStalenessSummary, reviewBacklogSummary } from "@/lib/agent-staleness";
 import { getClientCustomAgents, type ClientCustomAgentSummary } from "@/lib/agent-roster";
 import { generateCampaignBundle, type CampaignTrend } from "@/lib/campaign-engine";
@@ -109,6 +110,7 @@ Rules:
 - Every task is karos_managed content the Karos AI agents execute. A content task normally carries a productType from: ${PRODUCT_TYPES.join(", ")}.
 - When an AVAILABLE CUSTOM AGENTS list is provided and one fits the task better, assign it by setting customAgentId to that agent's exact id INSTEAD of a productType — never set both on the same task. Only use ids from that list; never invent one.
 - Set platform to the target channel when relevant. Set weight (0-100) by how critical the underlying gap is (90+ = urgent, 75-89 = high, 50-74 = standard, <50 = optional); priority must agree (>=75 high, 40-74 medium, <40 low).
+- Only a channel in CHANNELS WE POST TO may carry a task; the platform drops any other, so never propose one. Never write an agent's id into a title or description — name the agent.
 - Keep tasks hyper-specific to THIS client. No generic filler. Never exceed 20 tasks in the array; the panel will trim to the best ${MAX_CONSENSUS_TASKS}.
 - When AGENT STALENESS flags an agent as never_run/overdue_schedule/stale_no_cadence, strongly prefer a task that assigns THAT agent's customAgentId over a generic platform-gap task, and name the staleness reason in the task's description. When REVIEW BACKLOG is non-trivial, weigh whether the client is better served by a task that clears the backlog (nudging a review) than by proposing more new volume.
 - Return the COMPLETE array every turn (keep what works, revise what doesn't) — do not return only your deltas.
@@ -155,6 +157,12 @@ export interface SwarmContext {
   category?: string | null;
   /** Connected platforms vs the 14-day calendar — where the gaps are. */
   gapSummary: string;
+  /**
+   * Integration keys of the channels an agent of this client's posts to
+   * (lib/served-platforms.ts). A task for any other channel is dropped at
+   * persist, and the prompt says so: nothing here makes anything for it.
+   */
+  servedPlatforms: string[];
   /** Brand voice / tone / visual style guidance for the Creative Director. */
   brandingSummary: string;
   /** Top/bottom historical performers for the Data Analyst. */
@@ -251,6 +259,8 @@ DEBATE ROUND: ${round} of ${totalRounds}
 
 CONTENT & INTEGRATION GAPS:
 ${ctx.gapSummary}
+
+CHANNELS WE POST TO: ${ctx.servedPlatforms.length > 0 ? ctx.servedPlatforms.join(", ") : "(none yet)"}
 
 BRAND GUIDANCE:
 ${ctx.brandingSummary}
@@ -442,6 +452,8 @@ export interface PersistResult {
   created: number;
   duplicatesSkipped: number;
   capSkipped: number;
+  /** Proposals for a channel no agent of the client's posts to. */
+  unservedSkipped: number;
   note: string;
 }
 
@@ -459,11 +471,12 @@ export async function persistSwarmTasks(
   customAgents: ClientCustomAgentSummary[] = [],
 ): Promise<PersistResult> {
   if (drafts.length === 0) {
-    return { created: 0, duplicatesSkipped: 0, capSkipped: 0, note: "No tasks to create." };
+    return { created: 0, duplicatesSkipped: 0, capSkipped: 0, unservedSkipped: 0, note: "No tasks to create." };
   }
 
   // Only ids the client actually has can be assigned — drops any hallucinated id.
   const customById = new Map(customAgents.map((a) => [a.id, a]));
+  const served = servedPlatformKeys(customAgents);
 
   const { activeCount, tasks: boardTasks } = await getTaskBoardCapacity(clientId);
   const pool = [...boardTasks];
@@ -471,8 +484,15 @@ export async function persistSwarmTasks(
   let slotsFree = Math.max(0, MAX_ACTIVE_TASKS - activeCount);
   let duplicatesSkipped = 0;
   let capSkipped = 0;
+  let unservedSkipped = 0;
 
   for (const t of drafts) {
+    // A channel no agent of this client's posts to gets no task: nothing here
+    // can make anything for it (lib/served-platforms.ts, Albert 2026-09-11).
+    if (!isServedPlatform(t.platform, served)) {
+      unservedSkipped++;
+      continue;
+    }
     // Only an id the client actually has is a real executor link — same rule
     // the persist pass below applies, and it has to run here too: an
     // unvalidated (possibly hallucinated) id must not scope the dedup either.
@@ -537,8 +557,9 @@ export async function persistSwarmTasks(
       if (t.platform) metadata.platform = t.platform;
       return createClientTask({
         clientId,
-        title: t.title,
-        description: t.description,
+        // Names, never ids, in what the client reads (lib/served-platforms.ts).
+        title: withoutAgentIds(t.title, customAgents),
+        description: withoutAgentIds(t.description, customAgents),
         status: "pending",
         priority: t.priority as TaskPriority,
         source: "copilot" as TaskSource,
@@ -558,11 +579,13 @@ export async function persistSwarmTasks(
     // dock (strategy-war-room.tsx, ConsoleLine "persisted"), so it is client
     // copy — see queueCapacitySkipNote for why all three callers share it.
     capSkipped > 0 ? queueCapacitySkipNote(capSkipped) : "",
+    unservedSkipped > 0 ? unservedPlatformSkipNote(unservedSkipped) : "",
   ].filter(Boolean);
   return {
     created: fresh.length,
     duplicatesSkipped,
     capSkipped,
+    unservedSkipped,
     note: `Locked ${fresh.length} task${fresh.length !== 1 ? "s" : ""}${notes.length ? ` (${notes.join("; ")})` : ""}.`,
   };
 }
@@ -594,11 +617,19 @@ export async function buildSwarmContext(
   // so the two can never disagree about what a "gap" is.
   const nowMs = Date.now();
   const active = integrations.filter((i) => i.platform !== "google" && integrationIsUsable(i));
-  const gaps = computePlatformGaps(assets, active.map((i) => i.platform), nowMs);
-  const gapLines = gaps.map(
-    (g) =>
-      `- ${g.platform}: ${g.scheduledCount === 0 ? "NO content scheduled in the next 14 days — GAP" : `${g.scheduledCount} scheduled`}`,
-  );
+  // Gaps only on the channels an agent posts to; a connected channel with no
+  // agent is named as such, so no persona proposes a task for it.
+  const served = servedPlatformKeys(customAgents);
+  const gaps = computePlatformGaps(assets, active.filter((i) => served.has(i.platform)).map((i) => i.platform), nowMs);
+  const gapLines = [
+    ...gaps.map(
+      (g) =>
+        `- ${g.platform}: ${g.scheduledCount === 0 ? "NO content scheduled in the next 14 days — GAP" : `${g.scheduledCount} scheduled`}`,
+    ),
+    ...active
+      .filter((i) => !served.has(i.platform))
+      .map((i) => `- ${i.platform}: connected, but no agent posts there — never a gap, never a task`),
+  ];
   const gapSummary = gapLines.length > 0 ? gapLines.join("\n") : "No social platforms connected yet.";
 
   // Brand guidance for the Creative Director.
@@ -679,6 +710,7 @@ export async function buildSwarmContext(
     clientName: client.name,
     category: clientCategoryValue(client),
     gapSummary,
+    servedPlatforms: [...served],
     brandingSummary,
     benchmarkSummary,
     stalenessSummary,

@@ -66,7 +66,9 @@ export function AgentNotOnPlan() {
       <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
         <Link
           href={agentsHref}
-          className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-3 text-sm font-medium text-foreground transition-colors hover:border-neon/50 hover:text-neon"
+          /* round 6 (rule 3): the outline voice's own hover. Orange marks no
+             link and no border on hover. */
+          className="focus-ring inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-3 text-sm font-medium text-foreground transition-colors duration-150 hover:border-foreground/30 hover:bg-foreground/[0.04]"
         >
           {/* Names the destination rather than the reader: "See your agents" is
               a sentence about a plan, and half the people who land here are

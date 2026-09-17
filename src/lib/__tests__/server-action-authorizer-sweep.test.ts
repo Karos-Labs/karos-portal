@@ -396,10 +396,6 @@ function calleesIn(body: string): string[] {
 
 const PLANT_HOST = modules.find((m) => m.name === "credit-actions.ts")!.src;
 
-/** A call that changes or destroys something that already exists, or moves money. */
-const MUTATING_CALL =
-  /\b(?:update|delete|remove|set|charge|credit|debit|upsert|revoke|approve|reject|cancel|claim|grant)[A-Z]\w*\s*\(/;
-
 /** The identifiers a module pulled out of the data layer. */
 function dataLayerImports(src: string): string[] {
   const m = /import\s*\{([^}]*)\}\s*from\s*["']@\/lib\/data["']/.exec(src);

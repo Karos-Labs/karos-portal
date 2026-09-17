@@ -276,11 +276,26 @@ export function routeContextDocCondensation(
   const usableWindow = Math.floor(CLAUDE_CONTEXT_WINDOW_TOKENS * CONTEXT_SAFETY_FRACTION);
   const needed = complexity.estimatedPromptTokens + maxOutputTokens;
 
+  // The Sonnet baseline chain, Vertex first. It is the whole route for a
+  // standard document and the FALLBACK for an escalated one: on 2026-09-07 a
+  // Regenerate for a real client failed outright because its two escalated
+  // documents (brand-voice, market-strategy) went to Opus alone, Opus answered
+  // "No output generated", and there was nothing behind it — while the four
+  // standard documents in the same run all succeeded on this exact chain after
+  // Vertex failed. A premium model that cannot answer is a reason to condense
+  // with the model that can, not to fail the client's onboarding.
+  const baseVendors: readonly Vendor[] = ["vertex", "anthropic"];
+  const baseline: CondensationModelAttempt[] = baseVendors.map((vendor) => ({
+    vendor,
+    modelId: modelIdFor("intel.condense", vendor) ?? "unknown",
+    resolve: () => aiFor("intel.condense", { vendor }),
+  }));
+
   if (needed > usableWindow) {
     const rationale =
       `"${docType}": ~${needed} tokens needed (input + ${maxOutputTokens} reserved output) exceeds ` +
       `${usableWindow} usable of Claude's ${CLAUDE_CONTEXT_WINDOW_TOKENS}-token window — routed to ` +
-      `"${LARGE_CONTEXT_MODEL}" (1,000,000-token window, vendor "google")`;
+      `"${LARGE_CONTEXT_MODEL}" (1,000,000-token window, vendor "google"), Sonnet baseline as fallback`;
     return {
       complexity,
       rationale,
@@ -292,6 +307,11 @@ export function routeContextDocCondensation(
           resolve: () =>
             aiFor("intel.condense.context_overflow", { vendor: "google", modelId: LARGE_CONTEXT_MODEL }),
         },
+        // A document that does not fit Claude's window will most likely fail on
+        // Sonnet too — but "most likely" is not "certainly" (the estimate is
+        // chars/3.5 with a safety fraction), and an attempt that fails costs a
+        // logged error where no attempt costs the run.
+        ...baseline,
       ],
     };
   }
@@ -299,7 +319,7 @@ export function routeContextDocCondensation(
   if (complexity.tier === "high") {
     const rationale =
       `"${docType}": complexity ${complexity.score} >= ${HIGH_COMPLEXITY_THRESHOLD} ` +
-      `(${complexity.reasons.join("; ")}) — routed to "${HIGH_COMPLEXITY_MODEL}" (anthropic only)`;
+      `(${complexity.reasons.join("; ")}) — routed to "${HIGH_COMPLEXITY_MODEL}" (anthropic), Sonnet baseline as fallback`;
     return {
       complexity,
       rationale,
@@ -311,11 +331,11 @@ export function routeContextDocCondensation(
           resolve: () =>
             aiFor("intel.condense.complexity_escalation", { vendor: "anthropic", modelId: HIGH_COMPLEXITY_MODEL }),
         },
+        ...baseline,
       ],
     };
   }
 
-  const baseVendors: readonly Vendor[] = ["vertex", "anthropic"];
   const rationale =
     `"${docType}": complexity ${complexity.score} < ${HIGH_COMPLEXITY_THRESHOLD} — ` +
     `Vertex-primary, Anthropic-fallback on "${modelIdFor("intel.condense", "anthropic") ?? "?"}"`;
@@ -323,10 +343,6 @@ export function routeContextDocCondensation(
     complexity,
     rationale,
     escalated: false,
-    attempts: baseVendors.map((vendor) => ({
-      vendor,
-      modelId: modelIdFor("intel.condense", vendor) ?? "unknown",
-      resolve: () => aiFor("intel.condense", { vendor }),
-    })),
+    attempts: baseline,
   };
 }

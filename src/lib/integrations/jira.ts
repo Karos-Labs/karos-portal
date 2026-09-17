@@ -3,6 +3,7 @@ import "server-only";
 import { getJiraConfig } from "@/lib/data";
 import { logger } from "@/services/logger";
 import type { ActionItem, JiraConfig } from "@/lib/types";
+import { appLinkBase } from "@/lib/app-origin";
 
 /**
  * One-way push to Jira Cloud: assigning a meeting action item to a staff
@@ -147,7 +148,7 @@ export async function syncActionItemAssignmentToJira(
 
     const created = await createJiraIssue(config, {
       summary: item.text,
-      descriptionText: `From meeting: ${item.transcriptTitle}\n${process.env.NEXT_PUBLIC_APP_URL ?? ""}/transcripts/${item.transcriptId}`,
+      descriptionText: `From meeting: ${item.transcriptTitle}\n${appLinkBase()}/transcripts/${item.transcriptId}`,
       accountId,
     });
     return { jiraIssueKey: created.key, jiraIssueUrl: created.url };

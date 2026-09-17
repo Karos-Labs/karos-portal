@@ -7,6 +7,7 @@
 import type { Asset, ClientIntegration } from "@/lib/types";
 import { assetImages, assetVideos } from "@/lib/asset-images";
 import { PUBLISHABLE_PLATFORMS, platformLabel } from "@/lib/integrations/platforms";
+import { metaGraphUrl } from "@/lib/integrations/meta-graph";
 
 /**
  * Thrown when a platform API returns HTTP 401 or 403.
@@ -202,7 +203,7 @@ async function publishToInstagram(
   } else {
     // Get pages and their connected IG business accounts
     const pagesRes = await fetch(
-      `https://graph.facebook.com/v20.0/me/accounts?access_token=${encodeURIComponent(token)}`,
+      metaGraphUrl(`me/accounts?access_token=${encodeURIComponent(token)}`),
     );
     if (pagesRes.status === 401 || pagesRes.status === 403) throw new TokenExpiredError("instagram", pagesRes.status);
     if (!pagesRes.ok) throw new Error(`Failed to fetch pages: ${pagesRes.status}`);
@@ -211,7 +212,7 @@ async function publishToInstagram(
 
     for (const page of pagesData.data) {
       const igRes = await fetch(
-        `https://graph.facebook.com/v20.0/${page.id}?fields=instagram_business_account&access_token=${encodeURIComponent(page.access_token)}`,
+        metaGraphUrl(`${page.id}?fields=instagram_business_account&access_token=${encodeURIComponent(page.access_token)}`),
       );
       if (!igRes.ok) continue;
       const igData = (await igRes.json()) as { instagram_business_account?: { id: string } };
@@ -232,7 +233,7 @@ async function publishToInstagram(
     access_token: pageToken,
   });
   const containerRes = await fetch(
-    `https://graph.facebook.com/v20.0/${igUserId}/media`,
+    metaGraphUrl(`${igUserId}/media`),
     { method: "POST", body: containerParams },
   );
   if (containerRes.status === 401 || containerRes.status === 403) throw new TokenExpiredError("instagram", containerRes.status);
@@ -245,7 +246,7 @@ async function publishToInstagram(
   // Publish
   const publishParams = new URLSearchParams({ creation_id: creationId, access_token: pageToken });
   const publishRes = await fetch(
-    `https://graph.facebook.com/v20.0/${igUserId}/media_publish`,
+    metaGraphUrl(`${igUserId}/media_publish`),
     { method: "POST", body: publishParams },
   );
   if (publishRes.status === 401 || publishRes.status === 403) throw new TokenExpiredError("instagram", publishRes.status);
@@ -279,7 +280,7 @@ async function publishToFacebook(
     pageToken = token;
   } else {
     const pagesRes = await fetch(
-      `https://graph.facebook.com/v20.0/me/accounts?access_token=${encodeURIComponent(token)}`,
+      metaGraphUrl(`me/accounts?access_token=${encodeURIComponent(token)}`),
     );
     if (pagesRes.status === 401 || pagesRes.status === 403) throw new TokenExpiredError("facebook", pagesRes.status);
     if (!pagesRes.ok) throw new Error(`Failed to fetch pages: ${pagesRes.status}`);
@@ -296,7 +297,7 @@ async function publishToFacebook(
   if (photo) params.set("url", photo);
 
   const postRes = await fetch(
-    `https://graph.facebook.com/v20.0/${pageId}/feed`,
+    metaGraphUrl(`${pageId}/feed`),
     { method: "POST", body: params },
   );
   if (postRes.status === 401 || postRes.status === 403) throw new TokenExpiredError("facebook", postRes.status);

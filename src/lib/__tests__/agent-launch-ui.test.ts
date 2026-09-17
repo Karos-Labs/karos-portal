@@ -16,10 +16,16 @@ import {
   clientSafeRunError,
   initialAgentBrief,
   launchProfileFor,
+  postCountFrom,
+  quoteMultiplierFrom,
+  quoteIsEstimate,
+  BATCH_SIZE_FIELD_KEY,
+  POST_COUNT_FIELD_KEY,
   X_SETUP_REQUIRED_PREFIX,
 } from "@/lib/custom-agent-launch";
-import { CREDIT_DENIAL_PREFIX } from "@/lib/credits";
+import { CREDIT_DENIAL_PREFIX, creditsLabel, estimatedCreditsLabel } from "@/lib/credits";
 import { intakePageHref } from "@/lib/agent-intake-links";
+import { stripComments } from "./source-scan";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import * as data from "@/lib/data";
 import { buildAgentSetup } from "@/lib/client-agent-rows";
@@ -40,8 +46,8 @@ describe("custom agent launch profiles", () => {
     expect(linkedin.fields.map((field) => field.key)).toEqual(
       expect.arrayContaining(["executive", "request", "proof"]),
     );
-    expect(shorts.attachments.required).toBe(true);
-    expect(shorts.attachments.satisfyWithFieldKey).toBe("source_url");
+    expect(shorts.attachments?.required).toBe(true);
+    expect(shorts.attachments?.satisfyWithFieldKey).toBe("source_url");
     // The X agent is intake-driven (its agent data holds handles, off-limits,
     // rosters, takes) — the launch brief only scopes the run. It must never
     // ask for things the agent BUILDS (audience, themes, cadence) or already
@@ -102,7 +108,7 @@ describe("custom agent launch profiles", () => {
     const profile = launchProfileFor({ key: "future-agent", name: "Future Agent" });
     expect(profile.fields.find((field) => field.key === "request")?.required).toBe(true);
     expect(profile.fields.map((field) => field.key)).toContain("success_criteria");
-    expect(profile.attachments.label).toBe("Reference files");
+    expect(profile.attachments?.label).toBe("Reference files");
   });
 
   it("does not let broad words route specialized agents to the wrong brief", () => {
@@ -126,11 +132,10 @@ describe("custom agent launch profiles", () => {
       const strings = [
         profile.eyebrow,
         profile.intro,
-        profile.estimate,
-        ...profile.quickStarts,
         ...profile.deliverables,
-        profile.attachments.label,
-        profile.attachments.hint,
+        // Optional since SCRUM-413: the reputation runner has no file slot.
+        profile.attachments?.label ?? "",
+        profile.attachments?.hint ?? "",
         ...profile.fields.flatMap((field) => [
           field.label,
           field.placeholder,
@@ -143,6 +148,139 @@ describe("custom agent launch profiles", () => {
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  /**
+   * ROUND 6, DECISION 5: THE DIALOG'S PRICE MUST MATCH THE DIALOG'S DEFAULTS.
+   *
+   * "Number of posts" defaulted to 3 and was never the multiplier of anything a
+   * client could read: the footer quoted `cost × batch_size`, `batch_size` is
+   * hidden on every profile that has one, so 1 post, 3 posts and 10 posts all
+   * quoted the same flat per-run price. The count is now what the quote
+   * multiplies by, and the default is 1 so the opening quote is the price of the
+   * run the dialog is actually set up to do.
+   */
+  describe("the visible post count is the quote's multiplier", () => {
+    const instagram = launchProfileFor({
+      key: "karos-instagram-tiktok-content-agent",
+      name: "Instagram + TikTok Content Agent",
+    });
+
+    it("opens on one post", () => {
+      // round 6: was "3". The count is the quote's multiplier now, and a default
+      // above 1 makes the first number a client reads a number they did not ask
+      // for.
+      //
+      // THE KEY IS `batch_size`, not `post_count`. Round 6 and the 2026-09-05
+      // run-dialog pass fixed the same defect from opposite ends and met here:
+      // that pass made Instagram's count VISIBLE as the shared batch key, which
+      // is the only one the submit core splits into N runs and charges for.
+      // `post_count` stayed a dialog-only number no engine workflow ever read,
+      // so quoting off it would have gone back to promising a client something
+      // the run does not do. It is not in this profile's brief at all.
+      const count = instagram.fields.find((field) => field.key === BATCH_SIZE_FIELD_KEY);
+      expect(count?.defaultValue).toBe("1");
+      expect(count?.hidden ?? false).toBe(false);
+      expect(postCountFrom(initialAgentBrief(instagram))).toBeUndefined();
+      expect(quoteMultiplierFrom(initialAgentBrief(instagram))).toBe(1);
+    });
+
+    it("follows the count the reader can see", () => {
+      expect(quoteMultiplierFrom({ ...initialAgentBrief(instagram), [BATCH_SIZE_FIELD_KEY]: "4" })).toBe(4);
+      // The defect itself: this used to be 1 for every count, because the count
+      // and the multiplier were different keys.
+      expect(quoteMultiplierFrom({ [BATCH_SIZE_FIELD_KEY]: "5" })).toBe(5);
+      // `post_count` remains the fallback the round-6 helper was written for, so
+      // a profile that still shows one quotes off it rather than off nothing.
+      expect(quoteMultiplierFrom({ [POST_COUNT_FIELD_KEY]: "10" })).toBe(10);
+    });
+
+    it("multiplies exactly once, and never by a count it cannot trust", () => {
+      // No profile declares both keys, but the helper must not double-count if
+      // one ever does - and batch_size wins, because that is also what the
+      // submit sends as the charge multiplier.
+      expect(quoteMultiplierFrom({ [BATCH_SIZE_FIELD_KEY]: "3", [POST_COUNT_FIELD_KEY]: "5" })).toBe(3);
+      for (const bad of ["0", "-2", "2.5", "three", ""]) {
+        expect(quoteMultiplierFrom({ [POST_COUNT_FIELD_KEY]: bad })).toBe(1);
+      }
+      expect(quoteMultiplierFrom({})).toBe(1);
+    });
+
+    it("leaves an agent with no visible count quoting one run", () => {
+      // The X and LinkedIn writers carry a HIDDEN batch_size. Hidden means inert
+      // for pricing (2026-08-05), and they have no post_count at all, so their
+      // quote stays the flat per-run price.
+      for (const key of ["karos-x-agent-v2", "karos-linkedin-writer-v2"]) {
+        const profile = launchProfileFor({ key, name: "Agent" });
+        const visible = Object.fromEntries(
+          Object.entries(initialAgentBrief(profile)).filter(
+            ([field]) => !profile.fields.find((f) => f.key === field)?.hidden,
+          ),
+        );
+        expect(quoteMultiplierFrom(visible)).toBe(1);
+      }
+    });
+
+    /**
+     * ROUND 6 REVIEW (D6): A COUNT-BASED QUOTE IS AN ESTIMATE BY NATURE.
+     *
+     * The multiplication above is honest and unchanged; the WORDING was not.
+     * `post_count` multiplies the quote and never reaches the submit's
+     * `chargeMultiplier`, so on a deploy with settlement off the footer printed
+     * an exact "75 credits" for three posts against a flat one-run hold. Two
+     * independent reasons to hedge, and only the absence of BOTH earns "N
+     * credits": settlement on for the deploy, or the count as the multiplier.
+     */
+    it("hedges a count-based quote whatever the deploy's settlement setting is", () => {
+      expect(quoteIsEstimate({ [POST_COUNT_FIELD_KEY]: "3" })).toBe(true);
+      // batch_size IS the charge multiplier, so that quote equals the hold.
+      expect(quoteIsEstimate({ [BATCH_SIZE_FIELD_KEY]: "3" })).toBe(false);
+      expect(
+        quoteIsEstimate({ [BATCH_SIZE_FIELD_KEY]: "3", [POST_COUNT_FIELD_KEY]: "5" }),
+        "batch_size won the multiplier but not the wording",
+      ).toBe(false);
+      // Nothing to hedge: no key, or a count the multiplier refused.
+      expect(quoteIsEstimate({})).toBe(false);
+      for (const bad of ["0", "-2", "2.5", "three", ""]) {
+        expect(quoteIsEstimate({ [POST_COUNT_FIELD_KEY]: bad })).toBe(false);
+      }
+    });
+
+    it("prints the two label forms the footer is allowed to print", () => {
+      // The same composition `briefQuoteLabel` performs, asserted on the strings
+      // a client actually reads. "About" is capitalized by the footer's own
+      // `sentenceStart`, so the helpers stay lower case here.
+      const perRun = 25;
+      const counted = { [POST_COUNT_FIELD_KEY]: "3" };
+      const batched = { [BATCH_SIZE_FIELD_KEY]: "3" };
+      const label = (values: Record<string, string>, settlementOn: boolean) => {
+        const amount = perRun * quoteMultiplierFrom(values);
+        return settlementOn || quoteIsEstimate(values)
+          ? estimatedCreditsLabel(amount)
+          : creditsLabel(amount);
+      };
+      // The defect: this used to read "75 credits".
+      expect(label(counted, false)).toBe("about 75 credits");
+      expect(label(counted, true)).toBe("about 75 credits");
+      // The exact form survives exactly where the quote is the charge.
+      expect(label(batched, false)).toBe("75 credits");
+      expect(label(batched, true)).toBe("about 75 credits");
+      expect(label({}, false)).toBe("25 credits");
+    });
+
+    it("is the label the run dialog's footer actually calls", () => {
+      const src = stripComments(
+        readFileSync(join(__dirname, "..", "..", "components", "custom-agents.tsx"), "utf8"),
+      );
+      // The footer must not go back to `runPriceLabel`, which knows only about
+      // settlement.
+      expect(src).toContain("sentenceStart(briefQuoteLabel(agent, visibleBriefValues))");
+      const at = src.indexOf("function briefQuoteLabel");
+      expect(at, "the footer's label helper moved").toBeGreaterThan(-1);
+      const body = src.slice(at, at + 500);
+      expect(body).toContain("agentRunCost(agent) * quoteMultiplierFrom(values)");
+      expect(body).toMatch(/agent\.priceIsEstimate \|\| quoteIsEstimate\(values\)/);
+    });
   });
 
   it("serializes guided answers into the service prompt without losing labels", () => {
@@ -207,13 +345,14 @@ describe("managed product launch profiles", () => {
 
 
 /**
- * F38. The staff hub is the one surface that pairs an ARBITRARY agent with an
- * arbitrary client, so it is the one that can assemble a pair both submit cores
- * refuse. Until now that refusal arrived only after the whole brief had been
- * written and submitted. The eligibility rule the hub filters on is asserted
- * here; the source test below pins that the hub actually applies it.
+ * F38. The per-client binding rule, asked of a list of clients: an instance
+ * (an entry skill baked under one client's lab folder) runs for its own client
+ * and nobody else, and an unbound agent runs for everyone. Both submit cores
+ * refuse on this predicate and the client rosters filter on it. It was first
+ * asserted for the staff hub, the one surface that paired an ARBITRARY agent
+ * with an arbitrary client; the hub is deleted, and the rule is still the gate.
  */
-describe("staff hub client eligibility", () => {
+describe("per-client agent eligibility", () => {
   const CLIENTS = [
     { id: "c1", name: "Geektime", agentsRepoSlug: "geektime" },
     { id: "c2", name: "Karos Labs", agentsRepoSlug: "karoslabs" },
@@ -234,37 +373,9 @@ describe("staff hub client eligibility", () => {
 
   it("yields nobody for an instance whose client is not in the visible set", () => {
     // An employee sees only their assigned clients, so this is reachable
-    // without anything being wrong in the data — the Run button is disabled
-    // rather than offering a pair that cannot run.
+    // without anything being wrong in the data — and the answer is then nobody,
+    // never the nearest client that is visible.
     expect(eligibleFor("karos-linkedin-company-sitti")).toEqual([]);
-  });
-});
-
-describe("the hub applies that rule to the controls it paints", () => {
-  it("filters the picker, states the binding, and disables an unrunnable Run", () => {
-    const src = readFileSync(join(process.cwd(), "src/components/custom-agents.tsx"), "utf8");
-    const start = src.indexOf("export function CustomAgentsHub");
-    expect(start).toBeGreaterThan(-1);
-    // The next top-level declaration. The marker this used to slice on
-    // ("client-page section") is not in the file at all, so the slice ran to
-    // EOF and every assertion below was free to be answered by any component in
-    // it — including ones this test says nothing about.
-    const end = src.indexOf("\nfunction refusalNamesSetup", start);
-    // An end marker that has moved silently widens the slice to the rest of the
-    // file, and every assertion below would then be answered by code this test
-    // is not about.
-    expect(end, "custom-agents.tsx no longer has the slice end marker").toBeGreaterThan(start);
-    const hub = src.slice(start, end);
-
-    // The eligible set is computed per agent card...
-    expect(hub).toContain("agentKeyMatchesClientSlug(agent.key, c.agentsRepoSlug)");
-    // ...gates the Run control...
-    expect(hub).toContain("eligible.length === 0");
-    // ...names the binding on the card (F35)...
-    expect(hub).toContain("perClientAgentSlug(agent.key)");
-    // ...and the dialog receives the filtered list, never the raw one.
-    expect(hub).toContain("agentKeyMatchesClientSlug(runAgent.key, c.agentsRepoSlug)");
-    expect(hub).not.toMatch(/clients=\{clients\}/);
   });
 });
 
@@ -361,6 +472,14 @@ describe("AgentSetupState carries the href card and the inline pane", () => {
         src,
         `${file} does not spell the cores' guard: v2 AND not the setup skill`,
       ).toMatch(/isLinkedInV2Agent\((?:agent\.)?key\)\s*&&\s*!isLinkedInSetupV2\((?:agent\.)?key\)/);
+      // AND THE ENGINE CARVE-OUT, which the core carries as `!engineProductId`
+      // (A3). agent-engine stands the channel up in its own `00-channel-setup`
+      // pre-flight, so for a client routed there the foundation row is never
+      // written — a surface still waiting for one is stricter than the core
+      // again, this time forever rather than until a press. Behaviour is pinned
+      // by engine-owned-setup.test.ts; this keeps the two surfaces named here
+      // from drifting back one at a time.
+      expect(src, `${file} does not exempt the engine path`).toMatch(/engineOwnsSetup/);
     }
   });
 
@@ -467,10 +586,12 @@ describe("AgentSetupState carries the href card and the inline pane", () => {
   });
 
   it("keeps the href gate for a setup with no prefetched form", () => {
-    // The client detail route ships href-only states, so the dialog must still
-    // have its way out — and it must not offer an empty pane instead.
+    // An agent with no intake pane still arrives href-only, so the form must
+    // still have its way out — and it must not offer an empty pane instead.
+    // (Intake-driven agents now get their pane on the client route too, since
+    // 2026-09-10, so they no longer reach this gate there.)
     expect(ui).toContain("if (setup && !setup.ready && !intake)");
-    expect(ui).toContain("Set up {setup.label}");
+    expect(ui).toContain("Set up ${setup.label}");
     expect(ui).toContain("href={setup.href}");
   });
 });

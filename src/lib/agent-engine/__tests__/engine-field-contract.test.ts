@@ -26,6 +26,7 @@ import {
 const PROBE_INPUT: Record<WireFieldKey, Record<string, string>> = {
   customPrompt: { customPrompt: "probe direction" },
   mediaAssets: { mediaAssets: '[{"uri":"gs://bucket/probe.mp4","role":"source"}]' },
+  mediaSource: { media_source: "client" },
   requestedTopic: { request: "probe topic" },
   audience: { audience: "probe audience" },
   tone: { tone: "probe tone" },
@@ -140,7 +141,7 @@ describe("the guard actually guards (fixes the prior round's build-time-guard re
     }).toThrow();
   });
 
-  it("pins the exact current wire-field set (28 keys) — a change here should be a deliberate, reviewed diff", () => {
+  it("pins the exact current wire-field set (29 keys) — a change here should be a deliberate, reviewed diff", () => {
     expect([...WIRE_FIELD_KEYS].sort()).toEqual(
       [
         "audience",
@@ -152,6 +153,7 @@ describe("the guard actually guards (fixes the prior round's build-time-guard re
         "requestedExecutiveName",
         "market",
         "mediaAssets",
+        "mediaSource",
         "mustInclude",
         "offer",
         "platform",
@@ -276,8 +278,12 @@ describe("ENGINE_FIELD_CONTRACT — the pinned classification (C3's deliverable 
     );
     expect(read).toEqual({
       customPrompt: [...REACHABLE_PRODUCTS].sort(),
-      mediaAssets: ["instagram-agent", "linkedin-agent", "tiktok-agent", "x-agent"],
-      requestedTopic: ["linkedin-agent", "reddit-agent", "tiktok-agent", "x-agent"],
+      mediaAssets: ["branded-shorts-agent", "instagram-agent", "linkedin-agent", "tiktok-agent", "x-agent"],
+      // Every product with a sourcing or generation tier to switch off.
+      mediaSource: ["branded-shorts-agent", "instagram-agent", "linkedin-agent", "tiktok-agent", "x-agent"],
+      // Every product whose dialog sends `request` (seo-geo's is direction, not
+      // a topic): four read it off wf.input, the rest through readRunDirection.
+      requestedTopic: [...REACHABLE_PRODUCTS].filter((p) => p !== "seo-geo-agent").sort(),
       requestedLane: ["x-agent"],
       requestedArchetype: ["linkedin-agent"],
       requestedMode: ["linkedin-agent", "x-agent"],
@@ -293,10 +299,10 @@ describe("ENGINE_FIELD_CONTRACT — the pinned classification (C3's deliverable 
       // pin still says something specific: a field's readers are the agents
       // whose forms ask for it, not "everything", even though the mechanism
       // that delivers it is shared.
-      audience: ["blog-agent", "instagram-agent", "landing-builder-agent", "newsletter-agent", "reddit-agent", "tiktok-agent"],
+      audience: ["blog-agent", "campaign-orchestrator", "instagram-agent", "landing-builder-agent", "newsletter-agent", "reddit-agent", "tiktok-agent"],
       tone: ["newsletter-agent"],
       cta: ["branded-shorts-agent", "landing-builder-agent", "newsletter-agent"],
-      mustInclude: ["instagram-agent", "newsletter-agent", "reddit-agent", "tiktok-agent"],
+      mustInclude: ["campaign-orchestrator", "instagram-agent", "newsletter-agent", "reddit-agent", "tiktok-agent"],
       keywords: ["blog-agent"],
       runScope: ["x-agent"],
       runMode: ["blog-agent", "instagram-agent", "tiktok-agent"],

@@ -27,30 +27,37 @@ afterEach(() => {
 });
 
 describe("clientHasEngineRoutedCustomAgent", () => {
-  it("is false when the global dispatch flag is off, even for a named client with an engine-mapped agent", () => {
+  it("is false when the global dispatch flag is off, even for a client with an engine-mapped agent", () => {
     dispatchEnabledMock.mockReturnValue(false);
-    vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "*");
     expect(clientHasEngineRoutedCustomAgent("karoslabs", ["karos-x-agent-v2"])).toBe(false);
   });
 
-  it("is false when the client is not in AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", () => {
+  it("is false when the client has no lab slug — there is no tenant for the engine to run as", () => {
     dispatchEnabledMock.mockReturnValue(true);
-    vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "geektime");
-    expect(clientHasEngineRoutedCustomAgent("karoslabs", ["karos-x-agent-v2"])).toBe(false);
+    expect(clientHasEngineRoutedCustomAgent(undefined, ["karos-x-agent-v2"])).toBe(false);
+    expect(clientHasEngineRoutedCustomAgent("", ["karos-x-agent-v2"])).toBe(false);
   });
 
-  it("is false when the client is cut over but none of their enabled agent keys map to an engine product", () => {
+  it("is false when none of the client's enabled agent keys map to an engine product", () => {
     dispatchEnabledMock.mockReturnValue(true);
-    vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "karoslabs");
     expect(clientHasEngineRoutedCustomAgent("karoslabs", ["some-unmapped-agent-key"])).toBe(false);
   });
 
-  it("is true once the client is cut over AND one of their agent keys maps to an engine product", () => {
+  it("is true for ANY client with a slug once one of their agent keys maps to an engine product — no allowlist", () => {
     dispatchEnabledMock.mockReturnValue(true);
-    vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "karoslabs");
     // "karos-x-agent-v2" is one of the real ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY
     // entries in product-mapping.ts, exercised for real (not stubbed) here.
     expect(clientHasEngineRoutedCustomAgent("karoslabs", ["some-unmapped-agent-key", "karos-x-agent-v2"])).toBe(true);
+    // The six clients that used to fall through to the deleted agent-service
+    // (2026-09-06: every run from Pitch by Deel's client view was a 404).
+    expect(clientHasEngineRoutedCustomAgent("thepitchbydeel", ["karos-instagram-agent"])).toBe(true);
+  });
+
+  it("ignores AGENT_ENGINE_CUSTOM_AGENT_CLIENTS entirely — a stale deploy value cannot re-gate anyone", () => {
+    dispatchEnabledMock.mockReturnValue(true);
+    vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "someone-else");
+    expect(clientHasEngineRoutedCustomAgent("karoslabs", ["karos-x-agent-v2"])).toBe(true);
+    expect(resolveDispatchedAgentEngineProductId("karos-x-agent-v2", "karoslabs")).toBe("x-agent");
   });
 });
 
@@ -63,14 +70,12 @@ describe("shouldShowEngineHealthBanner", () => {
 
   it("is false for a routed client once the transport IS configured", () => {
     dispatchEnabledMock.mockReturnValue(true);
-    vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "karoslabs");
     transportConfiguredMock.mockReturnValue(true);
     expect(shouldShowEngineHealthBanner("karoslabs", ["karos-x-agent-v2"])).toBe(false);
   });
 
   it("is true (the actual failure this ticket is about) once a client is routed to agent-engine and its transport is not configured", () => {
     dispatchEnabledMock.mockReturnValue(true);
-    vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "karoslabs");
     transportConfiguredMock.mockReturnValue(false);
     expect(shouldShowEngineHealthBanner("karoslabs", ["karos-x-agent-v2"])).toBe(true);
   });
@@ -82,40 +87,29 @@ describe("shouldShowEngineHealthBanner", () => {
  * against a prior version of the chat route, which asked
  * `resolveAgentEngineProductIdForCustomAgent(agent.key)` ALONE - true the
  * moment agent-engine has ANY workflow for that agent key, completely
- * independent of whether dispatch is enabled globally or this client has
- * been cut over. That let a client not yet cut over (the normal state for
- * most clients mid-migration) be told a file was "attached as source media
- * for this run" when the run actually fell through to the legacy
- * agent-service path, which never reads `mediaAssets` at all.
+ * independent of whether dispatch is enabled globally or the client has a
+ * lab slug to run as.
  */
 describe("resolveDispatchedAgentEngineProductId", () => {
-  it("is undefined when the global dispatch flag is off, even for a cut-over client with an engine-mapped agent", () => {
+  it("is undefined when the global dispatch flag is off, even for an engine-mapped agent", () => {
     dispatchEnabledMock.mockReturnValue(false);
-    vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "*");
     expect(resolveDispatchedAgentEngineProductId("karos-x-agent-v2", "karoslabs")).toBeUndefined();
   });
 
-  it("is undefined when the client is not in AGENT_ENGINE_CUSTOM_AGENT_CLIENTS - the realistic mid-migration state this finding was about", () => {
+  it("is undefined for an agent key with no engine workflow", () => {
     dispatchEnabledMock.mockReturnValue(true);
-    vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "geektime");
-    expect(resolveDispatchedAgentEngineProductId("karos-x-agent-v2", "karoslabs")).toBeUndefined();
-  });
-
-  it("is undefined for a cut-over client whose agent key has no engine workflow", () => {
-    dispatchEnabledMock.mockReturnValue(true);
-    vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "karoslabs");
     expect(resolveDispatchedAgentEngineProductId("some-unmapped-agent-key", "karoslabs")).toBeUndefined();
   });
 
   it("is undefined when clientSlug itself is undefined (client.agentsRepoSlug unset)", () => {
     dispatchEnabledMock.mockReturnValue(true);
-    vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "*");
     expect(resolveDispatchedAgentEngineProductId("karos-x-agent-v2", undefined)).toBeUndefined();
   });
 
-  it("resolves the real productId once all three conditions hold - dispatch enabled, client cut over, agent key mapped", () => {
+  it("resolves the real productId once both conditions hold - dispatch enabled and agent key mapped - for every client with a slug", () => {
     dispatchEnabledMock.mockReturnValue(true);
-    vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "karoslabs");
     expect(resolveDispatchedAgentEngineProductId("karos-x-agent-v2", "karoslabs")).toBe("x-agent");
+    expect(resolveDispatchedAgentEngineProductId("karos-x-agent-v2", "thepitchbydeel")).toBe("x-agent");
+    expect(resolveDispatchedAgentEngineProductId("karos-instagram-agent", "geektime")).toBe("instagram-agent");
   });
 });
