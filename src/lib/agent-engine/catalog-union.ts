@@ -1,7 +1,11 @@
 import type { MiddlewareAgent } from "./middleware-admin";
 
 /**
- * The engine agents the catalog renders.
+ * The engine agents the catalog renders: every control-plane row, minus a row
+ * whose `supersededBy` names another row that is present. That is the one
+ * filter, and it exists so the staff catalog and a client's agents page offer
+ * the same products — D08 split TikTok into three, the roster followed, and
+ * for a while this page went on showing the one card the split had replaced.
  *
  * This used to de-duplicate against the lab-imported library, which hid five
  * of the eleven behind legacy cards: an agent that had a `customAgents` twin
@@ -58,8 +62,16 @@ export function stageModels(agent: Pick<MiddlewareAgent, "stages">): string[] {
 export function buildEngineAgentCards(
   middlewareAgents: readonly MiddlewareAgent[],
 ): EngineAgentCardModel[] {
+  // A superseded row is hidden only when its successor is actually in the
+  // list. If the successor is missing — not yet seeded in this environment —
+  // hiding the old card would leave the product with no card at all, which is
+  // the one outcome worse than showing two. The rows themselves stay active
+  // either way: dispatch at the old id keeps working for whatever still names
+  // it, this is a question about what a person is offered to press.
+  const present = new Set(middlewareAgents.map((agent) => agent.slug));
   const cards = middlewareAgents
     .filter((agent) => agent.slug !== "")
+    .filter((agent) => !(agent.supersededBy && present.has(agent.supersededBy)))
     .map((agent) => ({
       slug: agent.slug,
       name: agent.name || agent.slug,
