@@ -2,6 +2,7 @@ import "server-only";
 import { createJob, updateJob } from "@/lib/data";
 import { MiddlewareDispatchError, dispatchViaMiddleware, isMiddlewareDispatchEnabled } from "./middleware-client";
 import { agentEngineRunIdFromMessageId, isAgentEnginePubSubConfigured, publishAgentEngineRun } from "./pubsub-client";
+import { toJobInputSummary } from "./run-input-display";
 
 export interface DispatchAgentEngineRunInput {
   clientId: string;
@@ -97,7 +98,16 @@ export async function dispatchAgentEngineRun(input: DispatchAgentEngineRunInput)
       agentName: input.agentName,
       title: input.title,
       status: "queued",
-      input: input.inputSummary ?? {},
+      // The wire payload, flattened, whenever a caller did not hand us a
+      // display summary of its own. Before this, `?? {}` meant the control
+      // plane's agent card, the research regenerate modal and the
+      // recommendation runner all created jobs whose `input` was empty while a
+      // real direction travelled to the engine — and the run page, which reads
+      // this field, answered "No inputs." about a run that had one. The one
+      // place that holds both the envelope and the job doc is here, so the
+      // derivation belongs here rather than in each caller, where the next
+      // caller would forget it again.
+      input: input.inputSummary ?? toJobInputSummary(input.inputs),
       assetIds: [],
       events: [{ at: now, level: "info", message: "Dispatched to agent-engine" }],
       createdBy: input.createdBy ?? "system",

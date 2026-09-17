@@ -43,6 +43,67 @@ describe("dispatchAgentEngineRun", () => {
     publishAgentEngineRunMock.mockReset();
   });
 
+  /**
+   * The run page reads `job.input`. Before this, `input: inputSummary ?? {}`
+   * meant three of the four callers — the control plane's agent card, the
+   * research regenerate modal and the recommendation runner — created jobs
+   * with an empty map while a real direction travelled to the engine, and the
+   * page answered "No inputs." about a run that had one.
+   */
+  it("records the wire payload on the job when the caller gave no display summary", async () => {
+    publishAgentEngineRunMock.mockResolvedValue({ messageId: "msg_in" });
+
+    await dispatchAgentEngineRun({
+      clientId: "client_1",
+      clientSlug: "acme",
+      productId: "x-agent",
+      runKind: "recurring",
+      agentName: "X Agent",
+      title: "Test dispatch",
+      inputs: { customPrompt: "Focus on the launch", mediaAssets: [{ uri: "gs://b/a.png", role: "reference" }] },
+    });
+
+    expect(createJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: { customPrompt: "Focus on the launch", mediaAssets: "reference: gs://b/a.png" },
+      }),
+    );
+  });
+
+  it("leaves a caller's own display summary alone", async () => {
+    publishAgentEngineRunMock.mockResolvedValue({ messageId: "msg_sum" });
+
+    await dispatchAgentEngineRun({
+      clientId: "client_1",
+      clientSlug: "acme",
+      productId: "x-agent",
+      runKind: "recurring",
+      agentName: "X Agent",
+      title: "Test dispatch",
+      inputs: { customPrompt: "on the wire" },
+      inputSummary: { Brief: "what the caller wants shown" },
+    });
+
+    expect(createJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({ input: { Brief: "what the caller wants shown" } }),
+    );
+  });
+
+  it("still creates an empty input map for a run dispatched with nothing", async () => {
+    publishAgentEngineRunMock.mockResolvedValue({ messageId: "msg_empty" });
+
+    await dispatchAgentEngineRun({
+      clientId: "client_1",
+      clientSlug: "acme",
+      productId: "x-agent",
+      runKind: "recurring",
+      agentName: "X Agent",
+      title: "Test dispatch",
+    });
+
+    expect(createJobMock).toHaveBeenCalledWith(expect.objectContaining({ input: {} }));
+  });
+
   it("creates a job, publishes, and records the derived agentEngineRunId on success", async () => {
     publishAgentEngineRunMock.mockResolvedValue({ messageId: "msg_1" });
 

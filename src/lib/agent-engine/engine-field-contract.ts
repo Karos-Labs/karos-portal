@@ -135,6 +135,17 @@ export const REACHABLE_PRODUCTS = [
   "landing-builder-agent",
   "branded-shorts-agent",
   "tiktok-agent",
+  // D08's three: `product-mapping.ts` routes a custom-agent key to each of
+  // them, so they are reachable and belong in this audit. None has a workflow
+  // of its own — `apps/agent-server/src/wiring/workflows.ts` maps clipping and
+  // content-design onto `createTikTokAgentWorkflow` (with a `variant`) and
+  // editing onto `createBrandedShortsAgentWorkflow`. Their evidence rows below
+  // therefore cite the aliased workflow, which is the code that actually runs.
+  // Added the moment the ids became routable: a product this file does not
+  // list is a product whose dropped field nothing here would notice.
+  "tiktok-clipping-agent",
+  "tiktok-content-design-agent",
+  "tiktok-editing-agent",
   "reputation-agent",
   "seo-geo-agent",
   "campaign-orchestrator",
@@ -261,6 +272,9 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
       { product: "landing-builder-agent", evidence: "agents/landing-builder-agent/src/workflow/create-landing-builder-agent-workflow.ts:109,149,161,219 (runDirectionField spread into three steps)" },
       { product: "branded-shorts-agent", evidence: "agents/branded-shorts-agent/src/workflow/create-branded-shorts-agent-workflow.ts:78-86 (own comment: reaches the two editorial steps, not the cut planner)" },
       { product: "tiktok-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:201-205 (readRichRunInput; rich.customPrompt wins over requestedTopic for the topic claim)" },
+      { product: "tiktok-clipping-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:201-205 (readRichRunInput; rich.customPrompt wins over requestedTopic) via apps/agent-server/src/wiring/workflows.ts:213 (variant \"clipping\")" },
+      { product: "tiktok-content-design-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:201-205 (readRichRunInput; rich.customPrompt wins over requestedTopic) via apps/agent-server/src/wiring/workflows.ts:215 (variant \"content-design\")" },
+      { product: "tiktok-editing-agent", evidence: "agents/branded-shorts-agent/src/workflow/create-branded-shorts-agent-workflow.ts:78-86 (reaches the two editorial steps, not the cut planner) via apps/agent-server/src/wiring/workflows.ts:207" },
       { product: "reputation-agent", evidence: "agents/reputation-agent/src/workflow/create-reputation-pulse-workflow.ts:168,481" },
       { product: "seo-geo-agent", evidence: "agents/seo-geo-agent/src/workflow/create-seo-geo-agent-workflow.ts:148 (+ runDirectionField downstream)" },
       { product: "campaign-orchestrator", evidence: "agents/campaign-orchestrator/src/workflow/create-campaign-workflow.ts:114 (readRunDirection) and :212 (runDirectionField spread into the campaign plan step)" },
@@ -287,6 +301,8 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
     readBy: [
       { product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts:806 (filters role === source|reference)" },
       { product: "tiktok-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:237 (firstAsset(rich.mediaAssets, \"source\"))" },
+      { product: "tiktok-clipping-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:237 (firstAsset(rich.mediaAssets, \"source\")) via apps/agent-server/src/wiring/workflows.ts:213 — the uploaded recording IS the footage this product clips" },
+      { product: "tiktok-editing-agent", evidence: "agents/branded-shorts-agent/src/workflow/create-branded-shorts-agent-workflow.ts (firstAsset(runDirection.mediaAssets, \"source\") in 01-load-intake) via apps/agent-server/src/wiring/workflows.ts:207" },
       // agent-engine RFC-12 (2026-09): both text-first channels ingest an
       // attached image, describe it with a vision model before drafting, and
       // write the post to it.
@@ -315,6 +331,9 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
       { product: "linkedin-agent", evidence: "agents/linkedin-agent/src/workflow/create-linkedin-agent-workflow.ts (resolveSocialMedia(..., { clientMediaOnly }))" },
       { product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts (05z-attach-user-media refuses an empty client-only run; 05b and the 06b-06e rescue tiers are skipped when clientMediaOnly)" },
       { product: "tiktok-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts (01b-resolve-source: client-only stops after the user-asset tier)" },
+      { product: "tiktok-clipping-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts (01b-resolve-source: client-only stops after the user-asset tier) via apps/agent-server/src/wiring/workflows.ts:213" },
+      { product: "tiktok-content-design-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts (01b-resolve-source; content-design generates its own footage, so client-only is what turns that off) via apps/agent-server/src/wiring/workflows.ts:215" },
+      { product: "tiktok-editing-agent", evidence: "agents/branded-shorts-agent/src/workflow/create-branded-shorts-agent-workflow.ts (plate generation disabled when clientMediaOnly) via apps/agent-server/src/wiring/workflows.ts:207" },
       { product: "branded-shorts-agent", evidence: "agents/branded-shorts-agent/src/workflow/create-branded-shorts-agent-workflow.ts (01-load-intake takes the attached source video; plate generation disabled when clientMediaOnly)" },
     ],
     sentButUnread: [],
@@ -328,6 +347,9 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
       { product: "reddit-agent", evidence: "agents/reddit-agent/src/workflow/create-reddit-agent-workflow.ts:125-127 (same pattern)" },
       { product: "linkedin-agent", evidence: "agents/linkedin-agent/src/workflow/create-linkedin-agent-workflow.ts:71-79,226-227,254 (RUN_SCOPED_KEYS via withRunInput(config, wf.input))" },
       { product: "tiktok-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:203-205 (runInput.requestedTopic, only when customPrompt is absent)" },
+      { product: "tiktok-clipping-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:203-205 (only when customPrompt is absent) via apps/agent-server/src/wiring/workflows.ts:213" },
+      { product: "tiktok-content-design-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:203-205 via apps/agent-server/src/wiring/workflows.ts:215" },
+      { product: "tiktok-editing-agent", evidence: "agents/branded-shorts-agent/src/workflow/create-branded-shorts-agent-workflow.ts:235 (runDirectionField spread; topicOverride via readRunDirection) via apps/agent-server/src/wiring/workflows.ts:207" },
       // The rest read it through the shared primitive, not off `wf.input`
       // directly: `readRunDirection` promotes `requestedTopic` to
       // `topicOverride` and renders it as the "Requested topic:" line of
