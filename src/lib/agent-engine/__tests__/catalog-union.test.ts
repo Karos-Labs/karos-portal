@@ -33,6 +33,7 @@ function mw(slug: string, overrides: Partial<MiddlewareAgent> = {}): MiddlewareA
     requiredInputs: [],
     stages: [],
     stagesReadOnly: true,
+    supersededBy: null,
     ...overrides,
   };
 }
@@ -135,5 +136,44 @@ describe("agentStudioHref", () => {
 
   it("encodes a slug that would otherwise break the path", () => {
     expect(agentStudioHref("weird/slug")).toBe("/agents/weird%2Fslug/studio");
+  });
+});
+
+/**
+ * D08 split TikTok into three products and the roster followed. The control
+ * plane keeps the two ids the split replaced — grants, schedules and the
+ * learning store still name them — and marks each `supersededBy` its
+ * successor. The catalog is where a person picks a product, so it must not
+ * offer the old name beside the new one; everywhere else the old row keeps
+ * working.
+ */
+describe("superseded rows", () => {
+  it("hides a superseded row when its successor is present", () => {
+    const cards = buildEngineAgentCards([
+      mw("tiktok-agent", { supersededBy: "tiktok-clipping-agent" }),
+      mw("tiktok-clipping-agent"),
+      mw("branded-shorts-agent", { supersededBy: "tiktok-editing-agent" }),
+      mw("tiktok-editing-agent"),
+      mw("tiktok-content-design-agent"),
+      mw("x-agent"),
+    ]);
+    expect(cards.map((c) => c.slug)).toEqual([
+      "tiktok-clipping-agent",
+      "tiktok-content-design-agent",
+      "tiktok-editing-agent",
+      "x-agent",
+    ]);
+  });
+
+  it("keeps a superseded row visible when its successor is not seeded here", () => {
+    // Hiding the old card with nothing to replace it would leave the product
+    // with no card at all — the one outcome worse than showing two. This is
+    // the state of an environment where the middleware seed has not run yet.
+    const cards = buildEngineAgentCards([mw("tiktok-agent", { supersededBy: "tiktok-clipping-agent" }), mw("x-agent")]);
+    expect(cards.map((c) => c.slug)).toEqual(["tiktok-agent", "x-agent"]);
+  });
+
+  it("a row with no successor is untouched", () => {
+    expect(buildEngineAgentCards([mw("x-agent")]).map((c) => c.slug)).toEqual(["x-agent"]);
   });
 });

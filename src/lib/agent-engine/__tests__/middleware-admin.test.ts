@@ -87,6 +87,42 @@ describe("agents", () => {
     expect(page.hasMore).toBe(false);
     expect(page.total).toBe(1);
     expect(page.items[0]).not.toHaveProperty("agent_type");
+    // Absent on the wire (a row from before the field existed) reads as null,
+    // never undefined: the catalog filters on it and `undefined && x` would be
+    // fine today and a surprise the day someone compares with `=== null`.
+    expect(page.items[0]!.supersededBy).toBeNull();
+  });
+
+  it("reads superseded_by as the successor slug", async () => {
+    capture(
+      json({
+        items: [
+          {
+            id: "tiktok-agent",
+            slug: "tiktok-agent",
+            name: "TikTok Commentary Clips",
+            description: null,
+            status: "active",
+            agent_type: "tiktok_clip",
+            model: null,
+            model_params: {},
+            config: {},
+            tags: [],
+            superseded_by: "tiktok-clipping-agent",
+            created_at: "2026-08-01T00:00:00Z",
+            updated_at: "2026-08-02T00:00:00Z",
+          },
+        ],
+        limit: 50,
+        offset: 0,
+        has_more: false,
+        total: 1,
+      }),
+    );
+    const page = await listAgents();
+    expect(page.items[0]!.supersededBy).toBe("tiktok-clipping-agent");
+    // Still active: the row keeps routing for whatever names it.
+    expect(page.items[0]!.status).toBe("active");
   });
 
   it("carries each stage's engine facts (agent id, compiled default model, vendor) and a model's fallback", async () => {

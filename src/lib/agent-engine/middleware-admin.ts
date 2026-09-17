@@ -123,6 +123,15 @@ export interface MiddlewareAgent {
   /** For hand-written engine workflows these describe code, hence read-only. */
   stages: AgentStage[];
   stagesReadOnly: boolean;
+  /**
+   * The slug of the product that replaced this one under a product decision
+   * (D08: `tiktok-agent` → `tiktok-clipping-agent`, `branded-shorts-agent` →
+   * `tiktok-editing-agent`). The row stays ACTIVE — grants, schedules and
+   * the learning store still name it, and dispatching at it must keep working
+   * — but no catalog should offer it beside its successor as a second thing
+   * to choose. Null for every product that is current.
+   */
+  supersededBy: string | null;
 }
 
 export interface MiddlewarePrompt {
@@ -229,6 +238,7 @@ function toAgent(row: Row): MiddlewareAgent {
     category: strOrNull(row.category),
     creditCost: typeof row.credit_cost === "number" ? row.credit_cost : null,
     isPublic: row.is_public !== false,
+    supersededBy: strOrNull(row.superseded_by),
     requiredInputs: Array.isArray(row.required_inputs)
       ? row.required_inputs.map((i) => {
           const f = obj(i);
