@@ -1005,12 +1005,54 @@ export async function dispatchAndAwaitResearch(
 /** The second half: compose the eight context documents and write them. */
 export async function writeContextDocsFromResearch(
   research: AgentResearchDeliverables,
-  deps: Pick<AgentOnboardingDeps, "condense" | "replaceDocs" | "projectDocs" | "now">,
+  deps: Pick<AgentOnboardingDeps, "condense" | "replaceDocs" | "projectDocs" | "listDocs" | "now">,
 ): Promise<{ docsWritten: number }> {
   const { client, intelReport, seoGeo } = research;
   const clientId = client.id;
 
-  const generated = composeContextDocsFromAgentReports({ client, intelReport: rec(intelReport), seoGeo: rec(seoGeo) });
+  const composed = composeContextDocsFromAgentReports({ client, intelReport: rec(intelReport), seoGeo: rec(seoGeo) });
+
+  /**
+   * CARRY-FORWARD. A document the research could not fill keeps the content
+   * the client already has, instead of replacing a real document with nothing.
+   *
+   * This path is a REPLACE: `replaceClientContextDocs` deletes the contract's
+   * rows and writes the new set in one batch. So a step that failed, returned
+   * an empty field, or a deliverable that never arrived used to have exactly
+   * two possible endings — a blank row stored as the client's ground truth, or
+   * (since the gate) a `ContextDocShapeError` that failed the whole run and
+   * left nothing refreshed. Neither is acceptable for a document eight agents
+   * read on every run.
+   *
+   * The rule is narrow on purpose: substitution happens ONLY when the composed
+   * document is blank. A composed document that has content always wins, so a
+   * successful run still replaces its predecessor completely and a stale
+   * document can never outlive research that actually spoke.
+   *
+   * When there is no prior row either — a brand-new client whose research
+   * returned nothing — the document stays empty and the gate still fails the
+   * run. That case has nothing to preserve, and failing loudly is right.
+   */
+  const previous = new Map((await deps.listDocs(clientId)).map((d) => [`${d.docType}::${d.tier}`, d.content] as const));
+  const preserved: string[] = [];
+  const contentFor = (docType: OnboardingDocType, tier: ContextDocTier): string => {
+    if (composed[docType].trim()) return composed[docType];
+    const carried = previous.get(`${docType}::${tier}`)?.trim();
+    if (!carried) return composed[docType];
+    preserved.push(`${docType}::${tier}`);
+    return carried;
+  };
+
+  const generated: Record<OnboardingDocType, string> = { ...composed };
+  for (const docType of INTERNAL_CONTEXT_DOC_TYPES) generated[docType] = contentFor(docType, "internal");
+  for (const docType of INTERNAL_ONLY_CONTEXT_DOC_TYPES) generated[docType] = contentFor(docType, "internal-only");
+  if (preserved.length) {
+    // Loud, because the alternative reading of a quiet run is that the
+    // research refreshed every document, and here it did not.
+    console.warn(
+      `[agent-onboarding] ${client.name}: the research produced no content for ${preserved.join(", ")} — kept the stored document(s) rather than replacing them with nothing`,
+    );
+  }
 
   const internalContents: Record<string, string> = {};
   for (const docType of INTERNAL_CONTEXT_DOC_TYPES) internalContents[docType] = generated[docType];

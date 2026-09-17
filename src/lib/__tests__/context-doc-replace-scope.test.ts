@@ -280,7 +280,7 @@ describe("the pipeline's write goes through that scope", () => {
 
     const result = await writeContextDocsFromResearch(
       { client: { id: CLIENT_ID, name: "Acme" } as never, intelReport, seoGeo: {} },
-      { condense: deps.condense, replaceDocs: deps.replaceDocs, now: () => NOW },
+      { condense: deps.condense, replaceDocs: deps.replaceDocs, listDocs: deps.listDocs, now: () => NOW },
     );
 
     expect(result.docsWritten).toBe(CONTEXT_DOC_SET_CONTRACT.length);

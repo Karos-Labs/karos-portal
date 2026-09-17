@@ -457,11 +457,65 @@ function deps(overrides: Partial<Record<string, unknown>> = {}) {
     replaceDocs: async (clientId: string, docs: Row[]) => {
       written.push({ clientId, docs });
     },
+    // No stored rows: the carry-forward in `writeContextDocsFromResearch`
+    // has nothing to preserve, so these cases exercise the composed output
+    // exactly as they did before it existed. Overridden per-case where a
+    // test is about the carry-forward itself.
+    listDocs: async () => [],
     now: () => 1_700_000_000_000,
     sleep: async () => {},
   };
   return { deps: { ...base, ...overrides } as never, written };
 }
+
+/**
+ * The carry-forward. This path REPLACES the whole contract in one batch, so a
+ * research step that failed or came back empty used to have two endings: a
+ * blank document stored as the client's ground truth, or a shape error that
+ * failed the run and refreshed nothing. A document eight agents read on every
+ * run should survive a bad run instead.
+ */
+describe("a document the research could not fill", () => {
+  const storedRow = (docType: string, tier: string, content: string) =>
+    ({ id: `${docType}-${tier}`, clientId: CLIENT_ID, docType, tier, content, version: 3, createdAt: 1, updatedAt: 1 }) as never;
+
+  it("keeps the stored document rather than replacing it with nothing", async () => {
+    const { deps: d, written } = deps({
+      // Everything the `target-audience` document is composed from is gone.
+      getDeliverable: async (_runId: string, kind: string) =>
+        kind === INTEL_REPORT_DELIVERABLE_KIND ? { ...INTEL_REPORT, targetAudience: undefined } : { ...SEO_GEO, promptSet: undefined },
+      listDocs: async () => [storedRow("target-audience", "internal", "# Target Audience\n\nThe ICP we already had.")],
+    });
+
+    await runAgentOnboarding(CLIENT_ID, d);
+    const row = written[0].docs.find((r) => r.docType === "target-audience" && r.tier === "internal")!;
+    expect(row.content).toContain("The ICP we already had.");
+    // And the client-tier condensation runs over the carried-forward content,
+    // so the two tiers cannot disagree about what the document says.
+    expect(written[0].docs.some((r) => r.docType === "target-audience" && r.tier === "client")).toBe(true);
+  });
+
+  it("never lets a stored document outlive research that did produce one", async () => {
+    const { deps: d, written } = deps({
+      listDocs: async () => [storedRow("target-audience", "internal", "STALE — from a run two months ago.")],
+    });
+
+    await runAgentOnboarding(CLIENT_ID, d);
+    const row = written[0].docs.find((r) => r.docType === "target-audience" && r.tier === "internal")!;
+    expect(row.content).not.toContain("STALE");
+    expect(row.content).toContain("Ops lead");
+  });
+
+  it("still fails the run when there is nothing stored to carry forward", async () => {
+    const { deps: d } = deps({
+      getDeliverable: async () => ({}),
+      listDocs: async () => [],
+    });
+    // Nothing to preserve, so the gate is still the right answer: this is the
+    // one failure an empty document exists to catch.
+    await expect(runAgentOnboarding(CLIENT_ID, d)).rejects.toBeInstanceOf(ContextDocShapeError);
+  });
+});
 
 describe("runAgentOnboarding", () => {
   it("writes the full set through replaceClientContextDocs, unchanged", async () => {
