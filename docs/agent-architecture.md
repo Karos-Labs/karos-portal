@@ -49,9 +49,53 @@ the run's state files into the stores. A reconcile that materialises assets but 
 `collect` gives you an agent that produces and never learns — and it looks completely healthy
 from the outside.
 
-Review actions post to `POST /clients/{slug}/learning/feedback`; "add this to never-topics"
-posts to `PUT /clients/{slug}/learning/preferences`. Feedback that only lands in a
+That call lives in `src/lib/agent-engine/learning-collect.ts` and is made from
+`syncAgentEngineJobStatusFromView`, asked the way materialization is asked — *"did this
+happen?"*, not *"is this the transition where it should happen"*. Gating it on the terminal
+transition would strand every run delivered before the call existed, because their transition
+was already recorded. `job.learningCollectedAt` is the bookmark that stops the sweep
+re-asking; `learningCollectReason` carries the middleware's answer when it collected nothing,
+so "this agent learned nothing" is a fact on the job rather than a line in a log.
+
+Only a **completed** run is collected. `failed` and `degraded` are refunded — the client
+received nothing — and a subject the client never used must not enter the anti-repeat window.
+
+### 2.1 The two run ids
+
+They are not the same id, and confusing them is what kept the loop open:
+
+- **agent-engine's** is `pubsub-<messageId>`, derived from Pub/Sub's own message id. It keys
+  `agentEngineRuns`, every path the run writes (`state/runs/<runId>.json` included), and
+  `asset.meta.agentEngineRunId`. **It is the only one this repo holds.**
+- **the middleware's** is its own, minted at dispatch. `dispatchViaMiddleware` returns it and
+  this repo drops it.
+
+So reconcile can only ever send the engine's, and the middleware resolves either spelling
+(`LearningService._resolve_run`). Send the engine's; it is what the state files, the
+deliverables and the portal all agree on.
+
+## 2.2 Review actions
+
+Feedback posts to `POST /clients/{slug}/learning/feedback`; "add this to never-topics" posts
+to `PUT /clients/{slug}/learning/preferences` (a full replacement — read, add, write back).
+Both live in `src/lib/agent-engine/learning-feedback.ts`. Feedback that only lands in a
 Firestore field is feedback that never becomes a rule.
+
+Two callers, deliberately:
+
+| Where | What it sends |
+|---|---|
+| `markAssetPostedAction` | `posted`, or `posted_with_edits` when `updateAssetAction` stashed the agent's own text on the first edit (`meta.engineOriginalContent`) |
+| `addXDraftFeedbackAction`, `addLiDraftFeedbackAction`, `addRedditDraftFeedbackAction` | the client's own words: `posted`, `posted_with_edits`, `not_posted` → `skipped`, `edit_request` → `change_requested`, `note` |
+
+The per-agent surfaces keep their Firestore rows — the portal's own history views read those
+and nothing else does. This is a **second write**, not a move.
+
+**The edit pair is the point.** "What the client changed" is a direct statement about voice
+that no amount of drafting infers, and the projection puts the last few in front of the next
+draft. Both halves are required; the middleware rejects half an edit, and the portal
+downgrades to a bare `posted` rather than sending one. Capturing the original at post time is
+too late — by then the edit has already overwritten it.
 
 ---
 

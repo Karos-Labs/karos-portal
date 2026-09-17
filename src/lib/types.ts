@@ -1225,6 +1225,24 @@ export interface Job {
    */
   agentEngineMaterializedRunId?: string;
   /**
+   * When reconcile folded this run's learning-loop state files into the control
+   * plane's tables (C7 / SCRUM-461) — and, on `learningCollectReason`, why it
+   * collected nothing if it did not.
+   *
+   * A BOOKMARK, not a status. It exists so the sweep stops asking: collection
+   * is idempotent on the middleware's side, so re-asking is harmless but costs
+   * one HTTP round trip per delivered job per tick forever. An empty/absent
+   * reason on a set timestamp means the run's record, subject row and platform
+   * state all landed.
+   *
+   * Absent on every job delivered before this call existed. Those runs wrote
+   * their state files and nothing read them; the first sweep after this ships
+   * collects them, which is deliberate — the files are still in the bucket and
+   * the subject window they belong in is the one the next run reads.
+   */
+  learningCollectedAt?: number;
+  learningCollectReason?: string | null;
+  /**
    * When the unsettled-hold sweep last dealt with this job's credit hold
    * (credits rework, 2026-09) — settled it, or established there was nothing to
    * settle. Purely a bookmark so the sweep's candidate list shrinks; the real

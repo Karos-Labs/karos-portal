@@ -17,6 +17,7 @@ import {
   releaseAssetPublishClaim,
   reconcileAssetPublished,
   getClientSettings,
+  getClient,
   PUBLISH_CLAIM_TTL_MS,
 } from "@/lib/data";
 import { getCurrentUser } from "@/lib/auth";
@@ -41,6 +42,7 @@ import {
 } from "@/lib/asset-visibility";
 import { syncSlotPostedForAsset } from "@/lib/client-agent-slots";
 import { addXDraftFeedbackAction } from "@/lib/actions/x-agent-actions";
+import { learningTargetForAsset, recordLearningFeedback } from "@/lib/agent-engine/learning-feedback";
 import type { Asset, PublishMode } from "@/lib/types";
 
 /** Load the asset and verify the caller may act on it. Shared guard for the actions below. */
@@ -89,10 +91,33 @@ export async function updateAssetAction(id: string, patch: { content?: string; t
   // signature the only way to widen what can be written. The scan in
   // platforms-publishable.test.ts fails on any patch reaching `updateAsset`
   // whose keys it cannot read at the call — a spread of this parameter included.
+  // C7 §2.3 — KEEP WHAT THE AGENT WROTE, on the first edit only.
+  //
+  // "What the client changed" is the single most useful signal the learning
+  // loop has: an edit pair is a direct statement about voice that no amount of
+  // drafting can infer, and `feedbackForPrompt` puts the last few of them in
+  // front of the next draft. But an edit is a pair, and by the time the post
+  // goes out the original is gone — overwritten by this very call. Capturing it
+  // at post time is too late; capturing it on every edit would make the "pair"
+  // the last two revisions rather than the agent's text and the client's.
+  //
+  // So: the first edit of an engine draft on the loop stashes the agent's own
+  // text, and every edit after that leaves the stash alone. Nothing reads it
+  // until `markAssetPostedAction` sends the pair.
+  const keepsEngineOriginal =
+    patch.content !== undefined &&
+    patch.content !== asset.content &&
+    typeof asset.meta?.engineOriginalContent !== "string" &&
+    learningTargetForAsset(asset) !== undefined;
+
   await updateAsset(id, {
     ...(patch.content !== undefined ? { content: patch.content } : {}),
     ...(patch.title !== undefined ? { title: patch.title } : {}),
     ...(patch.status !== undefined ? { status: patch.status } : {}),
+    // Named explicitly, like every other field here and for the same reason:
+    // the scan in platforms-publishable.test.ts must be able to read every key
+    // that reaches `updateAsset` at the call site.
+    ...(keepsEngineOriginal ? { meta: { ...(asset.meta ?? {}), engineOriginalContent: asset.content } } : {}),
     updatedAt: Date.now(),
   });
   revalidatePath("/assets");
@@ -500,6 +525,34 @@ export async function markAssetPostedAction(
   await recordPostedOptionFeedback(asset).catch((e) =>
     console.error("[assets] option feedback failed:", e),
   );
+
+  // C7 §2.3 — and this is the call that makes review mean something to the
+  // agent. Until it existed, a client could correct the same habit every week
+  // for a year: the correction landed in Firestore, the engine never saw it,
+  // and the next morning's draft opened with the habit again.
+  //
+  // `posted_with_edits` whenever the agent's own text was stashed by the first
+  // edit above, `posted` otherwise. Best-effort, after the asset is already
+  // live, for the same reason as the slot sync: the post went out either way.
+  if (learningTargetForAsset(asset)) {
+    const user = await getCurrentUser();
+    const client = await getClient(asset.clientId);
+    const original = asset.meta?.engineOriginalContent;
+    if (client) {
+      await recordLearningFeedback(
+        client,
+        asset,
+        typeof original === "string" && original !== asset.content
+          ? {
+              action: "posted_with_edits",
+              originalText: original,
+              finalText: asset.content,
+              ...(user?.email ? { actor: user.email } : {}),
+            }
+          : { action: "posted", ...(user?.email ? { actor: user.email } : {}) },
+      ).catch((e) => console.error("[assets] learning feedback failed:", e));
+    }
+  }
 
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);

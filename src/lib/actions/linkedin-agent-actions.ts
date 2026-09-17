@@ -46,6 +46,7 @@ import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import { clientSafeRunError } from "@/lib/custom-agent-launch";
 import { isBillableClientActor } from "@/lib/credits";
 import { requireClientAccess } from "./_shared";
+import { bridgeDraftFeedbackToLearning } from "@/lib/agent-engine/learning-feedback";
 
 const MAX_TEXT = 2_000;
 /** LinkedIn's post cap — finalText of a picked-with-edits post may run to it. */
@@ -401,6 +402,17 @@ export async function addLiDraftFeedbackAction(input: {
   // must not turn into a client-facing failure on top of a post they
   // already made.
   let assetId: string | undefined;
+  /**
+   * The agent's own text for this draft, when the batch still has it.
+   *
+   * C7 §2.3 wants the PAIR — what the agent wrote and what the client posted —
+   * because that difference is the most direct statement about voice the loop
+   * ever gets. This surface only ever collected the final text, so an edit
+   * would have reached the loop as a bare "posted" and taught it nothing. The
+   * batch is already being parsed here for materialization, so the original
+   * costs nothing extra to keep.
+   */
+  let originalDraftText: string | undefined;
   if (
     (input.action === "posted" || input.action === "posted_with_edits") &&
     input.assetId &&
@@ -413,6 +425,7 @@ export async function addLiDraftFeedbackAction(input: {
       const acc = batch?.accounts.find((a) => a.title === input.accountTitle);
       const draft = acc?.drafts.find((d) => `${acc.title} · ${d.lane}` === input.draftRef);
       if (draft) {
+        originalDraftText = draft.text?.trim() || undefined;
         const edited = input.action === "posted_with_edits";
         const content = (edited ? (input.finalText as string) : draft.text)
           .trim()
@@ -444,6 +457,25 @@ export async function addLiDraftFeedbackAction(input: {
       // See comment above — never surfaced.
     }
   }
+
+  // C7 §2.3 — the same event, where the next run can read it. This surface has
+  // always written to Firestore and stopped there; the engine cannot see that
+  // store, so a client could say "too salesy" every week and the agent would
+  // open the same way the next morning. Best-effort: the feedback above is the
+  // primary record and has already landed.
+  await bridgeDraftFeedbackToLearning({
+    clientId: input.clientId,
+    platform: "linkedin",
+    action: input.action,
+    ...(input.assetId ? { assetId: input.assetId } : {}),
+    account,
+    // Recovered from the batch during materialization above, so a LinkedIn
+    // edit reaches the loop as a real pair rather than a bare "posted".
+    ...(originalDraftText ? { originalText: originalDraftText } : {}),
+    ...(input.finalText?.trim() ? { finalText: input.finalText.trim() } : {}),
+    ...(input.reason?.trim() ? { reason: input.reason.trim() } : {}),
+    ...(user.email ? { actor: user.email } : {}),
+  });
 
   // Action 14 ("give us your feedback on a post") — event-tracked, no live
   // signal answers it (lib/action-list.ts). Only the client's own feedback
