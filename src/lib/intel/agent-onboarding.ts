@@ -1,6 +1,7 @@
 import "server-only";
 
 import type {
+  BrandingGuidelines,
   Client,
   ClientContextDoc,
   ContextDocTier,
@@ -406,6 +407,75 @@ function brandVoiceAttributeList(rows: readonly Record<string, unknown>[]): stri
 }
 
 /**
+ * The client's own branding-guidelines markdown, pushed one heading level
+ * down so its `## Brand Voice` / `## Do's` / `## Don'ts` sit UNDER the
+ * section that introduces them instead of competing with the document's own
+ * `##` sections. Nothing else about the text is touched — it is the client's
+ * copy, not ours to rewrite.
+ */
+function demoteHeadings(markdown: string | undefined): string | undefined {
+  const text = str(markdown);
+  return text ? text.replace(/^(#{1,5}) /gm, "$1# ") : undefined;
+}
+
+/**
+ * The brand's palette as the brand kit stores it: `dominantColors` first (the
+ * ranked field every new write populates), falling back to the four legacy
+ * scalars for a client whose kit predates it. Each line carries the role the
+ * kit recorded, because "#ff6b2c" alone does not tell a design agent whether
+ * it may fill a background with it.
+ */
+function paletteList(bg: BrandingGuidelines | undefined): string | undefined {
+  if (!bg) return undefined;
+  const ranked = (bg.dominantColors ?? [])
+    .map((c) => {
+      const hex = str(c?.hex);
+      if (!hex) return undefined;
+      const role = str(c?.role);
+      return role ? `- ${hex} — ${role}` : `- ${hex}`;
+    })
+    .filter((l): l is string => Boolean(l));
+  if (ranked.length) return ranked.join("\n");
+  const legacy = (
+    [
+      ["Primary accent", bg.primaryAccent ?? bg.primaryColor],
+      ["Secondary accent", bg.secondaryAccent ?? bg.secondaryColor],
+      ["Neutral dark", bg.brandNeutralDark ?? bg.uiBackground],
+      ["Neutral light", bg.brandNeutralLight ?? bg.uiText],
+    ] as const
+  )
+    .map(([label, hex]) => (str(hex) ? `- ${label}: ${str(hex)}` : undefined))
+    .filter((l): l is string => Boolean(l));
+  return legacy.length ? legacy.join("\n") : undefined;
+}
+
+/** Heading font and body font, on one line each, when the kit names them. */
+function typographyList(bg: BrandingGuidelines | undefined): string | undefined {
+  const lines = (
+    [
+      ["Headings", bg?.fontHeading],
+      ["Body", bg?.fontBody],
+    ] as const
+  )
+    .map(([label, font]) => (str(font) ? `- ${label}: ${str(font)}` : undefined))
+    .filter((l): l is string => Boolean(l));
+  return lines.length ? lines.join("\n") : undefined;
+}
+
+/**
+ * The phrases the audience's own personas say to avoid, deduplicated across
+ * personas. This is the one piece of the ICP blueprint that is an instruction
+ * to the writer rather than a description of the reader, which is why
+ * `client-guidelines` — the internal-only "how we write for this client" row —
+ * carries it rather than `target-audience`.
+ */
+function avoidPhraseList(personas: readonly Record<string, unknown>[]): string | undefined {
+  const seen = new Set<string>();
+  for (const p of personas) for (const phrase of strArray(p["avoidPhrases"])) seen.add(phrase);
+  return seen.size ? [...seen].map((p) => `- ${p}`).join("\n") : undefined;
+}
+
+/**
  * SCRUM-274 (T-B19). `ir.customerSentiment` is `CustomerSentimentEntry[]` —
  * `{ company, rating?, ratingLabel?, responseTime?, wouldReturn? }` — on the
  * real deliverable (`CustomerSentimentEntrySchema`, same file), not a
@@ -553,11 +623,22 @@ function dimensionScoreList(rows: readonly Record<string, unknown>[]): string | 
  * should see.
  */
 export function composeContextDocsFromAgentReports(input: {
-  client: Pick<Client, "id" | "name">;
+  /**
+   * `brandVoice` and `brandingGuidelines` are read here, not just `name`.
+   * They are the client's OWN statement of how it sounds and looks - written
+   * by the branding step, editable by hand in the portal - and they are what
+   * a writing agent actually needs. The intel report cannot supply them and
+   * must not: its brand fields are a COMPETITIVE read (see the `brand-voice`
+   * entry below), and for three prompt versions those fields were the entire
+   * `brand-voice` document while the client's own voice spec sat unread on
+   * the client record.
+   */
+  client: Pick<Client, "id" | "name" | "brandVoice" | "brandingGuidelines">;
   intelReport: IntelReportDeliverable;
   seoGeo: SeoGeoReportDeliverable;
 }): Record<OnboardingDocType, string> {
   const { client, intelReport: ir, seoGeo: sg } = input;
+  const bg = client.brandingGuidelines;
   const swot = rec(ir["swot"]);
   const visibilityIndex = rec(rec(sg["visibility"])["byN"])["index"];
   const header = (title: string) => `# ${title} — ${client.name}`;
@@ -618,13 +699,58 @@ export function composeContextDocsFromAgentReports(input: {
   const rankingList = rankingLines.length ? rankingLines.join("\n") : undefined;
   const scoreHeader = [overall, scoreLine ? `**${scoreLine}**` : undefined].filter((p): p is string => Boolean(p)).join("\n") || undefined;
 
+  /**
+   * The `brand-voice` document's real sections, named here so the fallback
+   * below can ask whether any of them survived. Order is the order a writer
+   * needs them: the spec first, the rules that qualify it second, then where
+   * the voice sits in the market.
+   */
+  const voiceSections = [
+    section("How this brand sounds", str(client.brandVoice)),
+    section("Voice rules", demoteHeadings(bg?.guidelines)),
+    section("Tone keywords", bullets(bg?.toneKeywords ?? [])),
+    // The agent's contribution to this document: where the voice SITS in the
+    // market. That is a statement about the client, unlike the two
+    // per-company comparison tables, so it stays.
+    section("Voice territory", str(ir["brandVoiceTerritory"])),
+  ];
+
   return {
+    /**
+     * WHAT THIS DOCUMENT IS FOR: every publishing agent reads it to sound
+     * like this brand. So it leads with the brand's own voice spec and its
+     * do/don't rules, and the competitive material is not here at all.
+     *
+     * Until this revision it was composed from `brandAnalysis`,
+     * `brandVoiceArchetypes` and `brandVoiceRows` - three fields the intel
+     * prompt defines as a COMPARISON across companies (`intel-report-craft`
+     * section 7: "comparing against at least one named competitor"; the
+     * schemas are literally `{ company, archetype }` and `{ dimension,
+     * scores: one per company }`). The result was a "Brand Voice" document
+     * whose Archetypes section listed four competitors and whose Voice
+     * attributes section was a five-way table, with no rule a writer could
+     * follow - while `client.brandVoice`, a precise spec of sentence unit,
+     * banned words, person, tense and CTA, was never read. Those two
+     * comparison sections now live in `competitor-analysis`, where a
+     * per-company table belongs.
+     */
     "brand-voice": document(header("Brand Voice"), [
-      section("Brand analysis", str(ir["brandAnalysis"])),
-      section("Voice territory", str(ir["brandVoiceTerritory"])),
-      section("Archetypes", brandVoiceArchetypeList(objArray(ir["brandVoiceArchetypes"]))),
-      section("Voice attributes", brandVoiceAttributeList(objArray(ir["brandVoiceRows"]))),
-      section("Brand synchronization update", str(ir["brandSynchronizationUpdate"])),
+      ...voiceSections,
+      /**
+       * Every source above is optional — a client can reach onboarding before
+       * the branding step has run, and `brandVoiceTerritory` is optional in
+       * the intel schema. The old composition could not be empty because it
+       * led with the always-required `brandAnalysis`, so dropping that field
+       * from here would otherwise let a brand-less client fail the shape gate
+       * and take the whole onboarding down with it.
+       *
+       * The fallback is `brandAnalysis` rather than fixed text on purpose:
+       * it still comes from the deliverable, so a run where the engine
+       * genuinely answered with nothing still composes empty and the gate
+       * still fires. That is the one failure this document's emptiness
+       * exists to catch.
+       */
+      voiceSections.some(Boolean) ? undefined : section("Brand analysis", str(ir["brandAnalysis"])),
     ]),
     "market-strategy": document(header("Market Strategy"), [
       scoreHeader,
@@ -635,16 +761,31 @@ export function composeContextDocsFromAgentReports(input: {
       section("SEO & discoverability", str(ir["seoAnalysis"])),
       section("GEO & AI discoverability", str(ir["geoAnalysis"])),
       section("Search and answer-engine visibility", str(sg["narrative"])),
-      // What the engine actually observed on the site — the facts behind the
+      // What the engine actually observed on the site - the facts behind the
       // scores, so an agent reading this document can say "8 of 8 audited
       // pages carry structured data" instead of only "SEO 62".
       section("Measured site facts", bullets(measuredFacts)),
+      // The buyer-intent prompt set: the queries this brand is scored on in
+      // AI answers. It used to be appended to `target-audience`, where it was
+      // the only SEO/GEO material in an ICP document and read as filler. It
+      // belongs beside the visibility narrative it is measured against.
+      section(
+        "Buyer-intent prompt set",
+        bullets(promptSetPrompts.map((p) => str(p["promptText"]) ?? str(p["prompt"]) ?? str(p["text"]) ?? "").filter(Boolean)),
+      ),
       section("Strategic recommendations", joinBlocks(recommendations.map(recommendationBlock))),
     ]),
     "competitor-analysis": document(header("Competitor Analysis"), [
       competitors.length ? `**Competitors analysed: ${competitors.length}**` : undefined,
       section("Competitive ranking", rankingList),
       section("Competitor profiles", joinBlocks(competitors.map(competitorProfile))),
+      // Moved here from `brand-voice`: both fields are per-company rows, so
+      // this is the document whose shape they fit.
+      section("Brand-voice archetypes", brandVoiceArchetypeList(objArray(ir["brandVoiceArchetypes"]))),
+      section("Brand-voice comparison", brandVoiceAttributeList(objArray(ir["brandVoiceRows"]))),
+      // Per-company review-platform ratings - also a competitor table, and
+      // also previously filed under `target-audience`.
+      section("Customer sentiment", customerSentimentList(objArray(ir["customerSentiment"]))),
       section("SWOT", swotBlock),
       section("Share of voice in AI answers", labelledList(objArray(rec(sg["visibility"])["engines"]), ["engine", "label", "name"], "mentions")),
     ]),
@@ -652,25 +793,59 @@ export function composeContextDocsFromAgentReports(input: {
       section("Positioning", str(ir["positioningAnalysis"])),
       section("Content analysis", str(ir["contentAnalysis"])),
       section("Conversion analysis", str(ir["conversionAnalysis"])),
-      section("Voice territory", str(ir["brandVoiceTerritory"])),
     ]),
+    /**
+     * The brand KIT - palette, type, visual style - which is what an agent
+     * opening "Branding Guidelines" is looking for, and which the client
+     * record has always held. This document previously contained three
+     * sections, all three byte-for-byte copies of `brand-voice`'s, and not
+     * one colour or font.
+     */
     "branding-guidelines": document(header("Branding Guidelines"), [
+      section("Palette", paletteList(bg)),
+      section("Typography", typographyList(bg)),
+      section("Visual style", str(bg?.visualStyle)),
+      // The agent's read of how consistently that kit is actually applied,
+      // and what the competitive findings imply for it. Both are about the
+      // brand's identity rather than its copy, so this is their one home.
       section("Brand analysis", str(ir["brandAnalysis"])),
-      section("Brand synchronization update", str(ir["brandSynchronizationUpdate"])),
-      section("Voice territory", str(ir["brandVoiceTerritory"])),
+      section("Recommended updates", str(ir["brandSynchronizationUpdate"])),
     ]),
     "target-audience": document(header("Target Audience"), [
       section("Summary", str(targetAudience["summary"])),
       personas.length ? joinBlocks(personas.map(personaBlock)) : undefined,
       section("Evidence", bullets(strArray(targetAudience["evidence"]))),
-      section("Customer sentiment", customerSentimentList(objArray(ir["customerSentiment"]))),
-      section("Buyer-intent prompt set", bullets(promptSetPrompts.map((p) => str(p["promptText"]) ?? str(p["prompt"]) ?? str(p["text"]) ?? "").filter(Boolean))),
+      /**
+       * `targetAudience` is optional in the intel schema — the prompt tells
+       * the model to omit it rather than invent an audience the evidence does
+       * not reach — so this document has to survive its absence. It used to,
+       * by carrying the SEO/GEO prompt set and the per-company sentiment
+       * table unconditionally, which is why an ICP document could look full
+       * while containing no ICP at all.
+       *
+       * The prompt set comes back here only when there is no persona, and
+       * under a heading that says what it actually is. A question a buyer
+       * types is real audience evidence; it is not a persona, and the
+       * document should not imply otherwise.
+       */
+      personas.length || str(targetAudience["summary"])
+        ? undefined
+        : section(
+            "What buyers are asking (no persona in this report)",
+            bullets(promptSetPrompts.map((p) => str(p["promptText"]) ?? str(p["prompt"]) ?? str(p["text"]) ?? "").filter(Boolean)),
+          ),
     ]),
+    /**
+     * Internal-only: how we write FOR this client, as opposed to what we know
+     * about them. Previously it repeated `market-strategy`'s entire
+     * recommendation list and `brand-voice`'s synchronization update, and had
+     * nothing of its own.
+     */
     "client-guidelines": document(header("Client Guidelines"), [
       overall,
       section("Dimension scores", dimensionScoreList(dimensionScores)),
-      section("Standing recommendations", joinBlocks(recommendations.map(recommendationBlock))),
-      section("Brand synchronization update", str(ir["brandSynchronizationUpdate"])),
+      section("Never write", avoidPhraseList(personas)),
+      section("Known weaknesses to work around", bullets(strArray(swot["weaknesses"]))),
     ]),
     "action-plan": document(header("Action Plan"), [
       section("From the intel report", joinBlocks(recommendations.map(recommendationBlock))),

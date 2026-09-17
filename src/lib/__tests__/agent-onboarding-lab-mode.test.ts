@@ -409,8 +409,11 @@ describe("runIntelReportPipeline — a portal-owned client, exactly as before", 
     expect(docs.map((d) => `${d.docType}::${d.tier}`).sort()).toEqual(CONTEXT_DOC_SET_CONTRACT.map((r) => `${r.docType}::${r.tier}`).sort());
     for (const doc of docs) expect(doc.version).toBe(1);
     // The documents are composed from the research, and condensed from that.
-    expect(docs.find((d) => d.docType === "brand-voice" && d.tier === "internal")!.content).toContain("Discreet, factual, French.");
-    expect(S.calls.condense[0]!.internal["brand-voice"]).toContain("Discreet, factual, French.");
+    // `brandAnalysis` is the intel report's read of the brand's IDENTITY, so
+    // it composes into `branding-guidelines`; `brand-voice` is built from the
+    // client's own voice spec and the report's voice territory.
+    expect(docs.find((d) => d.docType === "branding-guidelines" && d.tier === "internal")!.content).toContain("Discreet, factual, French.");
+    expect(S.calls.condense[0]!.internal["branding-guidelines"]).toContain("Discreet, factual, French.");
     // No row-by-row writes on this path.
     expect(S.calls.upsertDoc).toEqual([]);
   });

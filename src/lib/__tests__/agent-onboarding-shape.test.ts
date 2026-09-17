@@ -20,7 +20,27 @@ const {
 type Row = Record<string, unknown>;
 
 const CLIENT_ID = "acme";
-const CLIENT = { id: CLIENT_ID, name: "Acme" } as never;
+/**
+ * The client record as the composer now reads it: `brandVoice` and
+ * `brandingGuidelines` are the brand's OWN statement of how it sounds and
+ * looks, and they are what `brand-voice` / `branding-guidelines` are built
+ * from. Before this fixture carried them, both documents were composed
+ * entirely out of the intel report's per-company comparison fields.
+ */
+const CLIENT = {
+  id: CLIENT_ID,
+  name: "Acme",
+  brandVoice: "Short declarative sentences. No exclamation marks. Every claim carries a number.",
+  brandingGuidelines: {
+    dominantColors: [{ hex: "#ff6b2c", role: "Primary accent, CTA buttons", dominanceRank: 1 }],
+    fontHeading: "Space Grotesk",
+    fontBody: "Inter",
+    toneKeywords: ["Precise", "Direct"],
+    visualStyle: "Dark Mode",
+    guidelines: "## Brand Voice\nPlain and exact.\n\n## Don'ts\n- No hype adjectives",
+    updatedAt: 1_700_000_000_000,
+  },
+} as never;
 
 /**
  * The two deliverables. SCRUM-274 (T-B19) rewrote this fixture to the REAL
@@ -60,7 +80,12 @@ const INTEL_REPORT = {
     { company: "Acme", archetype: "Sage" },
     { company: "Northwind", archetype: "Creator" },
   ],
-  brandVoiceTerritory: "Plain-spoken operator, never a hype merchant.",
+  // A real `brandVoiceTerritory` positions the voice AGAINST named rivals —
+  // that is what a territory claim is — so the fixture names one. It is the
+  // reason the guard below asserts the absence of the two comparison
+  // SECTIONS rather than the absence of competitor names, which would be a
+  // guard that only passes because the fixture is tamer than production.
+  brandVoiceTerritory: "Plain-spoken operator, never a hype merchant — where Northwind is all superlatives.",
   customerSentiment: [{ company: "Acme", rating: "4.2", ratingLabel: "Very good", wouldReturn: "yes" }],
   whitespaceOpportunities: ["Migration tooling content"],
   contentAnalysis: "Docs outrank marketing pages for every buying term.",
@@ -71,6 +96,11 @@ const INTEL_REPORT = {
   brandAnalysis: "One voice in docs, a different one on the site.",
   growthAnalysis: "Growth is word of mouth with no assist layer.",
   brandSynchronizationUpdate: "Align the site to the docs voice, not the reverse.",
+  targetAudience: {
+    summary: "Ops leads at 50-500 person manufacturers.",
+    personas: [{ label: "Ops lead", isPrimary: true, avoidPhrases: ["best-in-class", "synergy"] }],
+    evidence: ["context-provided: targetAudience"],
+  },
 };
 
 const SEO_GEO = {
@@ -210,8 +240,14 @@ describe("composeContextDocsFromAgentReports", () => {
     for (const docType of [...INTERNAL_CONTEXT_DOC_TYPES, ...INTERNAL_ONLY_CONTEXT_DOC_TYPES]) {
       expect(docs[docType].trim(), docType).not.toBe("");
     }
+    // The client's own voice spec leads the document every writing agent reads.
+    expect(docs["brand-voice"]).toContain("Short declarative sentences");
+    expect(docs["brand-voice"]).toContain("No hype adjectives");
     // Sourced from the intel report...
     expect(docs["brand-voice"]).toContain("Plain-spoken operator");
+    // ...and the brand KIT is what "Branding Guidelines" actually contains.
+    expect(docs["branding-guidelines"]).toContain("#ff6b2c");
+    expect(docs["branding-guidelines"]).toContain("Space Grotesk");
     expect(docs["competitor-analysis"]).toContain("Northwind");
     // ...and from the SEO/GEO report.
     expect(docs["market-strategy"]).toContain("SEO 74 · GEO readiness 58");
@@ -233,20 +269,86 @@ describe("composeContextDocsFromAgentReports", () => {
       intelReport: INTEL_REPORT,
       seoGeo: SEO_GEO,
     });
-    expect(docs["brand-voice"]).toContain("Acme: Sage");
-    expect(docs["brand-voice"]).toContain("Warmth");
-    expect(docs["brand-voice"]).toContain("Acme: 4/5");
+    // These three fields are per-company rows (`{ company, archetype }`,
+    // `{ dimension, scores: one per company }`, `CustomerSentimentEntry[]`),
+    // so they compose into the competitor document. They used to be the bulk
+    // of `brand-voice` and the tail of `target-audience`, which is what made
+    // a "Brand Voice" document read as a competitor table.
+    expect(docs["competitor-analysis"]).toContain("Acme: Sage");
+    expect(docs["competitor-analysis"]).toContain("Warmth");
+    expect(docs["competitor-analysis"]).toContain("Acme: 4/5");
     expect(docs["competitor-analysis"]).toContain("Competitors analysed: 2");
     expect(docs["competitor-analysis"]).toContain("Initech");
-    expect(docs["target-audience"]).toContain("Acme");
-    expect(docs["target-audience"]).toContain("4.2 (Very good)");
-    expect(docs["target-audience"]).toContain("best tool for X");
-    expect(docs["target-audience"]).toContain("X vs Northwind");
+    expect(docs["competitor-analysis"]).toContain("4.2 (Very good)");
+    // The buyer-intent prompt set is SEO/GEO material and sits beside the
+    // visibility narrative it is scored against.
+    expect(docs["market-strategy"]).toContain("best tool for X");
+    expect(docs["market-strategy"]).toContain("X vs Northwind");
+    // `target-audience` is the ICP blueprint and nothing else.
+    expect(docs["target-audience"]).toContain("Ops lead");
+    expect(docs["target-audience"]).not.toContain("best tool for X");
+    expect(docs["target-audience"]).not.toContain("4.2 (Very good)");
+  });
+
+  /**
+   * The defect this revision fixes, pinned from the reader's side: the
+   * document a writing agent opens to sound like the brand must carry the
+   * brand's own rules and must NOT carry a competitor comparison. Both halves
+   * are asserted, because the first one passed for three prompt versions
+   * while the second was false.
+   */
+  it("keeps the per-company comparison tables out of brand-voice and the brand's own rules in it", () => {
+    const docs = composeContextDocsFromAgentReports({
+      client: CLIENT,
+      intelReport: INTEL_REPORT,
+      seoGeo: SEO_GEO,
+    });
+    expect(docs["brand-voice"]).toContain("No exclamation marks");
+    expect(docs["brand-voice"]).toContain("Precise");
+    // The two sections that made this document a competitor table, by the
+    // per-company rows only they can produce: an archetype label the client
+    // does not hold, and a rival's score in the comparison grid.
+    expect(docs["brand-voice"]).not.toContain("Northwind: Creator");
+    expect(docs["brand-voice"]).not.toContain("Northwind: 2/5");
+    expect(docs["competitor-analysis"]).toContain("Northwind: Creator");
+    expect(docs["competitor-analysis"]).toContain("Northwind: 2/5");
+    // `brandVoiceTerritory` is the deliberate exception and still lands here:
+    // it is one paragraph about where THIS voice sits, which is what a writer
+    // needs, even though it names a rival to say so.
+    expect(docs["brand-voice"]).toContain("Plain-spoken operator");
+  });
+
+  /**
+   * No generated document may be a copy of another. Five of the eight were
+   * before this revision — `branding-guidelines` was a strict subset of
+   * `brand-voice`, and `client-guidelines` repeated `market-strategy`'s whole
+   * recommendation list — which is what made the set read as one report
+   * reshuffled eight ways.
+   */
+  it("gives every document at least one substantial paragraph no other document has", () => {
+    const docs = composeContextDocsFromAgentReports({
+      client: CLIENT,
+      intelReport: INTEL_REPORT,
+      seoGeo: SEO_GEO,
+    });
+    const all = [...INTERNAL_CONTEXT_DOC_TYPES, ...INTERNAL_ONLY_CONTEXT_DOC_TYPES];
+    const paragraphs = (text: string) =>
+      text
+        .split("\n\n")
+        .map((p) => p.trim())
+        .filter((p) => p.length > 40 && !p.startsWith("#"));
+    for (const docType of all) {
+      const mine = paragraphs(docs[docType]);
+      const theirs = new Set(all.filter((d) => d !== docType).flatMap((d) => paragraphs(docs[d])));
+      expect(mine.filter((p) => !theirs.has(p)), docType).not.toHaveLength(0);
+    }
   });
 
   it("omits a section whose field the engine did not send instead of throwing", () => {
     const docs = composeContextDocsFromAgentReports({
-      client: CLIENT,
+      // `client` without a brand kit too: every `brand-voice` source is
+      // optional now, so this is the case the document's fallback exists for.
+      client: { id: CLIENT_ID, name: "Acme" } as never,
       intelReport: { brandAnalysis: "Only this one field." },
       seoGeo: {},
     });
