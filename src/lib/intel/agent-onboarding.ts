@@ -328,6 +328,16 @@ function section(heading: string, body: string | undefined): string | undefined 
   return body ? `## ${heading}\n\n${body}` : undefined;
 }
 
+/**
+ * A `###` heading inside a section. The structured blocks
+ * (`brandVoiceSpec`, `productInformation`) render several labelled lists under
+ * one `##`, and using `##` for those too would put "Never say this" at the
+ * same level as "How this brand sounds" in the portal's document outline.
+ */
+function subsection(heading: string, body: string | undefined): string | undefined {
+  return body ? `### ${heading}\n\n${body}` : undefined;
+}
+
 function joinBlocks(blocks: readonly (string | undefined)[]): string {
   return blocks.filter((b): b is string => Boolean(b && b.trim())).join("\n\n");
 }
@@ -521,6 +531,71 @@ function customerSentimentList(rows: readonly Record<string, unknown>[]): string
  * run: an onboarding that produces a blank ground-truth document must fail
  * loudly, not store a placeholder for every downstream agent to read.
  */
+/**
+ * `brandVoiceSpec` (intel-report-craft@7) rendered as the rules a writer
+ * follows. Each sub-list is dropped when the report had nothing for it, so a
+ * thin spec produces a short document rather than a scaffold of empty
+ * headings.
+ */
+function voiceSpecBlock(spec: Record<string, unknown>): string | undefined {
+  const dimensions = objArray(spec["dimensions"])
+    .map((d) => {
+      const scale = str(d["scale"]);
+      const position = str(d["position"]);
+      if (!scale || !position) return undefined;
+      const shifts = str(d["shiftsWhen"]);
+      return `- **${scale}:** ${position}${shifts ? ` — shifts when ${shifts}` : ""}`;
+    })
+    .filter((l): l is string => Boolean(l));
+  const platforms = objArray(spec["platformVoice"])
+    .map((row) => {
+      const platform = str(row["platform"]);
+      const guidance = str(row["guidance"]);
+      return platform && guidance ? `- **${platform}:** ${guidance}` : undefined;
+    })
+    .filter((l): l is string => Boolean(l));
+  const ctas = objArray(spec["ctaTaxonomy"])
+    .map((row) => {
+      const situation = str(row["situation"]);
+      const cta = str(row["cta"]);
+      return situation && cta ? `- ${situation} → ${cta}` : undefined;
+    })
+    .filter((l): l is string => Boolean(l));
+
+  return joinBlocks([
+    str(spec["voiceInOneLine"]),
+    subsection("Voice adjectives", bullets(strArray(spec["adjectives"]))),
+    subsection("Where the voice sits", dimensions.length ? dimensions.join("\n") : undefined),
+    subsection("Sentence mechanics", bullets(strArray(spec["sentenceMechanics"]))),
+    subsection("Say this", bullets(strArray(spec["preferredTerms"]))),
+    subsection("Never say this", bullets(strArray(spec["bannedTerms"]))),
+    subsection("By platform", platforms.length ? platforms.join("\n") : undefined),
+    subsection("Which CTA, when", ctas.length ? ctas.join("\n") : undefined),
+    subsection("On-voice lines", bullets(strArray(spec["samplePhrases"]))),
+  ]);
+}
+
+/** One offering, as the site names it. */
+function offeringBlock(o: Record<string, unknown>): string | undefined {
+  const name = str(o["name"]);
+  const whatItIs = str(o["whatItIs"]);
+  if (!name) return undefined;
+  const who = str(o["whoItIsFor"]);
+  return `- **${name}**${whatItIs ? ` — ${whatItIs}` : ""}${who ? ` _(for ${who})_` : ""}`;
+}
+
+/** Questions buyers ask, answered from the client's own material. */
+function faqBlock(rows: readonly Record<string, unknown>[]): string | undefined {
+  const entries = rows
+    .map((row) => {
+      const q = str(row["question"]);
+      const a = str(row["answer"]);
+      return q && a ? `**${q}**\n${a}` : undefined;
+    })
+    .filter((e): e is string => Boolean(e));
+  return entries.length ? entries.join("\n\n") : undefined;
+}
+
 /** Personas as the intel report now emits them (intel-report-craft@5 `targetAudience`). */
 function personaBlock(p: Record<string, unknown>): string {
   const line = (label: string, v: unknown) => {
@@ -677,6 +752,10 @@ export function composeContextDocsFromAgentReports(input: {
   const dimensionScores = objArray(ir["dimensionScores"]);
   const promptSetPrompts = objArray(rec(sg["promptSet"])["prompts"]);
   const targetAudience = rec(ir["targetAudience"]);
+  // intel-report-craft@7. Both optional on the report, both the reason their
+  // documents existed at all.
+  const voiceSpec = rec(ir["brandVoiceSpec"]);
+  const productInfo = rec(ir["productInformation"]);
   const personas = objArray(targetAudience["personas"]);
   const swotBlock = joinBlocks(
     (["strengths", "weaknesses", "opportunities", "threats"] as const).map((key) => {
@@ -707,6 +786,12 @@ export function composeContextDocsFromAgentReports(input: {
    */
   const voiceSections = [
     section("How this brand sounds", str(client.brandVoice)),
+    // The researched spec (intel-report-craft@7): the rules a writer applies
+    // to a sentence. It sits UNDER the client's own statement rather than
+    // replacing it — the client record is hand-editable and an edit there must
+    // survive a research run, while this block carries what the record has no
+    // room for: dimensions, mechanics, per-platform voice, CTA taxonomy.
+    section("Voice spec", voiceSpecBlock(voiceSpec)),
     section("Voice rules", demoteHeadings(bg?.guidelines)),
     section("Tone keywords", bullets(bg?.toneKeywords ?? [])),
     // The agent's contribution to this document: where the voice SITS in the
@@ -789,7 +874,28 @@ export function composeContextDocsFromAgentReports(input: {
       section("SWOT", swotBlock),
       section("Share of voice in AI answers", labelledList(objArray(rec(sg["visibility"])["engines"]), ["engine", "label", "name"], "mentions")),
     ]),
+    /**
+     * What the client SELLS, which is what an agent opening this document is
+     * looking for. Until `productInformation` existed (intel-report-craft@7)
+     * this was three assessments of the client's marketing, from which no
+     * agent could learn what the product does, what it is called, what it
+     * costs, or which claims it may not make.
+     *
+     * The three analyses stay, below the product itself: they are a real read
+     * of how the offer is currently presented, and they are what this document
+     * falls back to when the report has no product block.
+     */
     "product-information": document(header("Product Information"), [
+      section("What this is", str(productInfo["whatItDoes"])),
+      section("Offerings", joinBlocks(objArray(productInfo["offerings"]).map(offeringBlock))),
+      section("How they charge", str(productInfo["businessModel"])),
+      section("What the site asks for", bullets(strArray(productInfo["primaryCtas"]))),
+      section("Proof points", bullets(strArray(productInfo["proofPoints"]))),
+      // Above the analyses on purpose: an agent that reads only the top of
+      // this document must still see what it is not allowed to claim.
+      section("Do not misstate", bullets(strArray(productInfo["doNotMisstate"]))),
+      section("Questions buyers ask", faqBlock(objArray(productInfo["faq"]))),
+      section("Technical signals", bullets(strArray(productInfo["techSignals"]))),
       section("Positioning", str(ir["positioningAnalysis"])),
       section("Content analysis", str(ir["contentAnalysis"])),
       section("Conversion analysis", str(ir["conversionAnalysis"])),
@@ -845,6 +951,11 @@ export function composeContextDocsFromAgentReports(input: {
       overall,
       section("Dimension scores", dimensionScoreList(dimensionScores)),
       section("Never write", avoidPhraseList(personas)),
+      // Repeated from `product-information` deliberately, and the only
+      // repetition in the set: this is the list whose cost of being missed is
+      // a claim the client has to retract, and `client-guidelines` is the row
+      // staff read before briefing a run.
+      section("Claims we must not make", bullets(strArray(productInfo["doNotMisstate"]))),
       section("Known weaknesses to work around", bullets(strArray(swot["weaknesses"]))),
     ]),
     "action-plan": document(header("Action Plan"), [

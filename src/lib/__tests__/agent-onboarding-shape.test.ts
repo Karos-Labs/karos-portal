@@ -101,6 +101,30 @@ const INTEL_REPORT = {
     personas: [{ label: "Ops lead", isPrimary: true, avoidPhrases: ["best-in-class", "synergy"] }],
     evidence: ["context-provided: targetAudience"],
   },
+  // intel-report-craft@7. Both blocks exist because no field on this report
+  // answered "how do I write the next sentence" or "what does this client
+  // sell" — the two questions every publishing agent has before it starts.
+  brandVoiceSpec: {
+    voiceInOneLine: "A calm operator who moves fast.",
+    adjectives: ["Direct", "Concrete"],
+    dimensions: [{ scale: "plain to technical", position: "plain first", shiftsWhen: "the reader is an engineer" }],
+    sentenceMechanics: ["Second person for the reader", "No exclamation marks"],
+    preferredTerms: ["run", "workspace"],
+    bannedTerms: ["leverage", "synergy"],
+    platformVoice: [{ platform: "LinkedIn", guidance: "Open on the number, not the story." }],
+    ctaTaxonomy: [{ situation: "cold social post", cta: "Book a call" }],
+    samplePhrases: ["We found three gaps your competitors are exploiting."],
+  },
+  productInformation: {
+    whatItDoes: "Runs a manufacturer's scheduling off its own order book.",
+    offerings: [{ name: "Scheduler", whatItIs: "Plans the week from live orders", whoItIsFor: "Ops leads" }],
+    businessModel: "Per-seat subscription; pricing not published.",
+    primaryCtas: ["Book a demo"],
+    proofPoints: ["Named on the customer page: Northwind"],
+    doNotMisstate: ["Never claim ISO certification — they hold none"],
+    faq: [{ question: "Does it integrate with SAP?", answer: "Yes, via the published connector." }],
+    techSignals: ["Published REST connector"],
+  },
 };
 
 const SEO_GEO = {
@@ -316,6 +340,58 @@ describe("composeContextDocsFromAgentReports", () => {
     // it is one paragraph about where THIS voice sits, which is what a writer
     // needs, even though it names a rival to say so.
     expect(docs["brand-voice"]).toContain("Plain-spoken operator");
+  });
+
+  /**
+   * The two blocks intel-report-craft@7 added, and the documents they exist
+   * for. Before them, `brand-voice` had no rule a writer could follow and
+   * `product-information` had nothing about the product — and neither gap was
+   * visible, because both documents composed non-empty out of competitor
+   * comparison and marketing analysis respectively.
+   */
+  it("puts the researched voice spec in brand-voice, in a form a writer can follow", () => {
+    const docs = composeContextDocsFromAgentReports({ client: CLIENT, intelReport: INTEL_REPORT, seoGeo: SEO_GEO });
+    const doc = docs["brand-voice"];
+    expect(doc).toContain("A calm operator who moves fast.");
+    expect(doc).toContain("plain to technical");
+    expect(doc).toContain("shifts when the reader is an engineer");
+    expect(doc).toContain("No exclamation marks");
+    expect(doc).toContain("Never say this");
+    expect(doc).toContain("LinkedIn");
+    expect(doc).toContain("cold social post → Book a call");
+    // The client's own statement still leads it: the client record is
+    // hand-editable and an edit there must outrank a research run.
+    expect(doc.indexOf("Short declarative sentences")).toBeLessThan(doc.indexOf("A calm operator"));
+  });
+
+  it("puts the product in product-information, with the claims an agent may not make above the analyses", () => {
+    const docs = composeContextDocsFromAgentReports({ client: CLIENT, intelReport: INTEL_REPORT, seoGeo: SEO_GEO });
+    const doc = docs["product-information"];
+    expect(doc).toContain("Runs a manufacturer's scheduling off its own order book.");
+    expect(doc).toContain("**Scheduler**");
+    expect(doc).toContain("Per-seat subscription");
+    expect(doc).toContain("Book a demo");
+    expect(doc).toContain("Does it integrate with SAP?");
+    // An agent that reads only the top of this document must still see what it
+    // is not allowed to claim, so the constraint precedes the commentary.
+    expect(doc.indexOf("Never claim ISO certification")).toBeLessThan(doc.indexOf("Positioning"));
+    // And staff briefing a run see it on the internal-only row too.
+    expect(docs["client-guidelines"]).toContain("Never claim ISO certification");
+  });
+
+  /**
+   * Both blocks are optional on the report — the prompt tells the model to omit
+   * rather than invent house style or a product it could not read. Neither
+   * document may go empty when that happens, because an empty row fails the
+   * shape gate and takes the whole onboarding with it.
+   */
+  it("composes both documents without either block", () => {
+    const { brandVoiceSpec: _v, productInformation: _p, ...withoutBlocks } = INTEL_REPORT;
+    const docs = composeContextDocsFromAgentReports({ client: CLIENT, intelReport: withoutBlocks, seoGeo: SEO_GEO });
+    expect(docs["brand-voice"].trim()).not.toBe("");
+    expect(docs["product-information"].trim()).not.toBe("");
+    expect(docs["brand-voice"]).toContain("Short declarative sentences");
+    expect(docs["product-information"]).toContain("Positioned against spreadsheets");
   });
 
   /**
