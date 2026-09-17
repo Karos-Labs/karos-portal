@@ -157,11 +157,17 @@ describe("KNOWN_ENGINE_PRODUCT_IDS (mirrors agent-engine's KNOWN_PRODUCT_IDS)", 
     "seo-geo-agent",
     "intel-report-agent",
     "tiktok-agent",
+    // D08's three, added to agent-engine's `KNOWN_PRODUCT_IDS` when TikTok was
+    // split. Re-transcribed here by hand, which is the point of this pin: it
+    // fails when the engine's list moves and nobody copied it across.
+    "tiktok-clipping-agent",
+    "tiktok-editing-agent",
+    "tiktok-content-design-agent",
   ];
 
-  it("matches agent-engine's real KNOWN_PRODUCT_IDS, exactly 13 entries", () => {
+  it("matches agent-engine's real KNOWN_PRODUCT_IDS, exactly 16 entries", () => {
     expect([...KNOWN_ENGINE_PRODUCT_IDS].sort()).toEqual([...AGENT_ENGINE_KNOWN_PRODUCT_IDS].sort());
-    expect(KNOWN_ENGINE_PRODUCT_IDS).toHaveLength(13);
+    expect(KNOWN_ENGINE_PRODUCT_IDS).toHaveLength(16);
   });
 });
 

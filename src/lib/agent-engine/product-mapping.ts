@@ -32,6 +32,12 @@ export const KNOWN_ENGINE_PRODUCT_IDS = [
   "seo-geo-agent",
   "intel-report-agent",
   "tiktok-agent",
+  // D08's three. `tiktok-agent` stays: it is the legacy single product, still
+  // routed by `karos-tiktok-agent`, and runs dispatched under it before the
+  // split must keep reconciling.
+  "tiktok-clipping-agent",
+  "tiktok-editing-agent",
+  "tiktok-content-design-agent",
 ] as const;
 
 export type EngineProductId = (typeof KNOWN_ENGINE_PRODUCT_IDS)[number];
@@ -202,6 +208,22 @@ const ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY: Readonly<Record<string, EngineProductW
   // tempting shortcut while no tiktok-agent existed, would have quietly run a
   // different product for the client.
   "karos-tiktok-agent": "tiktok-agent",
+  // ── D08: TikTok is three products with three different inputs ──
+  //
+  // Three keys, three engine products, and they are NOT interchangeable —
+  // which is the whole reason the split exists. Clipping finds a moment inside
+  // long-form footage; editing cuts a video the client recorded; content
+  // design writes a short from nothing. A client who presses one and gets
+  // another has been given a different product, and the failure is silent
+  // because all three return a vertical video.
+  //
+  // `karos-tiktok-agent` above stays pointed at the legacy `tiktok-agent`
+  // rather than being repointed at clipping: it is the id every existing grant
+  // and every run already dispatched names, and repointing it would change
+  // what an in-flight schedule produces.
+  "karos-tiktok-clipping": "tiktok-clipping-agent",
+  "karos-tiktok-editing": "tiktok-editing-agent",
+  "karos-tiktok-content-design": "tiktok-content-design-agent",
   // The campaign: one brief, every channel, one review (agent-engine's
   // campaign-orchestrator fans out into the X, LinkedIn, Instagram, Reddit and
   // blog workflows and brings the bundle to a single `13-campaign-review`
@@ -235,6 +257,14 @@ export const ENGINE_PRODUCTS_READING_MEDIA_ASSETS = new Set<string>([
   "instagram-agent",
   "tiktok-agent",
   "branded-shorts-agent",
+  // D08's three, and the omission is deliberate. Clipping and editing are both
+  // handed footage — a link to a podcast episode, or the client's own recording
+  // — so a URL from their dialog IS the asset. Content design is given nothing
+  // (Albert's "What you give it": "Nothing, or a note on the topic"), so a link
+  // it somehow receives is a reference for the script to read, not footage to
+  // cut, and folding it into `customPrompt` is the correct destination.
+  "tiktok-clipping-agent",
+  "tiktok-editing-agent",
 ]);
 
 export function resolveAgentEngineProductIdForCustomAgent(agentKey: string): string | undefined {
