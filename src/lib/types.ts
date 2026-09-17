@@ -17,6 +17,8 @@
  */
 import type { ActionKind, FixAction } from "@/lib/seo-geo";
 import type { EngineProductId } from "@/lib/agent-engine/product-mapping";
+/** D09's catalog bands, for `CustomAgent.band`. Pure and type-only, as above. */
+import type { AgentBand } from "@/lib/agent-bands";
 
 /**
  * Platform roles stored in the `users` Firestore collection.
@@ -500,6 +502,21 @@ export interface CustomAgent {
    * fall back to `description` until an admin writes one.
    */
   clientBlurb?: string | null;
+  /**
+   * How far along this product is — D09's three bands ("up_and_running" /
+   * "beta" / "coming_soon"), seeded by `scripts/sync-engine-agent-roster.ts`.
+   *
+   * A FIELD RATHER THAN A WORD IN `name`, which is the whole of D09's second
+   * sentence and of D20: "TikTok content design (beta)" carried its band in its
+   * name until this field existed, so the marker was unsearchable, unfilterable
+   * and impossible to change without renaming a client-facing product.
+   *
+   * Absent on every agent imported before the field existed, and on anything an
+   * admin has not banded. Read it through `agentBand` (lib/agent-bands.ts),
+   * never directly: absent falls back to D09's own table, and an unrecognised
+   * stored word falls back with it rather than suppressing the band.
+   */
+  band?: AgentBand | null;
   /**
    * Admin-set demo/preview video for the agent page's "not set up" state
    * (portal revamp, Surface 03 — "the video sits at the top until the agent

@@ -39,6 +39,7 @@ import { getFirestore } from "firebase-admin/firestore";
 import { resolveScriptDatabaseId } from "./lib/firestore-db";
 import { resolveAgentEngineProductIdForCustomAgent } from "../src/lib/agent-engine/product-mapping";
 import { perClientAgentSlug } from "../src/lib/custom-agent-launch";
+import { agentBand, type AgentBand } from "../src/lib/agent-bands";
 
 const APPLY = process.argv.includes("--apply");
 
@@ -51,6 +52,16 @@ interface RosterDoc {
   icon: string;
   color: string;
   entrySkillDir: string;
+  /**
+   * D09's band, written onto the document so it is self-describing.
+   *
+   * Declared per row rather than derived, because this array is where a person
+   * reads the roster off — but `agentBand` (lib/agent-bands.ts) holds the same
+   * assignment for the card to read, and `main` refuses to write anything if the
+   * two ever disagree. A step (`parentKey`) has no band: nobody is offered it,
+   * so there is no card for a band to appear on.
+   */
+  band?: AgentBand;
   parentKey?: string;
   creditCost?: string | null;
   launchCreditCost?: string | null;
@@ -70,6 +81,7 @@ const ROSTER: RosterDoc[] = [
   {
     id: "Ji7p4nLTzDcbcKgDhtee",
     key: "karos-x-agent-v2",
+    band: "up_and_running",
     name: "X Agent",
     description: "Drafts one X post per run — build-in-public, knowledge, POV, news-reaction or quote lane — from the client's research and X agent data, with a picture attached or sourced.",
     clientBlurb: "Drafts an X post on demand, any time, spanning your build-in-public, knowledge, POV, news-reaction and quote lanes.",
@@ -82,6 +94,7 @@ const ROSTER: RosterDoc[] = [
   {
     id: "w2SnN4Pn0T2xjkdU2ZQ9",
     key: "karos-linkedin-writer-v2",
+    band: "up_and_running",
     name: "LinkedIn Agent",
     description: "Drafts one LinkedIn post per run for the company page or one executive's seat, in that identity's voice, with a picture attached or sourced.",
     clientBlurb: "Drafts a LinkedIn post for your company page or one of your executives, in their voice, ready for review.",
@@ -104,6 +117,7 @@ const ROSTER: RosterDoc[] = [
   {
     id: "axbzuZtCz6U8WPNctcDq",
     key: "karos-reddit-runner",
+    band: "up_and_running",
     name: "Reddit Agent",
     description: "Finds live Reddit threads worth answering in the client's target subreddits, checks each subreddit's rules, and drafts replies in the account's voice. Comments only, never publishes.",
     clientBlurb: "Finds live Reddit threads your buyers are in and drafts replies in your voice, checked against each subreddit's rules.",
@@ -125,6 +139,7 @@ const ROSTER: RosterDoc[] = [
   {
     id: "EJVZENVXvWgIo9aoiheI",
     key: "karos-instagram-agent",
+    band: "beta",
     name: "Instagram Agent",
     description: "Drafts one on-brand Instagram carousel per run: research, copy, imagery (the client's own uploads first, then sourced or generated), branded render and visual QA.",
     clientBlurb: "Creates a ready-to-post Instagram carousel in your brand, from your own photos or sourced imagery.",
@@ -135,6 +150,7 @@ const ROSTER: RosterDoc[] = [
   {
     id: "RVVdf4vHPFw1fnkDOn0X",
     key: "landing-builder",
+    band: "coming_soon",
     name: "Landing Builder",
     description: "Builds one premium, feedback-ready landing page from the client's brand, context documents and brief, and publishes a preview to review.",
     clientBlurb: "Builds a premium landing page from your brand and brief, published as a preview for your review.",
@@ -155,6 +171,7 @@ const ROSTER: RosterDoc[] = [
   {
     id: "IMHKWQ6j8UEF4QAHwIAv",
     key: "karos-blog-writer-v2",
+    band: "coming_soon",
     name: "Blog Agent",
     description: "Writes one longform article per run from the client's content pillars and keywords, in the distilled voice, with sources cited.",
     clientBlurb: "Writes a longform, sourced blog article in your voice on the subject you choose or the next one in your plan.",
@@ -165,6 +182,7 @@ const ROSTER: RosterDoc[] = [
   {
     id: "78LJ0UJNFari8UmXmHZW",
     key: "karos-newsletter-writer-v2",
+    band: "coming_soon",
     name: "Newsletter Agent",
     description: "Prepares one newsletter issue per run: claims the issue number, plans the edition, drafts in the client's voice and renders the email (light and dark).",
     clientBlurb: "Drafts your next newsletter issue in your voice and renders the email, ready to review and send.",
@@ -230,6 +248,7 @@ const ROSTER: RosterDoc[] = [
   {
     id: "karosTikTokClipping",
     key: "karos-tiktok-clipping",
+    band: "beta",
     name: "TikTok clipping",
     description:
       "D08's clipping product: finds the moment worth clipping inside a long recording — the client's own or a show on their source list — writes the hook and caption in the client's voice, and cuts a captioned vertical clip. On the calendar; sequencing decides which clip goes when.",
@@ -241,6 +260,7 @@ const ROSTER: RosterDoc[] = [
   {
     id: "karosTikTokEditing",
     key: "karos-tiktok-editing",
+    band: "beta",
     name: "TikTok editing",
     // D08 says this one is "today 'Branded shorts', to rename". This IS the
     // rename: same workflow, the name the product decision gives it.
@@ -254,16 +274,20 @@ const ROSTER: RosterDoc[] = [
   {
     id: "karosTikTokContentDesign",
     key: "karos-tiktok-content-design",
-    name: "TikTok content design (beta)",
-    // D20: "TikTok content design ships as beta." The portal has no band
-    // concept to put it in (the roster is a flat list and `RosterStatus` is a
-    // per-client run-state word, not a maturity tier), so the marker rides in
-    // the name and is said plainly in the blurb. That is a smaller, honest
-    // version of D09 rather than a taxonomy invented in passing.
+    band: "beta",
+    name: "TikTok content design",
+    // D20: "Beta is a band, never part of an agent's name." The marker used to
+    // ride in the name — "TikTok content design (beta)" — because the portal had
+    // no band to put it in. It has one now (`band` above, lib/agent-bands.ts),
+    // so the name is the product and the band is the badge beside it.
     description:
       "D08's content-design product: makes a video from nothing. Writes the script, assembles visuals from stock or generated footage, adds voice and sound. The hardest of the three with today's technology — ships as beta (D20) and improves.",
+    // The blurb's old tail, "Beta — it improves month to month", went with the
+    // name: the badge says beta now, so the sentence was saying it a second time
+    // in the one place a client reads what the product DOES. It also carried the
+    // em dash the client-copy rule (AF-8) bans.
     clientBlurb:
-      "Give it nothing. It writes the script and builds the video from stock or AI footage, with voice and sound. Beta — it improves month to month.",
+      "Give it nothing. It writes the script and builds the video from stock or AI footage, with voice and sound.",
     icon: "Bot",
     color: "#FBBF24",
     entrySkillDir: "products/building/tiktok-agent",
@@ -305,6 +329,20 @@ async function main() {
     if (!resolveAgentEngineProductIdForCustomAgent(row.key)) {
       throw new Error(`ROSTER key "${row.key}" has no engine product in ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY — refusing to enable it`);
     }
+    // D09's band is written in two places on purpose — here, where a person
+    // reads the roster, and in `agent-bands.ts`, where the card reads it — so
+    // this is the seam where they are made to agree. `agentBand` is asked with
+    // NO stored band, so it answers from the table alone: comparing the row
+    // against the value this script is about to write would compare the row with
+    // itself. A mismatch means one of the two was edited alone, and writing
+    // either would leave a document and a card disagreeing about a
+    // client-visible badge.
+    const banded = agentBand({ key: row.key });
+    if ((row.band ?? null) !== banded) {
+      throw new Error(
+        `ROSTER key "${row.key}" says band ${row.band ?? "none"} but agent-bands.ts says ${banded ?? "none"} — reconcile them before writing`,
+      );
+    }
   }
 
   const snap = await db.collection("customAgents").get();
@@ -330,7 +368,14 @@ async function main() {
       const patch: Record<string, unknown> = { enabled: true, updatedAt: now, updatedBy: "script:sync-engine-agent-roster" };
       // Presentation fields: refreshed on a script-created doc, filled only when
       // empty on one a person may have edited.
-      for (const field of ["name", "description", "clientBlurb", "icon", "color"] as const) {
+      //
+      // `band` rides with them, and takes the same rule deliberately: D09 is a
+      // product decision, so a script-owned document is brought back in line
+      // with it on every sync, while a band an operator set by hand on a
+      // document they own is left alone — which is the override `agentBand`'s
+      // stored-field-first precedence promises. A step row carries no band and
+      // the `undefined` guard below skips it.
+      for (const field of ["name", "description", "clientBlurb", "icon", "color", "band"] as const) {
         const current = existing.data[field];
         const empty = current === undefined || current === null || current === "";
         if ((scriptOwned || empty) && row[field] !== undefined && row[field] !== null && current !== row[field]) patch[field] = row[field];
@@ -354,6 +399,8 @@ async function main() {
         icon: row.icon,
         color: row.color,
         entrySkillDir: row.entrySkillDir,
+        // Null for a step, which has no card and therefore no band to paint.
+        band: row.band ?? null,
         parentKey: row.parentKey ?? null,
         skillRoots: [] as string[],
         includeClientSkills: true,

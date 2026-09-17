@@ -16,7 +16,9 @@ import {
   REPUTATION_RUN_CREDITS,
   REPUTATION_SETUP_KEY,
   isReputationAgentIdentity,
+  isNotAClientProductKey,
   isSubAgent,
+  isSupersededAgentKey,
   isUnlistedAgent,
   launchProfileFor,
 } from "@/lib/custom-agent-launch";
@@ -47,7 +49,18 @@ describe("the reputation v2 keys", () => {
     expect(isUnlistedAgent({ key: REPUTATION_SETUP_KEY, parentKey: REPUTATION_RUNNER_KEY })).toBe(
       true,
     );
-    expect(isUnlistedAgent({ key: REPUTATION_RUNNER_KEY })).toBe(false);
+    // The RUNNER is unlisted too since D07 (15 September 2026) — "SEO/GEO and
+    // Reputation are reporting systems, not agents. They must not be runnable
+    // agent cards in the client catalog." It is a THIRD reason, and the
+    // distinction is the point of the assertion below: the setup is hidden
+    // because something else fires it (`isSubAgent`), the runner because nobody
+    // buys it as an agent (`isNotAClientProductKey`). Neither is superseded, and
+    // neither doc, route or schedule changed — a pulse still runs, and its setup
+    // step still resolves through the runner's key.
+    expect(isUnlistedAgent({ key: REPUTATION_RUNNER_KEY })).toBe(true);
+    expect(isSubAgent({ key: REPUTATION_RUNNER_KEY })).toBe(false);
+    expect(isSupersededAgentKey(REPUTATION_RUNNER_KEY)).toBe(false);
+    expect(isNotAClientProductKey(REPUTATION_RUNNER_KEY)).toBe(true);
     // The retired standalone manager key is gone, not merely unlisted: it must
     // no longer be recognised as the reputation agent identity at all.
     expect(isReputationAgentIdentity("karos-reputation-manager")).toBe(false);

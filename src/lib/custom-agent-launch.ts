@@ -1363,19 +1363,81 @@ export function isSupersededAgentKey(key: string | undefined | null): boolean {
     // every input shape it handled. The doc stays exactly as it is — it is what
     // every existing grant and in-flight schedule names, and repointing or
     // deleting it would change what those produce — it only loses its card.
-    key === "karos-tiktok-agent"
+    key === "karos-tiktok-agent" ||
+    // Branded Shorts, replaced by `karos-tiktok-editing`. D08 names the editing
+    // product as "today 'Branded shorts', to rename", so the two are ONE product
+    // under two names rather than two products — and while both were listed a
+    // client saw it twice, which is the fourth short-video card SCRUM-498 counts.
+    //
+    // The rename went to the NEW key rather than to this document, on #135's
+    // rule: `branded-shorts` routes to the `branded-shorts-agent` engine product
+    // and `karos-tiktok-editing` to `tiktok-editing-agent`, and although both run
+    // the same branded-shorts workflow (materialize.ts writes
+    // `branded-shorts-video` for either), repointing the old key would change
+    // what an in-flight schedule dispatches. So the doc, its routing and its
+    // schedules are untouched; it loses its card.
+    key === "branded-shorts"
+  );
+}
+
+/**
+ * Keys of things that RUN but are not products a client picks from the catalog.
+ *
+ * A THIRD reason to be unlisted, and deliberately not folded into either of the
+ * two above — for exactly the reason `isSupersededAgentKey` is not folded into
+ * `isSubAgent`. Nothing replaced these and nothing fires them as a step: saying
+ * either would be a lie in the data about what they are. What is true of all
+ * three is that a person never chooses them, which is the one question
+ * `isUnlistedAgent` asks.
+ *
+ * From the decisions log, 15 September 2026:
+ *
+ *   D07  SEO/GEO and Reputation are reporting systems, not agents. They must not
+ *        be runnable agent cards in the client catalog.
+ *   D40  Campaign is not an agent — it only runs other agents. It becomes a
+ *        button the client presses when they have something to launch, so it is
+ *        never listed as an agent in the client catalog.
+ *
+ * NOTHING HERE STOPS RUNNING, and that is the whole point of unlisting rather
+ * than deleting or un-routing. Each key keeps its `customAgents` document, its
+ * row in `ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY` and every schedule that names it:
+ *
+ *  · `seo-geo-agent-v2` is the measurement behind the Reporting tab. The engine's
+ *    `seo-geo-agent` is dispatched independently of this card, and its report
+ *    feeds `createTasksFromSeoGeoReportAction` (seo-geo-task-actions.ts), which
+ *    is the reporting path D07 is pointing at.
+ *  · `karos-reputation-runner` keeps drafting review replies; its `-setup` step
+ *    still resolves through it (that key is `isSubAgent`, unaffected here).
+ *  · `karos-campaign-orchestrator` stays dispatchable because D40's button will
+ *    call it. The button itself is not built here.
+ */
+export function isNotAClientProductKey(key: string | undefined | null): boolean {
+  // Null-safe for the same reason `isSupersededAgentKey` is: an absent key is
+  // unknown, not hidden.
+  if (!key) return false;
+  return (
+    // D07
+    key === "seo-geo-agent-v2" ||
+    key === REPUTATION_RUNNER_KEY ||
+    // D40
+    key === "karos-campaign-orchestrator"
   );
 }
 
 /**
  * The one question every roster asks: may a person be offered this agent?
  *
- * Both reasons an agent is unlistable, in one place, so a surface cannot pick up
- * half the rule. Callers pass the AGENT, not its key, because the primary test is
- * now a field on the document.
+ * All three reasons an agent is unlistable, in one place, so a surface cannot
+ * pick up part of the rule. Callers pass the AGENT, not its key, because the
+ * first test is a field on the document.
+ *
+ * The three are kept apart above rather than merged into one list because they
+ * are different facts — a step of another agent, a generation that was replaced,
+ * and a system that was never a product — and each one is what a reader needs in
+ * order to know whether the hiding is still correct.
  */
 export function isUnlistedAgent(agent: AgentListingFields): boolean {
-  return isSubAgent(agent) || isSupersededAgentKey(agent.key);
+  return isSubAgent(agent) || isSupersededAgentKey(agent.key) || isNotAClientProductKey(agent.key);
 }
 
 /** The roster filter: everything a person may legitimately be offered. */

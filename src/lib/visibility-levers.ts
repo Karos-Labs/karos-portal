@@ -127,6 +127,20 @@ interface FamilyEntry {
   order: number;
   lever: string;
   sentence: string;
+  /**
+   * May this family be OFFERED to an account that has no row for it?
+   *
+   * Default true: the catalogue half exists so a client whose plan is missing a
+   * product reads "Not on your plan" with Support, in the family's own words
+   * (decision 7).
+   *
+   * False for a family that is no longer a product a client can be sold as an
+   * agent. It is not the same question as having a lever — the family keeps its
+   * sentence and its matcher, so an account that DOES have a row still prints
+   * one — it only stops the section offering the client something the catalog no
+   * longer lists. See `reputation` below for the one case.
+   */
+  offeredWhenAbsent?: boolean;
 }
 
 /**
@@ -204,6 +218,28 @@ const FAMILIES: Record<VisibilityFamily, FamilyEntry> = {
     lever: "the review footprint",
     sentence:
       "Drafts replies to your reviews and watches what is said about you. Reviews on independent sites are one of the off-site checks in your AI readiness score.",
+    /**
+     * D07 (15 September 2026): "SEO/GEO and Reputation are reporting systems,
+     * not agents. They must not be runnable agent cards in the client catalog."
+     *
+     * `karos-reputation-runner` is `isNotAClientProductKey` now, so it reaches no
+     * roster and this family has no roster row on any account — which, left
+     * alone, would have flipped every client to the catalogue row and offered
+     * them a product the catalog no longer sells. The row and the Support
+     * subject behind it would both have been false.
+     *
+     * The family itself is untouched: the sentence, the lever and the matcher
+     * stay, so if a reputation row ever reaches this section again it prints
+     * exactly what it printed before.
+     *
+     * KNOWN LOSS, and it is deliberate rather than overlooked: the Reporting tab
+     * now has no reputation row at all. `seo-geo-mounting.test.ts`'s note on the
+     * removed Reputation bubble says the agent "is a row in <VisibilityWork/>
+     * now", which stopped being true here. Flagged in the PR: where reputation
+     * belongs on the Reporting tab once it is a reporting system rather than an
+     * agent is a product question this change does not answer.
+     */
+    offeredWhenAbsent: false,
   },
   newsletter: {
     name: "Newsletter agent",
@@ -375,6 +411,23 @@ export function visibilityLeverFamilies(): VisibilityFamilyEntry[] {
       lever: leverOf(family),
     }))
     .sort((a, b) => a.lever.order - b.lever.order);
+}
+
+/**
+ * The families the catalogue half may OFFER to an account that has no row for
+ * one — "Not on your plan", with Support (decision 7).
+ *
+ * A subset of `visibilityLeverFamilies` rather than a filter applied at the
+ * page: that function is the TABLE, and the tests read it as one (the ordering
+ * pin, the per-family round trip). Which families may be sold is a different
+ * question from which families exist, and it belongs beside the table rather
+ * than in the one page that asks it today, or the second page to ask will offer
+ * a product the catalog stopped listing.
+ */
+export function visibilityFamiliesToOffer(): VisibilityFamilyEntry[] {
+  return visibilityLeverFamilies().filter(
+    (entry) => FAMILIES[entry.family].offeredWhenAbsent !== false,
+  );
 }
 
 /** Every sentence in the table, for the claims-cap test. */

@@ -16,6 +16,7 @@
 import type { ClientAgent, ClientAgentLaunchState, ClientAgentTemplate, Job } from "@/lib/types";
 import { localYMD } from "@/lib/run-cadence";
 import { agentKeyMatchesClientSlug, perClientAgentSlug } from "@/lib/custom-agent-launch";
+import { AGENT_BAND_LABEL, type AgentBand } from "@/lib/agent-bands";
 
 /* ─────────────────────────── deterministic ids ─────────────────────────── */
 
@@ -916,6 +917,24 @@ export function rosterStatus(input: {
    */
   enabled?: boolean;
   /**
+   * This agent's D09 band, already resolved through `agentBand`.
+   *
+   * ONLY `coming_soon` REACHES THE WORD, and it reaches the word that is already
+   * there: a product that has not been released has no per-client state to
+   * report, so it takes the same "Coming Soon" rung an admin's pause takes,
+   * rather than a second badge beside a live one. Two ways in, one rendering —
+   * which is the point, because a card reading "Live · Coming soon" is the
+   * contradiction a parallel badge would have introduced.
+   *
+   * `beta` and `up_and_running` are deliberately inert here. A beta agent that
+   * is producing is Live and must say so; its band is a marker the roster row
+   * paints beside this word (`AGENT_BAND_LABEL`), not a replacement for it.
+   *
+   * Optional, defaulting to no band, so every existing caller — managed
+   * products, the Reporting rows, tests — is unaffected.
+   */
+  band?: AgentBand | null;
+  /**
    * Whether the reader is STAFF — the only thing on this input that asks who is
    * looking, and since round 6 it can only ever ADD `staffNote`. It cannot reach
    * the word: every rung below is viewer-independent, which is the parity ruling
@@ -966,7 +985,16 @@ function statusWord(input: Parameters<typeof rosterStatus>[0]): RosterStatus {
   // An admin's pause outranks everything — refusal, AF-5 — because a paused
   // agent isn't in any of those states: it simply isn't running for anyone right
   // now, and "Coming Soon" is the one honest word for that.
-  if (input.enabled === false) return { tone: "disabled", label: "Coming Soon" };
+  //
+  // D09's `coming_soon` band joins it on the same rung and returns the SAME
+  // object, because it is the same sentence about the product: an unreleased
+  // agent is not live, not idle and not in need of attention. The two reasons
+  // stay separate in the CONDITION (a pause is an admin acting on one account, a
+  // band is what the product is) and identical in the OUTCOME, so there is
+  // exactly one "Coming Soon" in the portal and one row treatment behind it.
+  if (input.enabled === false || input.band === "coming_soon") {
+    return { tone: "disabled", label: AGENT_BAND_LABEL.coming_soon };
+  }
   const status = rosterStatusCore(input);
   // The AF-5 rung. Only an IDLE outcome is eligible: see the doc above for why
   // this may not reach past an alarm or a launch narration.

@@ -1,6 +1,7 @@
 import { ClientAgentRosterRow } from "./roster-row";
 import type { RosterAttentionReason } from "@/lib/client-agent-rows";
 import type { RosterStatus } from "@/lib/client-agents";
+import type { AgentBand } from "@/lib/agent-bands";
 
 /**
  * One row of the client's agent roster, already resolved server-side.
@@ -76,6 +77,16 @@ export interface AgentRosterEntry {
    * fact about which VIEW you are looking at.
    */
   notGranted?: boolean;
+  /**
+   * This agent's D09 band, already resolved server-side through `agentBand`.
+   *
+   * A fact about the PRODUCT, not about this client's use of it, which is why it
+   * is its own field beside `status` rather than another `rosterStatus` rung —
+   * the same shape `notGranted` takes, and for the same reason. `coming_soon` is
+   * the one band that does reach the status word, and it does so inside
+   * `rosterStatus`, so nothing here has to special-case it.
+   */
+  band?: AgentBand | null;
 }
 
 /**
@@ -134,6 +145,7 @@ export function ClientAgentRoster({
             attentionReason={entry.attentionReason ?? null}
             note={entry.note ?? null}
             notGranted={entry.notGranted ?? false}
+            band={entry.band ?? null}
             now={now}
           />
         ))}

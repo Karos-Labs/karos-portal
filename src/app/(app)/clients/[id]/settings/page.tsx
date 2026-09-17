@@ -44,7 +44,7 @@ import type { RosterStatus } from "@/lib/client-agents";
 import {
   citationDomainFor,
   sortVisibilityWorkRows,
-  visibilityLeverFamilies,
+  visibilityFamiliesToOffer,
   visibilityLeverFor,
 } from "@/lib/visibility-levers";
 
@@ -753,8 +753,14 @@ export default async function ClientSettingsPage({
   // second field for the two to disagree through. `customAgentId: null` removes
   // the Open control for the same reason it does above: there is nothing on this
   // account to open.
+  //
+  // `visibilityFamiliesToOffer`, NOT `visibilityLeverFamilies`: D07 took the
+  // Reputation agent out of the catalog, so it has no roster row on any account
+  // and this pass would otherwise offer every client a product Karos no longer
+  // sells as an agent. Which families may be offered is that module's answer,
+  // not this page's.
   const coveredFamilies = new Set(rosterVisibilityRows.map((row) => row.lever.family));
-  const catalogueVisibilityRows = visibilityLeverFamilies()
+  const catalogueVisibilityRows = visibilityFamiliesToOffer()
     .filter((family) => !coveredFamilies.has(family.family))
     .map((family) => ({
       key: `family:${family.family}`,
