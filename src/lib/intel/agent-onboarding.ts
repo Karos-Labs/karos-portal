@@ -429,6 +429,35 @@ function demoteHeadings(markdown: string | undefined): string | undefined {
 }
 
 /**
+ * The client's branding-guidelines markdown with its own "Brand Voice" section
+ * removed, keeping the Do's and Don'ts.
+ *
+ * `buildGuidelinesMarkdown` (`branding.ts`) composes that markdown as
+ * `## Brand Voice` + the very `brandVoice` string that is also stored as
+ * `Client.brandVoice` — so rendering both puts the same statement in the
+ * document twice. Worse when they have drifted: Karos Labs' `brandVoice` was
+ * edited by hand to 958 characters of real mechanics while the guidelines
+ * markdown kept its generated 885-character paragraph, so the document carried
+ * TWO different answers to "how does this brand sound" with nothing to say
+ * which one wins.
+ *
+ * The standalone field is the canonical one, so it leads the document and this
+ * strips the duplicate. When the client has no `brandVoice`, the whole
+ * markdown renders untouched — there is nothing above it to duplicate then,
+ * and its voice paragraph is the only one the document would have.
+ */
+function guidelinesWithoutVoiceSection(markdown: string | undefined, hasOwnVoice: boolean): string | undefined {
+  const text = str(markdown);
+  if (!text) return undefined;
+  if (!hasOwnVoice) return text;
+  // Drop from a leading "Brand Voice" heading up to the next heading of the
+  // same or higher level. Anchored to the heading rather than to the text, so
+  // an edited voice paragraph is still removed.
+  const stripped = text.replace(/^#{1,4}\s*Brand Voice\s*$[\s\S]*?(?=^#{1,4}\s|\Z)/m, "").trim();
+  return stripped.length > 0 ? stripped : text;
+}
+
+/**
  * The brand's palette as the brand kit stores it: `dominantColors` first (the
  * ranked field every new write populates), falling back to the four legacy
  * scalars for a client whose kit predates it. Each line carries the role the
@@ -911,7 +940,10 @@ export function composeContextDocsFromAgentReports(input: {
     // survive a research run, while this block carries what the record has no
     // room for: dimensions, mechanics, per-platform voice, CTA taxonomy.
     section("Voice spec", voiceSpecBlock(voiceSpec)),
-    section("Voice rules", demoteHeadings(bg?.guidelines)),
+    // Do's and Don'ts. Its own "Brand Voice" paragraph is dropped when the
+    // client has a `brandVoice` of its own, because that is the same statement
+    // from the same producer — see `guidelinesWithoutVoiceSection`.
+    section("Voice rules", demoteHeadings(guidelinesWithoutVoiceSection(bg?.guidelines, Boolean(str(client.brandVoice))))),
     section("Tone keywords", bullets(bg?.toneKeywords ?? [])),
     // The agent's contribution to this document: where the voice SITS in the
     // market. That is a statement about the client, unlike the two

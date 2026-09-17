@@ -364,6 +364,34 @@ describe("composeContextDocsFromAgentReports", () => {
    * are asserted, because the first one passed for three prompt versions
    * while the second was false.
    */
+  /**
+   * `buildGuidelinesMarkdown` composes the branding markdown as "## Brand
+   * Voice" plus the very string also stored as `Client.brandVoice`, so
+   * rendering both put the same statement in the document twice — and worse
+   * once they drift, as they had for Karos Labs: a hand-edited 958-character
+   * `brandVoice` above a stale generated paragraph, two different answers to
+   * "how does this brand sound" with nothing to say which one wins.
+   */
+  it("does not print the brand's voice statement twice when the guidelines repeat it", () => {
+    const docs = composeContextDocsFromAgentReports({ client: CLIENT, intelReport: INTEL_REPORT, seoGeo: SEO_GEO });
+    const doc = docs["brand-voice"];
+    expect(doc).toContain("Short declarative sentences");
+    // The Do's and Don'ts survive; the duplicated voice paragraph does not.
+    expect(doc).toContain("No hype adjectives");
+    expect(doc).not.toContain("Plain and exact.");
+  });
+
+  it("keeps the whole guidelines markdown when the client has no voice of its own", () => {
+    const docs = composeContextDocsFromAgentReports({
+      client: { ...(CLIENT as object), brandVoice: undefined } as never,
+      intelReport: INTEL_REPORT,
+      seoGeo: SEO_GEO,
+    });
+    // Nothing above it to duplicate, so its voice paragraph is the only one
+    // the document would have and it stays.
+    expect(docs["brand-voice"]).toContain("Plain and exact.");
+  });
+
   it("keeps the per-company comparison tables out of brand-voice and the brand's own rules in it", () => {
     const docs = composeContextDocsFromAgentReports({
       client: CLIENT,
