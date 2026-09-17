@@ -575,6 +575,104 @@ function voiceSpecBlock(spec: Record<string, unknown>): string | undefined {
   ]);
 }
 
+/**
+ * `messaging` (intel-report-craft@8) — what to say and in what order. The
+ * hierarchy renders LAST of the prose fields and first in importance: a list
+ * of pillars in no order is a list an agent picks from at random.
+ */
+function messagingBlock(m: Record<string, unknown>): string | undefined {
+  const props = objArray(m["valuePropositions"])
+    .map((v) => {
+      const audience = str(v["audience"]);
+      const promise = str(v["promise"]);
+      if (!audience || !promise) return undefined;
+      const proof = str(v["proof"]);
+      return `- **${audience}:** ${promise}${proof ? ` _(${proof})_` : ""}`;
+    })
+    .filter((l): l is string => Boolean(l));
+  const pillars = objArray(m["messagingPillars"])
+    .map((row) => {
+      const pillar = str(row["pillar"]);
+      const meaning = str(row["whatItMeans"]);
+      if (!pillar) return undefined;
+      const proof = strArray(row["proofPoints"]);
+      const when = str(row["whenToLead"]);
+      return joinBlocks([
+        `**${pillar}**${meaning ? ` — ${meaning}` : ""}`,
+        proof.length ? proof.map((p) => `- ${p}`).join("\n") : undefined,
+        when ? `_Lead with this when:_ ${when}` : undefined,
+      ]);
+    })
+    .filter((b): b is string => Boolean(b));
+  const channels = objArray(m["channelPriorities"])
+    .map((row) => {
+      const channel = str(row["channel"]);
+      const role = str(row["role"]);
+      if (!channel || !role) return undefined;
+      const cadence = str(row["cadence"]);
+      return `- **${channel}:** ${role}${cadence ? ` — ${cadence}` : ""}`;
+    })
+    .filter((l): l is string => Boolean(l));
+
+  return joinBlocks([
+    str(m["positioningStatement"]),
+    subsection("Value propositions", props.length ? props.join("\n") : undefined),
+    subsection("Messaging pillars", pillars.length ? joinBlocks(pillars) : undefined),
+    subsection("What leads, what supports", str(m["messageHierarchy"])),
+    subsection("Each channel's job", channels.length ? channels.join("\n") : undefined),
+  ]);
+}
+
+/**
+ * `visualDirection` (intel-report-craft@8) — the rules a renderer needs and a
+ * palette cannot give it.
+ */
+function visualDirectionBlock(v: Record<string, unknown>): string | undefined {
+  const imagery = rec(v["imagery"]);
+  return joinBlocks([
+    subsection("Logo usage", bullets(strArray(v["logoUsage"]))),
+    subsection(
+      "Imagery",
+      joinBlocks([
+        str(imagery["direction"]),
+        strArray(imagery["subjects"]).length ? `**In the picture:** ${strArray(imagery["subjects"]).join("; ")}` : undefined,
+        strArray(imagery["avoid"]).length ? `**Never:** ${strArray(imagery["avoid"]).join("; ")}` : undefined,
+      ]),
+    ),
+    subsection("Iconography", str(v["iconography"])),
+    subsection("Layout & composition", str(v["layout"])),
+    subsection("Motion", str(v["motion"])),
+  ]);
+}
+
+/** What is observably true on each surface the category competes on. */
+function platformRealityList(rows: readonly Record<string, unknown>[]): string | undefined {
+  const lines = rows
+    .map((row) => {
+      const platform = str(row["platform"]);
+      const observation = str(row["observation"]);
+      if (!platform || !observation) return undefined;
+      const implication = str(row["implication"]);
+      return `- **${platform}:** ${observation}${implication ? ` → ${implication}` : ""}`;
+    })
+    .filter((l): l is string => Boolean(l));
+  return lines.length ? lines.join("\n") : undefined;
+}
+
+/** Companies not competing today, and the signal that would change that. */
+function watchList(rows: readonly Record<string, unknown>[]): string | undefined {
+  const lines = rows
+    .map((row) => {
+      const company = str(row["company"]);
+      const why = str(row["why"]);
+      if (!company || !why) return undefined;
+      const signal = str(row["signal"]);
+      return `- **${company}:** ${why}${signal ? ` _Watch for:_ ${signal}` : ""}`;
+    })
+    .filter((l): l is string => Boolean(l));
+  return lines.length ? lines.join("\n") : undefined;
+}
+
 /** One offering, as the site names it. */
 function offeringBlock(o: Record<string, unknown>): string | undefined {
   const name = str(o["name"]);
@@ -652,6 +750,24 @@ function recommendationBlock(r: Record<string, unknown>): string | undefined {
   const head = `**${title}**${priority ? ` — ${priority}` : ""}${tag ? ` · ${tag}` : ""}`;
   const desc = str(r["description"]);
   return desc ? `${head}\n${desc}` : head;
+}
+
+/**
+ * The same recommendation as one line — title, priority, tag, no description.
+ *
+ * `market-strategy` and `action-plan` were both rendering the FULL block, and
+ * on the real Karos Labs report that was nine long paragraphs printed twice:
+ * more duplicated text than either document had of its own, and the single
+ * biggest reason the eight documents read as one report reshuffled. The
+ * action plan is the document that exists FOR these, so it keeps them whole;
+ * the strategy document states what the strategy implies and points at them.
+ */
+function recommendationHeadline(r: Record<string, unknown>): string | undefined {
+  const title = str(r["title"]) ?? str(r["recommendation"]) ?? str(r["id"]);
+  if (!title) return undefined;
+  const priority = str(r["priorityLabel"]) ?? (typeof r["priority"] === "number" ? `P${r["priority"]}` : undefined);
+  const tag = str(r["tag"]);
+  return `- ${title}${priority || tag ? ` — ${[priority, tag].filter(Boolean).join(" · ")}` : ""}`;
 }
 
 /** A fired SEO/GEO recommendation with what it targets and what it is worth. */
@@ -756,6 +872,9 @@ export function composeContextDocsFromAgentReports(input: {
   // documents existed at all.
   const voiceSpec = rec(ir["brandVoiceSpec"]);
   const productInfo = rec(ir["productInformation"]);
+  // intel-report-craft@8.
+  const messaging = rec(ir["messaging"]);
+  const visualDirection = rec(ir["visualDirection"]);
   const personas = objArray(targetAudience["personas"]);
   const swotBlock = joinBlocks(
     (["strengths", "weaknesses", "opportunities", "threats"] as const).map((key) => {
@@ -839,6 +958,10 @@ export function composeContextDocsFromAgentReports(input: {
     ]),
     "market-strategy": document(header("Market Strategy"), [
       scoreHeader,
+      // The message architecture leads: it is the prescriptive part, and an
+      // agent that reads only the top of this document should come away with
+      // what to say rather than with how the market looks.
+      section("What we say", messagingBlock(messaging)),
       section("Dimension scores", dimensionScoreList(dimensionScores)),
       section("Positioning", str(ir["positioningAnalysis"])),
       section("Growth", str(ir["growthAnalysis"])),
@@ -858,7 +981,17 @@ export function composeContextDocsFromAgentReports(input: {
         "Buyer-intent prompt set",
         bullets(promptSetPrompts.map((p) => str(p["promptText"]) ?? str(p["prompt"]) ?? str(p["text"]) ?? "").filter(Boolean)),
       ),
-      section("Strategic recommendations", joinBlocks(recommendations.map(recommendationBlock))),
+      // Headlines only — the action plan carries them in full. See
+      // `recommendationHeadline`.
+      section(
+        "What this implies, in priority order",
+        recommendations.length
+          ? joinBlocks([
+              bullets(recommendations.map(recommendationHeadline).filter((l): l is string => Boolean(l)).map((l) => l.replace(/^- /, ""))),
+              "_Each one is written out in full, with what it targets, in the Action Plan._",
+            ])
+          : undefined,
+      ),
     ]),
     "competitor-analysis": document(header("Competitor Analysis"), [
       competitors.length ? `**Competitors analysed: ${competitors.length}**` : undefined,
@@ -871,6 +1004,8 @@ export function composeContextDocsFromAgentReports(input: {
       // Per-company review-platform ratings - also a competitor table, and
       // also previously filed under `target-audience`.
       section("Customer sentiment", customerSentimentList(objArray(ir["customerSentiment"]))),
+      section("Per-platform reality", platformRealityList(objArray(ir["perPlatformReality"]))),
+      section("Watch list", watchList(objArray(ir["watchList"]))),
       section("SWOT", swotBlock),
       section("Share of voice in AI answers", labelledList(objArray(rec(sg["visibility"])["engines"]), ["engine", "label", "name"], "mentions")),
     ]),
@@ -896,7 +1031,10 @@ export function composeContextDocsFromAgentReports(input: {
       section("Do not misstate", bullets(strArray(productInfo["doNotMisstate"]))),
       section("Questions buyers ask", faqBlock(objArray(productInfo["faq"]))),
       section("Technical signals", bullets(strArray(productInfo["techSignals"]))),
-      section("Positioning", str(ir["positioningAnalysis"])),
+      // `positioningAnalysis` used to render here too, verbatim from
+      // `market-strategy`. It is a market read, not a product fact, and with
+      // `messaging.positioningStatement` now leading the strategy document
+      // there is nothing this document loses by pointing rather than copying.
       section("Content analysis", str(ir["contentAnalysis"])),
       section("Conversion analysis", str(ir["conversionAnalysis"])),
     ]),
@@ -911,6 +1049,10 @@ export function composeContextDocsFromAgentReports(input: {
       section("Palette", paletteList(bg)),
       section("Typography", typographyList(bg)),
       section("Visual style", str(bg?.visualStyle)),
+      // The researched rules a renderer needs: logo usage, imagery direction,
+      // iconography, layout, motion. The palette above says what colour; this
+      // says what the picture is of.
+      section("Art direction", visualDirectionBlock(visualDirection)),
       // The agent's read of how consistently that kit is actually applied,
       // and what the competitive findings imply for it. Both are about the
       // brand's identity rather than its copy, so this is their one home.
@@ -920,6 +1062,10 @@ export function composeContextDocsFromAgentReports(input: {
     "target-audience": document(header("Target Audience"), [
       section("Summary", str(targetAudience["summary"])),
       personas.length ? joinBlocks(personas.map(personaBlock)) : undefined,
+      // The one part of the blueprint addressed to the WRITER rather than
+      // describing the reader (lab profile section 8), so it sits above the
+      // evidence rather than buried under it.
+      section("How to appeal to them", bullets(strArray(targetAudience["rulesForContentAgents"]))),
       section("Evidence", bullets(strArray(targetAudience["evidence"]))),
       /**
        * `targetAudience` is optional in the intel schema — the prompt tells

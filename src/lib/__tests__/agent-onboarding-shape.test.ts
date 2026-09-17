@@ -72,7 +72,25 @@ const INTEL_REPORT = {
     opportunities: ["Answer-engine share of voice"],
     threats: ["Two funded entrants"],
   },
-  recommendations: [{ title: "Ship five comparison pages" }, { title: "Rewrite the pricing page" }],
+  // With their descriptions, because the description is what made these
+  // duplicate: market-strategy and action-plan each printed the full block,
+  // and on the real report that was nine long paragraphs twice. A fixture of
+  // bare titles cannot reproduce that, so the duplication guard could not
+  // fail against it.
+  recommendations: [
+    {
+      title: "Ship five comparison pages",
+      priorityLabel: "High",
+      description:
+        "Every buying term in this category resolves to a comparison query, and the docs currently outrank the marketing pages for all five. Publishing the comparison set is the one move that puts an owned page on the term the buyer actually types.",
+    },
+    {
+      title: "Rewrite the pricing page",
+      priorityLabel: "Medium",
+      description:
+        "The trial gate is the measured drop-off, not the price itself, so the page needs to answer what happens after the trial rather than restating the tiers. Naming the gate on the page removes the question the drop-off is made of.",
+    },
+  ],
   competitorRankings: [{ company: "Northwind", score: 81 }],
   competitors: [{ company: "Northwind" }, { company: "Initech" }],
   brandVoiceRows: [{ dimension: "Warmth", scores: { Acme: "4/5", Northwind: "2/5" } }],
@@ -100,6 +118,7 @@ const INTEL_REPORT = {
     summary: "Ops leads at 50-500 person manufacturers.",
     personas: [{ label: "Ops lead", isPrimary: true, avoidPhrases: ["best-in-class", "synergy"] }],
     evidence: ["context-provided: targetAudience"],
+    rulesForContentAgents: ["Open on the cost of replanning, never on the product"],
   },
   // intel-report-craft@7. Both blocks exist because no field on this report
   // answered "how do I write the next sentence" or "what does this client
@@ -121,10 +140,34 @@ const INTEL_REPORT = {
     businessModel: "Per-seat subscription; pricing not published.",
     primaryCtas: ["Book a demo"],
     proofPoints: ["Named on the customer page: Northwind"],
-    doNotMisstate: ["Never claim ISO certification — they hold none"],
+    // Realistic length: the real ones run 150-260 characters, because a
+    // constraint an agent can act on has to say what the limit actually is.
+    doNotMisstate: [
+      "Never claim ISO certification — they hold none, and the word appears nowhere on the site or in the client-provided material",
+      "Never say the scheduler runs unattended — every plan is released by a human, and that gate is the product's own differentiator",
+    ],
     faq: [{ question: "Does it integrate with SAP?", answer: "Yes, via the published connector." }],
     techSignals: ["Published REST connector"],
   },
+  // intel-report-craft@8 — the rest of the gap to the curated lab profile.
+  messaging: {
+    positioningStatement: "For ops leads at mid-market manufacturers, the scheduler their order book already implies.",
+    valuePropositions: [{ audience: "Ops lead", promise: "The week plans itself from live orders.", proof: "Northwind cut replanning to zero" }],
+    messagingPillars: [
+      { pillar: "Plans from what is already true", whatItMeans: "The order book is the input; nobody re-keys it.", proofPoints: ["Northwind"], whenToLead: "a cold post" },
+    ],
+    messageHierarchy: "Lead on the order book. Support with the time saved. Never open on the AI.",
+    channelPriorities: [{ channel: "LinkedIn", role: "proof", cadence: "twice a week" }],
+  },
+  visualDirection: {
+    logoUsage: ["Never on a photograph", "Clear space of one mark-height"],
+    imagery: { direction: "Plant floors, shot wide and lit flat.", subjects: ["machines at rest"], avoid: ["handshake stock photography"] },
+    iconography: "Stroked, 2px, square corners.",
+    layout: "Twelve-column grid, generous left margin.",
+    motion: "Cuts, never dissolves.",
+  },
+  perPlatformReality: [{ platform: "X", observation: "Nobody in the category posts more than weekly.", implication: "A daily cadence is uncontested" }],
+  watchList: [{ company: "Initech", why: "Adjacent ERP vendor with the same buyer.", signal: "a scheduling module on their pricing page" }],
 };
 
 const SEO_GEO = {
@@ -374,7 +417,7 @@ describe("composeContextDocsFromAgentReports", () => {
     expect(doc).toContain("Does it integrate with SAP?");
     // An agent that reads only the top of this document must still see what it
     // is not allowed to claim, so the constraint precedes the commentary.
-    expect(doc.indexOf("Never claim ISO certification")).toBeLessThan(doc.indexOf("Positioning"));
+    expect(doc.indexOf("Never claim ISO certification")).toBeLessThan(doc.indexOf("Content analysis"));
     // And staff briefing a run see it on the internal-only row too.
     expect(docs["client-guidelines"]).toContain("Never claim ISO certification");
   });
@@ -391,7 +434,60 @@ describe("composeContextDocsFromAgentReports", () => {
     expect(docs["brand-voice"].trim()).not.toBe("");
     expect(docs["product-information"].trim()).not.toBe("");
     expect(docs["brand-voice"]).toContain("Short declarative sentences");
-    expect(docs["product-information"]).toContain("Positioned against spreadsheets");
+    // The fallback is now the two analyses that remain - contentAnalysis and
+    // conversionAnalysis, both REQUIRED on the report - rather than
+    // positioningAnalysis, which was a verbatim copy of market-strategy's.
+    expect(docs["product-information"]).toContain("Docs outrank marketing pages");
+  });
+
+  /**
+   * intel-report-craft@8 — the blocks that close the rest of the gap to the
+   * curated lab profile the owner set as the bar. Each one is asserted in the
+   * document it exists for, because each was measured as a section the lab
+   * profile carried and this pipeline could not produce at all.
+   */
+  it("leads market-strategy with the message architecture, hierarchy and all", () => {
+    const docs = composeContextDocsFromAgentReports({ client: CLIENT, intelReport: INTEL_REPORT, seoGeo: SEO_GEO });
+    const doc = docs["market-strategy"];
+    expect(doc).toContain("the scheduler their order book already implies");
+    expect(doc).toContain("Plans from what is already true");
+    expect(doc).toContain("Never open on the AI.");
+    expect(doc).toContain("**LinkedIn:** proof");
+    // The prescriptive half precedes the analytical half: an agent reading
+    // only the top should come away with what to SAY.
+    expect(doc.indexOf("What we say")).toBeLessThan(doc.indexOf("Positioning"));
+  });
+
+  it("gives branding-guidelines the art direction a renderer needs", () => {
+    const docs = composeContextDocsFromAgentReports({ client: CLIENT, intelReport: INTEL_REPORT, seoGeo: SEO_GEO });
+    const doc = docs["branding-guidelines"];
+    expect(doc).toContain("Never on a photograph");
+    expect(doc).toContain("Plant floors, shot wide");
+    // `avoid` is the half a sourcing agent can reject a candidate on.
+    expect(doc).toContain("handshake stock photography");
+    expect(doc).toContain("Cuts, never dissolves.");
+  });
+
+  it("puts the moving competitive picture in competitor-analysis", () => {
+    const docs = composeContextDocsFromAgentReports({ client: CLIENT, intelReport: INTEL_REPORT, seoGeo: SEO_GEO });
+    const doc = docs["competitor-analysis"];
+    expect(doc).toContain("Nobody in the category posts more than weekly");
+    expect(doc).toContain("a scheduling module on their pricing page");
+  });
+
+  it("puts the writer-facing rules in target-audience, above the evidence", () => {
+    const docs = composeContextDocsFromAgentReports({ client: CLIENT, intelReport: INTEL_REPORT, seoGeo: SEO_GEO });
+    const doc = docs["target-audience"];
+    expect(doc).toContain("Open on the cost of replanning");
+    expect(doc.indexOf("How to appeal to them")).toBeLessThan(doc.indexOf("## Evidence"));
+  });
+
+  it("composes every document without any of the craft@8 blocks", () => {
+    const { messaging: _m, visualDirection: _v, perPlatformReality: _p, watchList: _w, ...without } = INTEL_REPORT;
+    const docs = composeContextDocsFromAgentReports({ client: CLIENT, intelReport: without, seoGeo: SEO_GEO });
+    for (const docType of [...INTERNAL_CONTEXT_DOC_TYPES, ...INTERNAL_ONLY_CONTEXT_DOC_TYPES]) {
+      expect(docs[docType].trim(), docType).not.toBe("");
+    }
   });
 
   /**
@@ -401,6 +497,38 @@ describe("composeContextDocsFromAgentReports", () => {
    * recommendation list — which is what made the set read as one report
    * reshuffled eight ways.
    */
+  /**
+   * The owner's complaint, measured. On the real Karos Labs documents, 23
+   * paragraphs over 200 characters appeared in more than one of the eight —
+   * more duplicated prose than several of the documents had of their own,
+   * which is why the set read as one report reshuffled eight ways.
+   *
+   * Exactly one repetition is allowed, and it is named: `doNotMisstate`, on
+   * `product-information` and again on the internal-only `client-guidelines`.
+   * That list's cost of being missed is a claim the client has to retract, and
+   * `client-guidelines` is the row staff read before briefing a run. Any
+   * OTHER shared paragraph is the defect coming back.
+   */
+  it("repeats exactly one paragraph across the set, and it is the one we chose", () => {
+    const docs = composeContextDocsFromAgentReports({ client: CLIENT, intelReport: INTEL_REPORT, seoGeo: SEO_GEO });
+    const all = [...INTERNAL_CONTEXT_DOC_TYPES, ...INTERNAL_ONLY_CONTEXT_DOC_TYPES];
+
+    const owners = new Map<string, string[]>();
+    for (const docType of all) {
+      for (const para of docs[docType].split("\n\n").map((p) => p.trim())) {
+        if (para.length <= 200 || para.startsWith("#")) continue;
+        owners.set(para, [...(owners.get(para) ?? []), docType]);
+      }
+    }
+    const shared = [...owners.entries()].filter(([, who]) => who.length > 1);
+
+    for (const [para, who] of shared) {
+      expect(para, `unexpected repetition across ${who.join(" + ")}`).toContain("Never claim ISO certification");
+      expect(who.sort()).toEqual(["client-guidelines", "product-information"]);
+    }
+    expect(shared).toHaveLength(1);
+  });
+
   it("gives every document at least one substantial paragraph no other document has", () => {
     const docs = composeContextDocsFromAgentReports({
       client: CLIENT,
