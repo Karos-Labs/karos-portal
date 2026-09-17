@@ -1492,7 +1492,18 @@ export function mediaSourceHint(engineProductId: string | undefined, source: Med
     return "Optional. Attach a picture and the post is written to it; leave it empty and the post ships as text — no picture is sourced or generated.";
   }
   if (mode === "slides") return "Optional. Anything you attach goes on the first slides; the rest is sourced or generated as usual.";
-  if (mode === "source-video") return "Optional. Attach footage to work from, or leave it empty and the agent finds or generates its own.";
+  if (mode === "source-video") {
+    // "finds or generates its own" was true of exactly one of the three
+    // products that share this mode, and the two it was wrong about are the
+    // two D08 split out. Editing has nothing to cut without the client's
+    // recording — the run refuses — and clipping searches the client's source
+    // list but never generates footage. A helper that promises a fallback the
+    // workflow does not have is how somebody leaves the box empty and gets a
+    // held run they were told would not happen.
+    if (engineProductId === "tiktok-editing-agent") return "Required. This agent cuts the video you recorded — there is nothing to edit without it.";
+    if (engineProductId === "tiktok-clipping-agent") return "Optional. Attach the recording, or leave it empty and the agent searches the shows on your source list. It never generates footage.";
+    return "Optional. Attach footage to work from, or leave it empty and the agent finds or generates its own.";
+  }
   return "Optional. Attach a picture and the post is written to it; leave it empty and the agent sources one when the post wants a visual.";
 }
 
