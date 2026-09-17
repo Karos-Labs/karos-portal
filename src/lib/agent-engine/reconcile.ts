@@ -6,6 +6,7 @@ import { settleJobCharge } from "@/lib/credit-settle";
 import { logger } from "@/services/logger";
 import { materializeAgentEngineDeliverable } from "./materialize";
 import { hasMaterialized, isInternalDataProduct } from "./internal-data-products";
+import { collectRunLearning, isOnLearningLoop } from "./learning-collect";
 import {
   readAgentEngineRun,
   totalStepCostUsd,
@@ -232,6 +233,18 @@ interface PendingSyncWork {
   costChanged: boolean;
   /** The run completed and this job still holds no asset. */
   needsMaterialize: boolean;
+  /**
+   * The run completed, its product is on the learning loop, and nobody has
+   * folded its state files into the control plane's learning tables yet.
+   *
+   * ASKED THE SAME WAY `needsMaterialize` IS — "did this happen?", not "is this
+   * the transition where it should happen" — for the same reason. Every
+   * agent-engine run delivered before this call existed wrote a state file that
+   * nothing ever read, and gating collection on the terminal transition would
+   * have left all of them uncollected forever, because the transition had
+   * already been recorded.
+   */
+  needsCollect: boolean;
   /** Anything at all left for a sync to persist. */
   needed: boolean;
 }
@@ -283,7 +296,25 @@ function pendingSyncWork(job: Job, view: AgentEngineRunView): PendingSyncWork | 
 
   const needsMaterialize = (update.status === "review" || update.status === "approved") && !hasMaterialized(job);
 
-  return { update, statusChanged, costUsd, costChanged, needsMaterialize, needed: statusChanged || costChanged || needsMaterialize };
+  // C7: only a COMPLETED run, which is exactly the set `review`/`approved`
+  // covers. `failed` and `degraded` are refunded — the client received nothing
+  // — and teaching the loop from a run whose output was withdrawn would put a
+  // subject into the anti-repeat window that was never actually used. `held`
+  // is not terminal at all on the engine's side and wrote no record.
+  const needsCollect =
+    (update.status === "review" || update.status === "approved") &&
+    isOnLearningLoop(job.agentEngineProductId) &&
+    job.learningCollectedAt === undefined;
+
+  return {
+    update,
+    statusChanged,
+    costUsd,
+    costChanged,
+    needsMaterialize,
+    needsCollect,
+    needed: statusChanged || costChanged || needsMaterialize || needsCollect,
+  };
 }
 
 /**
@@ -294,7 +325,7 @@ function pendingSyncWork(job: Job, view: AgentEngineRunView): PendingSyncWork | 
 export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngineRunView): Promise<Job> {
   const work = pendingSyncWork(job, view);
   if (!work) return job; // still in flight — job.status already correctly says so
-  const { update, statusChanged, costUsd, costChanged } = work;
+  const { update, statusChanged, costUsd, costChanged, needsCollect } = work;
 
   // Whether the STATUS write is still needed. Reads every field the transition
   // writes: it compared `job.error` alone, which was total only while every
@@ -331,16 +362,54 @@ export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngi
     if (assetId) assetIds = [...job.assetIds, assetId];
   }
 
+  // THE LEARNING LOOP CLOSES HERE (C7 / SCRUM-461). The run wrote
+  // `state/runs/<runId>.json` and its platform state on the way out; the
+  // control plane folds those into the learning tables and re-projects, and
+  // the NEXT run reads the projection. Without this call the files sit in the
+  // bucket unread and every agent on the loop drafts from an empty context
+  // forever — with no symptom anywhere, which is why it went unnoticed.
+  //
+  // Before the status write and best-effort, like materialization above and
+  // for the same two reasons: a crash between the two leaves a job whose
+  // learning landed and whose status the next pass re-syncs (cheap — the
+  // collect itself is idempotent on the run), and a control plane that is down
+  // must never turn a delivered run into a failed job.
+  let learningCollected: { at: number; reason: string } | undefined;
+  if (needsCollect) {
+    const outcome = await collectRunLearning(job);
+    if (outcome) {
+      // Recorded on `collected: false` too. That is the middleware saying it
+      // looked and there was nothing — a held or pre-C7 run — and the state
+      // files are written before a run goes terminal, so an absent one will
+      // not appear later. Re-asking on every sweep forever would be a round
+      // trip per delivered job per tick to be told the same thing. The reason
+      // is stored rather than discarded so "this agent learned nothing" is a
+      // readable fact on the job instead of a line in a log nobody greps.
+      learningCollected = { at: Date.now(), reason: outcome.collected ? "" : outcome.reason };
+    }
+  }
+
   // `assetIds` is deliberately NOT part of this patch any more. The
   // materializer attaches its asset with `attachAssetToJob` (an `arrayUnion`);
   // writing `[...job.assetIds, assetId]` from here re-introduced the stale-
   // snapshot overwrite this function is called concurrently enough to lose —
   // every duplicated prep job had exactly one id on the job and the rest orphaned.
-  if (!statusChanged && !costChanged) return { ...job, assetIds }; // already synced (or only the asset moved, and that write already landed)
+  const collectedPatch = learningCollected
+    ? { learningCollectedAt: learningCollected.at, learningCollectReason: learningCollected.reason || null }
+    : {};
+
+  if (!statusChanged && !costChanged) {
+    // The status and the cost were already synced — but the collection above
+    // may not have been, and that write must still land or the next sweep
+    // re-collects the same run forever.
+    if (learningCollected) await updateJob(job.id, { ...collectedPatch, updatedAt: Date.now() });
+    return { ...job, ...collectedPatch, assetIds }; // already synced (or only the asset moved, and that write already landed)
+  }
 
   await updateJob(job.id, {
     ...(statusChanged ? update : {}),
     ...(costChanged ? { external: { ...job.external, totalCostUsd: costUsd } } : {}),
+    ...collectedPatch,
     updatedAt: Date.now(),
   });
 
@@ -439,7 +508,7 @@ export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngi
     }
   }
 
-  return { ...job, ...update, assetIds };
+  return { ...job, ...update, ...collectedPatch, assetIds };
 }
 
 /**

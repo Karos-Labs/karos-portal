@@ -1,14 +1,22 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-const { updateJobMock, refundJobChargeMock, materializeMock, settleJobChargeMock, logUsageMock, afterMock } =
-  vi.hoisted(() => ({
-    updateJobMock: vi.fn(),
-    afterMock: vi.fn(),
-    refundJobChargeMock: vi.fn(),
-    materializeMock: vi.fn(),
-    settleJobChargeMock: vi.fn(),
-    logUsageMock: vi.fn(),
-  }));
+const {
+  updateJobMock,
+  refundJobChargeMock,
+  materializeMock,
+  settleJobChargeMock,
+  logUsageMock,
+  afterMock,
+  collectRunLearningMock,
+} = vi.hoisted(() => ({
+  updateJobMock: vi.fn(),
+  afterMock: vi.fn(),
+  refundJobChargeMock: vi.fn(),
+  materializeMock: vi.fn(),
+  settleJobChargeMock: vi.fn(),
+  logUsageMock: vi.fn(),
+  collectRunLearningMock: vi.fn(),
+}));
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/server", () => ({ after: afterMock }));
@@ -23,6 +31,14 @@ vi.mock("@/services/logger", () => ({ logger: { logUsage: logUsageMock } }));
 // accidental — and materialize.ts now pulls in the asset titler and the storage
 // client, so the accident was also getting more expensive.
 vi.mock("../materialize", () => ({ materializeAgentEngineDeliverable: materializeMock }));
+// Same reasoning as the materializer above: mocked explicitly so the "collect
+// is attempted exactly once, and only for a completed run on the loop" cases
+// below are real coverage rather than an accident of the fixtures, and so this
+// suite never opens an HTTP client.
+vi.mock("../learning-collect", async () => {
+  const actual = await vi.importActual<typeof import("../learning-collect")>("../learning-collect");
+  return { ...actual, collectRunLearning: collectRunLearningMock };
+});
 
 import { scheduleAgentEngineJobStatusSync, syncAgentEngineJobStatusFromView } from "../reconcile";
 import type { AgentEngineRunView } from "../read-run";
@@ -68,6 +84,8 @@ describe("syncAgentEngineJobStatusFromView", () => {
     updateJobMock.mockReset();
     refundJobChargeMock.mockReset();
     materializeMock.mockReset();
+    collectRunLearningMock.mockReset();
+    collectRunLearningMock.mockResolvedValue({ runId: "pubsub-msg-1", collected: true, reason: "" });
   });
 
   it("maps completed -> review, matching the legacy webhook's done -> review precedent", async () => {
@@ -433,5 +451,87 @@ describe("scheduleAgentEngineJobStatusSync — defers a sync only when one has w
   it("schedules nothing while the run is still in flight", () => {
     scheduleAgentEngineJobStatusSync(job(), view("running"));
     expect(afterMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * C7 / SCRUM-461. The engine writes `state/runs/<runId>.json` on its way out
+ * and the control plane folds it into the learning tables; the next run reads
+ * the projection of those tables, not the file. Until this call existed the
+ * files were written and never read, so every agent on the loop drafted from an
+ * empty context on every run — with nothing anywhere to show it.
+ */
+describe("collecting a completed run's learning (C7)", () => {
+  beforeEach(() => {
+    updateJobMock.mockReset();
+    materializeMock.mockReset();
+    collectRunLearningMock.mockReset();
+    collectRunLearningMock.mockResolvedValue({ runId: "pubsub-msg-1", collected: true, reason: "" });
+  });
+
+  it("collects on a completed run of a product on the loop, and bookmarks it so the sweep stops asking", async () => {
+    const onLoop = job({ agentEngineProductId: "linkedin-agent" });
+    const result = await syncAgentEngineJobStatusFromView(onLoop, view("completed", { productId: "linkedin-agent" }));
+
+    expect(collectRunLearningMock).toHaveBeenCalledTimes(1);
+    expect(collectRunLearningMock.mock.calls[0]![0]).toMatchObject({ agentEngineRunId: "pubsub-msg-1" });
+    expect(result.learningCollectedAt).toBeTypeOf("number");
+    expect(updateJobMock).toHaveBeenCalledWith(
+      "job_1",
+      expect.objectContaining({ learningCollectedAt: expect.any(Number), learningCollectReason: null }),
+    );
+  });
+
+  it("does not collect twice: a job already bookmarked is left alone", async () => {
+    const already = job({ agentEngineProductId: "linkedin-agent", status: "review", learningCollectedAt: 5000 });
+    await syncAgentEngineJobStatusFromView(already, view("completed", { productId: "linkedin-agent" }));
+    expect(collectRunLearningMock).not.toHaveBeenCalled();
+  });
+
+  it("collects a run that was already synced before this call existed — the state file is still in the bucket", async () => {
+    // The exact shape of every run delivered before SCRUM-461: status already
+    // `review`, asset already attached, nothing left for the old sync to do.
+    // Gating collection on the terminal TRANSITION would strand all of them.
+    const delivered = job({
+      agentEngineProductId: "x-agent",
+      status: "review",
+      assetIds: ["asset_1"],
+    });
+    await syncAgentEngineJobStatusFromView(delivered, view("completed", { productId: "x-agent" }));
+
+    expect(collectRunLearningMock).toHaveBeenCalledTimes(1);
+    expect(updateJobMock).toHaveBeenCalledWith(
+      "job_1",
+      expect.objectContaining({ learningCollectedAt: expect.any(Number) }),
+    );
+  });
+
+  it("records the middleware's reason when it collected nothing, instead of retrying forever", async () => {
+    collectRunLearningMock.mockResolvedValue({
+      runId: "pubsub-msg-1",
+      collected: false,
+      reason: "the run wrote no state/runs/<runId>.json (held, failed, or an agent that predates C7)",
+    });
+    const result = await syncAgentEngineJobStatusFromView(job({ agentEngineProductId: "reddit-agent" }), view("completed", { productId: "reddit-agent" }));
+    expect(result.learningCollectedAt).toBeTypeOf("number");
+    expect(result.learningCollectReason).toMatch(/wrote no state/);
+  });
+
+  it("leaves the bookmark unset when the control plane could not be reached, so the next sweep retries", async () => {
+    collectRunLearningMock.mockResolvedValue(undefined);
+    const result = await syncAgentEngineJobStatusFromView(job({ agentEngineProductId: "x-agent" }), view("completed", { productId: "x-agent" }));
+    expect(result.status).toBe("review"); // and the delivery is unaffected
+    expect(result.learningCollectedAt).toBeUndefined();
+    expect(updateJobMock).not.toHaveBeenCalledWith("job_1", expect.objectContaining({ learningCollectedAt: expect.anything() }));
+  });
+
+  it("does not collect a failed run: it was refunded, so its subject was never used", async () => {
+    await syncAgentEngineJobStatusFromView(job({ agentEngineProductId: "x-agent" }), view("failed", { productId: "x-agent" }));
+    expect(collectRunLearningMock).not.toHaveBeenCalled();
+  });
+
+  it("does not collect a product that is not on the loop", async () => {
+    await syncAgentEngineJobStatusFromView(job({ agentEngineProductId: "landing-builder-agent" }), view("completed"));
+    expect(collectRunLearningMock).not.toHaveBeenCalled();
   });
 });

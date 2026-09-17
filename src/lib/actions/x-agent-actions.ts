@@ -37,6 +37,7 @@ import { withClientModelCharge } from "@/lib/client-model-charge";
 import type { ContextDocTier } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
 import { aiFor, usageFor } from "@/lib/ai/provider";
+import { bridgeDraftFeedbackToLearning } from "@/lib/agent-engine/learning-feedback";
 
 const MAX_TEXT = 2_000;
 /** originalText is system-captured (pick time), not user-typed — truncate rather than error,
@@ -572,6 +573,23 @@ export async function addXDraftFeedbackAction(input: {
     createdBy: user.uid,
     createdAt: Date.now(),
   });
+  // C7 §2.3 — the same event, where the next run can read it. This surface has
+  // always written to Firestore and stopped there; the engine cannot see that
+  // store, so a client could say "too salesy" every week and the agent would
+  // open the same way the next morning. Best-effort: the feedback above is the
+  // primary record and has already landed.
+  await bridgeDraftFeedbackToLearning({
+    clientId: input.clientId,
+    platform: "x",
+    action: input.action,
+    ...(input.assetId ? { assetId: input.assetId } : {}),
+    account,
+    ...(input.originalText?.trim() ? { originalText: input.originalText.trim() } : {}),
+    ...(input.finalText?.trim() ? { finalText: input.finalText.trim() } : {}),
+    ...(input.reason?.trim() ? { reason: input.reason.trim() } : {}),
+    ...(user.email ? { actor: user.email } : {}),
+  });
+
   // Action 14 ("give us your feedback on a post") — event-tracked, no live
   // signal answers it (lib/action-list.ts). Only the client's own feedback
   // counts, not a staff member logging it on their behalf.

@@ -36,6 +36,7 @@ import {
   parseSubredditList,
 } from "@/lib/reddit-drafts";
 import { requireClientAccess } from "./_shared";
+import { bridgeDraftFeedbackToLearning } from "@/lib/agent-engine/learning-feedback";
 
 const MAX_TEXT = 2_000;
 
@@ -249,6 +250,22 @@ export async function addRedditDraftFeedbackAction(input: {
       ? { selectedApproach: input.selectedApproach }
       : {}),
   });
+  // C7 §2.3 — the same event, where the next run can read it. This surface has
+  // always written to Firestore and stopped there; the engine cannot see that
+  // store, so a client could say "too salesy" every week and the agent would
+  // open the same way the next morning. Best-effort: the feedback above is the
+  // primary record and has already landed.
+  await bridgeDraftFeedbackToLearning({
+    clientId: input.clientId,
+    platform: "reddit",
+    action: input.action,
+    ...(input.assetId ? { assetId: input.assetId } : {}),
+    account,
+    ...(input.finalText?.trim() ? { finalText: input.finalText.trim() } : {}),
+    ...(input.reason?.trim() ? { reason: input.reason.trim() } : {}),
+    ...(user.email ? { actor: user.email } : {}),
+  });
+
   // Action 14 ("give us your feedback on a post") — event-tracked, no live
   // signal answers it (lib/action-list.ts). Only the client's own feedback
   // counts, not a staff member logging it on their behalf.
