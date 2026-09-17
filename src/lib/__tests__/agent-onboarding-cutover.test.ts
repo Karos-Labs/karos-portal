@@ -89,6 +89,11 @@ function fixtureDeps(overrides: Partial<Record<string, unknown>> = {}) {
     replaceDocs: async (clientId: string, docs: Row[]) => {
       written.push({ clientId, docs });
     },
+    // No stored rows: the carry-forward in `writeContextDocsFromResearch`
+    // has nothing to preserve, so these cases exercise the composed output
+    // exactly as they did before it existed. Overridden per-case where a
+    // test is about the carry-forward itself.
+    listDocs: async () => [],
     now: () => 1_700_000_000_000,
     sleep: async () => {},
   };
@@ -244,6 +249,7 @@ describe("SCRUM-274 (T-B19) — gate-timeout: completes within the hour rather t
       replaceDocs: async (clientId: string, docs: Row[]) => {
         written.push({ clientId, docs });
       },
+      listDocs: async () => [],
       now: () => simulatedNowMs,
       sleep: async (ms: number) => {
         sleeps.push(ms);
@@ -297,6 +303,7 @@ describe("SCRUM-274 (T-B19) — gate-timeout: completes within the hour rather t
       replaceDocs: async (clientId: string, docs: Row[]) => {
         written.push({ clientId, docs });
       },
+      listDocs: async () => [],
       now: () => simulatedNowMs,
       sleep: async (ms: number) => {
         simulatedNowMs += ms;
@@ -329,6 +336,7 @@ describe("SCRUM-274 (T-B19) — gate-timeout: completes within the hour rather t
       },
       condense: async () => [],
       replaceDocs: async () => {},
+      listDocs: async () => [],
       now: () => simulatedNowMs,
       sleep: async (ms: number) => {
         simulatedNowMs += ms;
@@ -359,6 +367,7 @@ describe("SCRUM-274 (T-B19) — gate-timeout: completes within the hour rather t
       },
       condense: async () => [],
       replaceDocs: async () => {},
+      listDocs: async () => [],
       now: () => simulatedNowMs,
       sleep: async (ms: number) => {
         simulatedNowMs += ms;
