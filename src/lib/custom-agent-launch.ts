@@ -159,6 +159,24 @@ export const REDDIT_RUNNER_V2_KEY = "karos-reddit-runner";
 export const REDDIT_SETUP_V2_KEY = "karos-reddit-setup";
 
 /**
+ * D08's three TikTok agents.
+ *
+ * Three keys because they are three products with three different inputs, not
+ * three names for one: clipping finds a moment inside long-form footage,
+ * editing cuts a video the client recorded, content design writes a short from
+ * nothing. A client who presses one and is served another has been given a
+ * different product, and the mistake is invisible — all three return a
+ * vertical video.
+ *
+ * The legacy `karos-tiktok-agent` is deliberately NOT in this list. It still
+ * exists, still routes to the undivided `tiktok-agent`, and is what every
+ * grant and every already-dispatched run names.
+ */
+export const TIKTOK_CLIPPING_KEY = "karos-tiktok-clipping";
+export const TIKTOK_EDITING_KEY = "karos-tiktok-editing";
+export const TIKTOK_CONTENT_DESIGN_KEY = "karos-tiktok-content-design";
+
+/**
  * The reputation keys. NO `-v2` SUFFIX, like the Reddit pair and unlike the
  * newsletter and blog fours — the manifest's own inconsistency, not a choice
  * available here. Verified against `catalog/agent-runtime-manifest.json`;
@@ -285,6 +303,162 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         required: true,
         satisfyWithFieldKey: "source_url",
       },
+    },
+  },
+  // ── D08's three, and they MUST sit above the loose matcher below ──
+  //
+  // That matcher is `/instagram|tiktok|content.?engine/`, tested against
+  // "<key> <name>".toLowerCase(). Every key here contains "tiktok", so if these
+  // three sat after it they would all silently inherit the Instagram carousel
+  // brief — including `requestedFormat`, which is an Instagram-only field — and
+  // the client would be asked for a carousel format for a video agent. First
+  // match wins, so position is the whole guard. Same rule the LinkedIn, X and
+  // Reddit v2 profiles already follow.
+  {
+    // Clipping: a moment out of someone's long-form footage, with the client's
+    // commentary on it (D08).
+    matches: (identity) => identity.startsWith(`${TIKTOK_CLIPPING_KEY} `),
+    profile: {
+      eyebrow: "TikTok clipping",
+      intro:
+        "Finds the moment worth clipping in a long recording, writes the hook and the caption in your voice, and cuts a captioned vertical clip. Give it an episode, or leave the link empty and it works from the shows on your source list.",
+      fields: [
+        {
+          key: "source_url",
+          label: "Podcast or long video link",
+          type: "text",
+          placeholder: "https://… an episode, a talk, a webinar",
+          // NOT required, and that is Albert's spec rather than a looser
+          // version of it: "A podcast or long video (yours or someone else's),
+          // OR ask it to find podcasts in your niche." An empty box is the
+          // second half of that sentence, and the agent falls back to the
+          // standing source list.
+          helper: "Leave empty to let the agent search the shows on your source list.",
+        },
+        {
+          key: "request",
+          label: STEER_RUN_LABEL,
+          steersRun: true,
+          type: "textarea",
+          placeholder: "What the clip should say, or a moment to look for.",
+        },
+      ],
+      deliverables: [
+        "One captioned vertical clip, cut from the moment that stops the scroll",
+        "The hook and the caption in your voice, with the goal of the post",
+      ],
+      attachments: {
+        label: "Source recording (optional)",
+        hint: "Upload the episode if you have the file. For anything over 4 MB, paste a link above instead.",
+        accept: "video/mp4,video/quicktime,video/webm,audio/mpeg,audio/wav,.mp4,.mov,.webm,.mp3,.wav",
+      },
+    },
+  },
+  {
+    // Editing: the client's own video, cut and captioned. On demand, outside
+    // sequencing (D19).
+    //
+    // The five per-run fields Albert names, what it should communicate, the
+    // platform, the target length, the CTA, the editing constraints, are
+    // exactly the branded-shorts brief above, because this IS branded-shorts
+    // under the name D08 gives it. Repeated rather than shared so the copy can
+    // speak about TikTok, and so a later change to one does not silently move
+    // the other.
+    matches: (identity) => identity.startsWith(`${TIKTOK_EDITING_KEY} `),
+    profile: {
+      eyebrow: "TikTok editing",
+      intro:
+        "Takes a video you recorded and returns a finished vertical short: the gaps cut, the colour cleaned up, your captions and graphics on it. A source video or a shareable link is required.",
+      fields: [
+        {
+          key: "request",
+          label: "What should this short communicate?",
+          type: "textarea",
+          required: true,
+          placeholder: "Turn the founder interview into a concise short about the product launch.",
+          helper: "Name the moment, argument, or story that must survive the edit.",
+        },
+        {
+          key: "source_url",
+          label: "Source video link",
+          type: "text",
+          placeholder: "https://… (use this for video files larger than 4 MB)",
+        },
+        {
+          key: "platform",
+          label: "Primary platform",
+          type: "select",
+          defaultValue: "tiktok",
+          options: [
+            { value: "tiktok", label: "TikTok" },
+            { value: "instagram_reels", label: "Instagram Reels" },
+            { value: "linkedin", label: "LinkedIn" },
+            { value: "cross_platform", label: "Cross-platform" },
+          ],
+        },
+        {
+          key: "duration",
+          label: "Target duration",
+          type: "select",
+          defaultValue: "30_seconds",
+          // Albert's range is "15 to 60 seconds"; these are the four rungs the
+          // branded-shorts workflow already understands.
+          options: [
+            { value: "15_seconds", label: "About 15 seconds" },
+            { value: "30_seconds", label: "About 30 seconds" },
+            { value: "45_seconds", label: "About 45 seconds" },
+            { value: "60_seconds", label: "About 60 seconds" },
+          ],
+        },
+        {
+          key: "cta",
+          label: "Call to action",
+          type: "text",
+          placeholder: "e.g. book a demo, follow for part two, visit the launch page",
+        },
+        {
+          key: "editing_notes",
+          label: "Editing constraints",
+          type: "textarea",
+          placeholder: "A quote to keep, moments to avoid, captions, pacing, safe areas…",
+        },
+      ],
+      deliverables: ["The finished vertical short, with its goal stated", "Platform-ready caption and publishing notes"],
+      attachments: {
+        label: "Your video",
+        hint: "Select or upload the recording. For files over 4 MB, paste a shareable link above.",
+        accept: "video/mp4,video/quicktime,video/webm,audio/mpeg,audio/wav,.mp4,.mov,.webm,.mp3,.wav",
+        required: true,
+        satisfyWithFieldKey: "source_url",
+      },
+    },
+  },
+  {
+    // Content design: a short from nothing. Beta (D20).
+    matches: (identity) => identity.startsWith(`${TIKTOK_CONTENT_DESIGN_KEY} `),
+    profile: {
+      eyebrow: "TikTok content design",
+      intro:
+        "Writes the script, builds the video from stock or AI footage, and adds a voice and sound. You give it nothing, or a topic if you have one in mind. The hardest of the three video agents with today's technology; it ships as beta and improves.",
+      fields: [
+        {
+          // ONE optional box, and that is the entire input. Albert's "What you
+          // give it" for this agent reads, in full: "Nothing, or a note on the
+          // topic." Any field added here is a question the product says it
+          // does not ask.
+          key: "request",
+          label: STEER_RUN_LABEL,
+          steersRun: true,
+          type: "textarea",
+          placeholder: "A topic, if you have one. Otherwise the agent picks from your strategy map.",
+        },
+      ],
+      deliverables: [
+        "A short video with voice and sound, built from stock or generated footage",
+        "Its caption and the goal of the post",
+      ],
+      // No attachments: this agent is defined by being given no footage. An
+      // attach control here would contradict the product.
     },
   },
   {
@@ -1268,6 +1442,11 @@ export function attachmentModeForEngineProduct(engineProductId: string | undefin
       return "slides";
     case "tiktok-agent":
     case "branded-shorts-agent":
+    // D08: clipping works from a recording, editing works from the client's own
+    // video. Content design is deliberately absent — it is defined by being
+    // given no footage, so it gets no attach control at all.
+    case "tiktok-clipping-agent":
+    case "tiktok-editing-agent":
       return "source-video";
     case "x-agent":
     case "linkedin-agent":
@@ -1283,7 +1462,19 @@ export function attachmentModeForEngineProduct(engineProductId: string | undefin
  * agent has nothing to make.
  */
 export function clientOnlyMediaIsRequired(engineProductId: string | undefined): boolean {
-  return engineProductId === "instagram-agent" || engineProductId === "tiktok-agent" || engineProductId === "branded-shorts-agent";
+  return (
+    engineProductId === "instagram-agent" ||
+    engineProductId === "tiktok-agent" ||
+    engineProductId === "branded-shorts-agent" ||
+    // Editing has nothing to cut without the client's recording.
+    engineProductId === "tiktok-editing-agent" ||
+    // Clipping is here too, but for a narrower reason: "client media only" is
+    // the client saying *use only what I attached*. Told that and given
+    // nothing, clipping has no footage and no permission to go find any, so
+    // the run cannot proceed. That is different from leaving the link empty on
+    // the default setting, which is the supported "search my source list" path.
+    engineProductId === "tiktok-clipping-agent"
+  );
 }
 
 /** The sentence under the attach control, for this product and this choice of source. */

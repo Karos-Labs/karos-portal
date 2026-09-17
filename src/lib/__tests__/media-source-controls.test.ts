@@ -32,7 +32,19 @@ const BASE_PROFILE: AgentLaunchProfile = {
   attachments: { label: "Reference files", hint: "" },
 };
 
-const MEDIA_PRODUCTS = ["x-agent", "linkedin-agent", "instagram-agent", "tiktok-agent", "branded-shorts-agent"] as const;
+// D08: clipping is handed a recording and editing is handed the client's own
+// video, so both read media. Content design is deliberately NOT here, and the
+// "appends neither" case below is what proves it: the product is defined by
+// being given no footage, and an attach control would contradict it.
+const MEDIA_PRODUCTS = [
+  "x-agent",
+  "linkedin-agent",
+  "instagram-agent",
+  "tiktok-agent",
+  "branded-shorts-agent",
+  "tiktok-clipping-agent",
+  "tiktok-editing-agent",
+] as const;
 
 describe("withEngineRunFields — the media block", () => {
   for (const product of MEDIA_PRODUCTS) {

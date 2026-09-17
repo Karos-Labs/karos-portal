@@ -88,6 +88,22 @@ const PRODUCT_DELIVERABLES = {
   "instagram-agent": { kind: "instagram-carousel", taskType: "social_post" },
   "branded-shorts-agent": { kind: "branded-shorts-video", taskType: "social_post" },
   "tiktok-agent": { kind: "tiktok-clip", taskType: "social_post" },
+  // ── D08's three ──
+  //
+  // The KINDS are shared with the two workflows behind them, because the
+  // deliverable a run writes is decided by the workflow, not by which card was
+  // pressed: clipping and content design both run `create-tiktok-agent-workflow`
+  // and both write `kind: "tiktok-clip"` (verified at its `ledger.writeDeliverable`
+  // call), and editing runs the branded-shorts workflow, which writes
+  // `kind: "branded-shorts-video"`.
+  //
+  // So these rows are not three new shapes — they are three product ids
+  // pointing at the two shapes that already exist. Inventing a
+  // `tiktok-content-design` kind here would describe a deliverable no workflow
+  // writes, and the materializer would find nothing.
+  "tiktok-clipping-agent": { kind: "tiktok-clip", taskType: "social_post" },
+  "tiktok-content-design-agent": { kind: "tiktok-clip", taskType: "social_post" },
+  "tiktok-editing-agent": { kind: "branded-shorts-video", taskType: "social_post" },
   // Draft-only by hard product rule. Left as `social_post` deliberately: the
   // fence in `deliverableAssetType` is what re-types it to `note`, and routing
   // through the fence rather than hard-coding `note` here is the whole point —
@@ -921,7 +937,14 @@ async function buildMaterialization(job: Job, productId: string, deliverable: un
     case "branded-shorts-agent":
       return materializeBrandedShortsVideo(job, deliverable as BrandedShortsVideoDeliverable);
     case "tiktok-agent":
+    // D08: same workflow, same deliverable shape, same materializer. What the
+    // variant changes is which format the run is allowed to produce, and that
+    // is settled inside the engine long before a deliverable is written.
+    case "tiktok-clipping-agent":
+    case "tiktok-content-design-agent":
       return materializeTiktokClip(job, deliverable as TiktokClipDeliverable);
+    case "tiktok-editing-agent":
+      return materializeBrandedShortsVideo(job, deliverable as BrandedShortsVideoDeliverable);
     case "landing-builder-agent":
       return materializeLandingPageSite(job, deliverable as LandingPageSiteDeliverable);
     case "intel-report-agent":

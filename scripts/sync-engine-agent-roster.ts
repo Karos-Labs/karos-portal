@@ -213,6 +213,61 @@ const ROSTER: RosterDoc[] = [
     color: "#FBBF24",
     entrySkillDir: "products/building/tiktok-agent",
   },
+  // ── D08: TikTok is three agents with three inputs ──
+  //
+  // Three cards, not one card with a mode selector, because the INPUT is what
+  // differs and a client picks the product by what they have in their hand:
+  // an episode, their own recording, or nothing. The blurbs below are Albert's
+  // own one-liners from "01 Flow and Agents", kept as written — they are the
+  // sentence that tells a client which of the three they want.
+  //
+  // `karos-tiktok-agent` above is left exactly as it is. It is what every
+  // existing grant and every dispatched run names, and repointing it would
+  // change what an in-flight schedule produces.
+  //
+  // Stable, hand-written ids like the campaign row below: grants name ids, so
+  // prep and production must agree and a generated id would diverge.
+  {
+    id: "karosTikTokClipping",
+    key: "karos-tiktok-clipping",
+    name: "TikTok clipping",
+    description:
+      "D08's clipping product: finds the moment worth clipping inside a long recording — the client's own or a show on their source list — writes the hook and caption in the client's voice, and cuts a captioned vertical clip. On the calendar; sequencing decides which clip goes when.",
+    clientBlurb: "Give it a podcast, or let it find podcasts in your niche. It cuts the best moment, adds captions, formats the clip.",
+    icon: "Bot",
+    color: "#FBBF24",
+    entrySkillDir: "products/building/tiktok-agent",
+  },
+  {
+    id: "karosTikTokEditing",
+    key: "karos-tiktok-editing",
+    name: "TikTok editing",
+    // D08 says this one is "today 'Branded shorts', to rename". This IS the
+    // rename: same workflow, the name the product decision gives it.
+    description:
+      "D08's editing product, formerly Branded shorts: turns one video the client recorded into a finished vertical short — gaps cut, colour cleaned, on-brand captions and graphics. On demand, outside sequencing (D19): no topic planning and no calendar slot to fill.",
+    clientBlurb: "Give it your own video. It cuts the gaps, adds on-brand captions and graphics.",
+    icon: "Bot",
+    color: "#FBBF24",
+    entrySkillDir: "products/building/branded-shorts-agent",
+  },
+  {
+    id: "karosTikTokContentDesign",
+    key: "karos-tiktok-content-design",
+    name: "TikTok content design (beta)",
+    // D20: "TikTok content design ships as beta." The portal has no band
+    // concept to put it in (the roster is a flat list and `RosterStatus` is a
+    // per-client run-state word, not a maturity tier), so the marker rides in
+    // the name and is said plainly in the blurb. That is a smaller, honest
+    // version of D09 rather than a taxonomy invented in passing.
+    description:
+      "D08's content-design product: makes a video from nothing. Writes the script, assembles visuals from stock or generated footage, adds voice and sound. The hardest of the three with today's technology — ships as beta (D20) and improves.",
+    clientBlurb:
+      "Give it nothing. It writes the script and builds the video from stock or AI footage, with voice and sound. Beta — it improves month to month.",
+    icon: "Bot",
+    color: "#FBBF24",
+    entrySkillDir: "products/building/tiktok-agent",
+  },
   {
     id: "karosCampaignOrchestrator",
     key: "karos-campaign-orchestrator",

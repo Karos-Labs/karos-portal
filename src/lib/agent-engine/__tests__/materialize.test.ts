@@ -152,12 +152,19 @@ const ENGINE_CATALOG: Readonly<Record<string, string>> = {
   "seo-geo-agent": "seo-geo-report",
   "campaign-orchestrator": "campaign-bundle",
   "reputation-agent": "reputation-pulse",
+  // D08's three. The KINDS are shared, and that is the fact worth transcribing:
+  // clipping and content design both run `create-tiktok-agent-workflow` and
+  // both write `tiktok-clip`; editing runs the branded-shorts workflow and
+  // writes `branded-shorts-video`. Three products, two deliverable shapes.
+  "tiktok-clipping-agent": "tiktok-clip",
+  "tiktok-content-design-agent": "tiktok-clip",
+  "tiktok-editing-agent": "branded-shorts-video",
 };
 
 describe("the product catalog is covered end to end", () => {
-  it("maps every one of the thirteen engine products, by the kind its workflow actually writes", () => {
+  it("maps every one of the sixteen engine products, by the kind its workflow actually writes", () => {
     expect(PRODUCT_DELIVERABLE_KINDS).toEqual(ENGINE_CATALOG);
-    expect(Object.keys(PRODUCT_DELIVERABLE_KINDS)).toHaveLength(13);
+    expect(Object.keys(PRODUCT_DELIVERABLE_KINDS)).toHaveLength(16);
   });
 
   it("fetches each product's deliverable by that exact kind — a mismatch 404s and silently delivers nothing", async () => {
