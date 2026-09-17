@@ -1,5 +1,6 @@
 import { vi, describe, expect, it, beforeEach, afterEach } from "vitest";
 import { OAUTH_CONFIGS } from "@/lib/integrations/oauth";
+import { INSTAGRAM_BUSINESS_REFRESH_URL } from "@/lib/integrations/meta-graph";
 
 /**
  * CN1 — OAuth token refresh for connectors.
@@ -111,6 +112,8 @@ beforeEach(() => {
   vi.stubEnv("REDDIT_CLIENT_SECRET", "r-app-secret");
   vi.stubEnv("FACEBOOK_APP_ID", "fb-app-id");
   vi.stubEnv("FACEBOOK_APP_SECRET", "fb-app-secret");
+  vi.stubEnv("INSTAGRAM_BUSINESS_APP_ID", "igb-app-id");
+  vi.stubEnv("INSTAGRAM_BUSINESS_APP_SECRET", "igb-app-secret");
   vi.stubEnv("LINKEDIN_CLIENT_ID", "li-app-id");
   vi.stubEnv("LINKEDIN_CLIENT_SECRET", "li-app-secret");
 });
@@ -269,6 +272,31 @@ describe("refreshIntegrationCredentials — per provider", () => {
       });
     },
   );
+
+  it("instagram_business: GETs the Instagram-login refresh endpoint with ig_refresh_token and NO app id/secret", async () => {
+    fetchMock.mockResolvedValue(tokenResponse({ access_token: "igb-new", expires_in: 5_183_944 }));
+
+    const result = await refreshIntegrationCredentials(
+      { platform: "instagram_business", credentials: { accessToken: "igb-current" } },
+      { now: NOW },
+    );
+
+    const [rawUrl, init] = lastCall();
+    const url = new URL(rawUrl);
+    expect(init.method).toBe("GET");
+    // Version-agnostic on purpose, same reason as the fb_exchange_token assertion above.
+    expect(url.origin + url.pathname).toBe(INSTAGRAM_BUSINESS_REFRESH_URL);
+    expect(url.searchParams.get("grant_type")).toBe("ig_refresh_token");
+    expect(url.searchParams.get("access_token")).toBe("igb-current");
+    // Deliberately absent: unlike fb_exchange_token above, this call carries
+    // no app credential at all.
+    expect(url.searchParams.get("client_id")).toBeNull();
+    expect(url.searchParams.get("client_secret")).toBeNull();
+    expect(result).toEqual({
+      outcome: "refreshed",
+      credentials: { accessToken: "igb-new", expiresAt: String(NOW + 5_183_944 * 1000) },
+    });
+  });
 
   it.each(["linkedin", "linkedin_community"])(
     "%s: reports unsupported and sends NOTHING — re-consent is the only path",
@@ -486,6 +514,22 @@ describe("the five-minute rule", () => {
     expect(
       needsRefresh(
         { platform: "facebook", credentials: { ...base, expiresAt: String(NOW + 3 * DAY) } },
+        NOW,
+      ),
+    ).toBe(true);
+  });
+
+  it("gives Instagram Login the same seven-day warning as Meta, on the same accessToken-only check", () => {
+    const base = { accessToken: "igb-current" };
+    expect(
+      needsRefresh(
+        { platform: "instagram_business", credentials: { ...base, expiresAt: String(NOW + 30 * DAY) } },
+        NOW,
+      ),
+    ).toBe(false);
+    expect(
+      needsRefresh(
+        { platform: "instagram_business", credentials: { ...base, expiresAt: String(NOW + 3 * DAY) } },
         NOW,
       ),
     ).toBe(true);

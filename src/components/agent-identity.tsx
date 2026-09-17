@@ -51,11 +51,13 @@ export function socialPlatformsFor(identity: string): SocialPlatform[] {
   return platforms;
 }
 
-/** Platform-registry id → mark id ("twitter" and the LinkedIn company-page
-    variant map onto their base marks). */
+/** Platform-registry id → mark id ("twitter", the LinkedIn company-page
+    variant, and Instagram's second (direct-login) connection all map onto
+    their base marks — same brand, same logo, different OAuth flow). */
 export function platformForIntegrationId(id: string): SocialPlatform | null {
   if (id === "twitter") return "x";
   if (id === "linkedin_community") return "linkedin";
+  if (id === "instagram_business") return "instagram";
   return id === "instagram" || id === "x" || id === "tiktok" || id === "linkedin" || id === "reddit" || id === "facebook" || id === "youtube"
     ? id
     : null;

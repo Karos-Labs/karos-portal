@@ -14,6 +14,11 @@ import { forgetRefreshedCredentials } from "@/lib/integrations/token-refresh";
 import { getCurrentUser } from "@/lib/auth";
 import { issueAccessToken } from "@/lib/tokens";
 import { autoCompleteTasksOnIntegrationConnect } from "@/lib/task-sync";
+import { fetchMetaBusinessAccounts, type MetaBusinessAccount } from "@/lib/integrations/meta-business";
+import {
+  fetchInstagramBusinessAccountInsights,
+  type InstagramBusinessAccountInsights,
+} from "@/lib/integrations/instagram-business-graph";
 import { requireStaff } from "./_shared";
 
 /**
@@ -161,4 +166,61 @@ export async function revokeAccessTokenAction(id: string) {
   const owned = await listAccessTokens(user.uid);
   if (!owned.some((t) => t.id === id)) throw new Error("Token not found");
   await updateAccessToken(id, { revoked: true });
+}
+
+export type BusinessInfoResult = { ok: true; accounts: MetaBusinessAccount[] } | { error: string };
+
+/**
+ * The Business Manager accounts the client's connected Instagram user
+ * administers — `business_management`, read via the same per-client OAuth
+ * token the "instagram" card already stores (see oauth.ts / meta-business.ts).
+ * Same access rule as setIntegrationAutoPublishAction: staff, or the client
+ * viewing their own data.
+ */
+export async function fetchClientBusinessInfoAction(clientId: string): Promise<BusinessInfoResult> {
+  try {
+    const user = await getCurrentUser();
+    if (!user || user.disabled) return { error: "Please sign in again to view business info." };
+    const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+    if (!isStaff && user.clientId !== clientId) {
+      return { error: "You don't have access to this channel." };
+    }
+    const integration = (await listClientIntegrations(clientId)).find((i) => i.platform === "instagram");
+    const token = integration?.credentials?.accessToken;
+    if (!token) return { error: "Connect Instagram first to see business info." };
+    const accounts = await fetchMetaBusinessAccounts(token);
+    return { ok: true, accounts };
+  } catch {
+    return { error: "Couldn't load business info. Please try again." };
+  }
+}
+
+export type InstagramBusinessInsightsResult =
+  | { ok: true; insights: InstagramBusinessAccountInsights }
+  | { error: string };
+
+/**
+ * Account-level insights (reach, profile views) via the "instagram_business"
+ * card's own Instagram-Login token — `instagram_business_manage_insights`,
+ * against graph.instagram.com (see instagram-business-graph.ts). Same access
+ * rule as the other read actions on this file.
+ */
+export async function fetchClientInstagramBusinessInsightsAction(
+  clientId: string,
+): Promise<InstagramBusinessInsightsResult> {
+  try {
+    const user = await getCurrentUser();
+    if (!user || user.disabled) return { error: "Please sign in again to view insights." };
+    const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+    if (!isStaff && user.clientId !== clientId) {
+      return { error: "You don't have access to this channel." };
+    }
+    const integration = (await listClientIntegrations(clientId)).find((i) => i.platform === "instagram_business");
+    const token = integration?.credentials?.accessToken;
+    if (!token) return { error: "Connect Instagram (direct login) first to see insights." };
+    const insights = await fetchInstagramBusinessAccountInsights(token);
+    return { ok: true, insights };
+  } catch {
+    return { error: "Couldn't load insights. Please try again." };
+  }
 }

@@ -9,7 +9,11 @@ import {
   getAppOrigin,
   getRequestedScopes,
 } from "@/lib/integrations/oauth";
-import { metaGraphUrl } from "@/lib/integrations/meta-graph";
+import {
+  metaGraphUrl,
+  metaInstagramGraphUrl,
+  INSTAGRAM_BUSINESS_LONG_LIVED_URL,
+} from "@/lib/integrations/meta-graph";
 import { GOOGLE_UNIFIED_SUB_PLATFORM_IDS } from "@/lib/integrations/platforms";
 import {
   errorPage,
@@ -121,6 +125,40 @@ async function exchangeCode(
     // Meta has no refresh token: the stored long-lived token IS what gets
     // re-exchanged before it dies, so its expiry is the only thing telling the
     // refresher when to act.
+    return { accessToken: long.access_token, expiresIn: long.expires_in };
+  }
+
+  if (provider === "instagram_business") {
+    // "Instagram API with Instagram Login" — a DIFFERENT exchange shape from
+    // facebook/instagram above, not a copy of it: step 1 is a POST with a
+    // form-encoded body against api.instagram.com (not a GET with query params
+    // against graph.facebook.com), and step 2 exchanges via `ig_exchange_token`
+    // against graph.instagram.com instead of `fb_exchange_token`.
+    const shortRes = await fetch(config.tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: appClientId,
+        client_secret: appClientSecret,
+        grant_type: "authorization_code",
+        redirect_uri: redirectUri,
+        code,
+      }),
+    });
+    if (!shortRes.ok) throw new Error(`Token exchange failed (${shortRes.status})`);
+    const short = (await shortRes.json()) as { access_token: string };
+
+    const longUrl = new URL(INSTAGRAM_BUSINESS_LONG_LIVED_URL);
+    longUrl.searchParams.set("grant_type", "ig_exchange_token");
+    longUrl.searchParams.set("client_secret", appClientSecret);
+    longUrl.searchParams.set("access_token", short.access_token);
+    const longRes = await fetch(longUrl.toString());
+    if (!longRes.ok) throw new Error(`Long-lived token exchange failed (${longRes.status})`);
+    const long = (await longRes.json()) as { access_token: string; expires_in?: unknown };
+    // Same as facebook/instagram: no refresh token, the long-lived access
+    // token itself gets re-exchanged before it dies (see token-refresh.ts's
+    // "ig-refresh-token" policy — a DIFFERENT re-exchange call again,
+    // `ig_refresh_token`, which unlike this step needs no app secret at all).
     return { accessToken: long.access_token, expiresIn: long.expires_in };
   }
 
@@ -254,6 +292,17 @@ async function fetchAccountName(provider: string, accessToken: string): Promise<
       if (res.ok) {
         const d = (await res.json()) as { name?: string };
         return d.name ?? "";
+      }
+    }
+    if (provider === "instagram_business") {
+      // `/me?fields=username` — the live API call `instagram_business_basic`
+      // exists for. graph.instagram.com's `/me` is already scoped to the
+      // logged-in Instagram professional account, unlike graph.facebook.com's
+      // `/me` above which needs a Page/IG-account id looked up separately.
+      const res = await fetch(metaInstagramGraphUrl(`me?fields=username&access_token=${accessToken}`));
+      if (res.ok) {
+        const d = (await res.json()) as { username?: string };
+        return d.username ? `@${d.username}` : "";
       }
     }
     if (provider === "twitter") {

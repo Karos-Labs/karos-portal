@@ -6,6 +6,9 @@ import {
   META_OAUTH_DIALOG_URL,
   META_OAUTH_TOKEN_URL,
   metaGraphUrl,
+  metaInstagramGraphUrl,
+  INSTAGRAM_BUSINESS_LONG_LIVED_URL,
+  INSTAGRAM_BUSINESS_REFRESH_URL,
 } from "../meta-graph";
 
 /* __tests__ → integrations → lib → src */
@@ -49,6 +52,19 @@ describe("META_GRAPH_VERSION — the one pin", () => {
     expect(META_OAUTH_DIALOG_URL).toBe(`https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth`);
     expect(META_OAUTH_TOKEN_URL).toBe(`https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`);
   });
+
+  it("metaInstagramGraphUrl builds graph.instagram.com/<version>/<path> — a separate host from Facebook's", () => {
+    expect(metaInstagramGraphUrl("me?fields=username")).toBe(
+      `https://graph.instagram.com/${META_GRAPH_VERSION}/me?fields=username`,
+    );
+  });
+
+  it("the Instagram-login long-lived-exchange and refresh URLs ride the same version", () => {
+    expect(INSTAGRAM_BUSINESS_LONG_LIVED_URL).toBe(`https://graph.instagram.com/${META_GRAPH_VERSION}/access_token`);
+    expect(INSTAGRAM_BUSINESS_REFRESH_URL).toBe(
+      `https://graph.instagram.com/${META_GRAPH_VERSION}/refresh_access_token`,
+    );
+  });
 });
 
 describe("no Meta Graph call bypasses the pin", () => {
@@ -71,6 +87,20 @@ describe("no Meta Graph call bypasses the pin", () => {
     // An unversioned call silently falls to the app's oldest available version —
     // the callback route's profile lookup used to do exactly that.
     const unversioned = /graph\.facebook\.com\/(?!\$\{)/;
+    const offenders = sourcesToSweep().filter((f) => unversioned.test(readFileSync(f, "utf8")));
+    expect(offenders.map((f) => path.relative(SRC_ROOT, f))).toEqual([]);
+  });
+
+  // Same two guards, extended to the Instagram-login host added alongside it —
+  // one pin, two hosts, neither escapes this file.
+  it("no source outside meta-graph.ts hard-codes a versioned instagram.com URL", () => {
+    const versioned = /instagram\.com\/v\d+\.\d+/;
+    const offenders = sourcesToSweep().filter((f) => versioned.test(readFileSync(f, "utf8")));
+    expect(offenders.map((f) => path.relative(SRC_ROOT, f))).toEqual([]);
+  });
+
+  it("no source outside meta-graph.ts builds an UNversioned graph.instagram.com URL either", () => {
+    const unversioned = /graph\.instagram\.com\/(?!\$\{)/;
     const offenders = sourcesToSweep().filter((f) => unversioned.test(readFileSync(f, "utf8")));
     expect(offenders.map((f) => path.relative(SRC_ROOT, f))).toEqual([]);
   });

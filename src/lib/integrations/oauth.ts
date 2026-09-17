@@ -2,7 +2,12 @@ import "server-only";
 
 import { createHmac, randomBytes, createHash, timingSafeEqual } from "crypto";
 import { appLinkBase } from "@/lib/app-origin";
-import { META_OAUTH_DIALOG_URL, META_OAUTH_TOKEN_URL } from "@/lib/integrations/meta-graph";
+import {
+  META_OAUTH_DIALOG_URL,
+  META_OAUTH_TOKEN_URL,
+  INSTAGRAM_BUSINESS_LOGIN_AUTH_URL,
+  INSTAGRAM_BUSINESS_LOGIN_TOKEN_URL,
+} from "@/lib/integrations/meta-graph";
 
 /**
  * HMAC key for the OAuth `state` token. Falls back to a dev-only constant, but
@@ -228,8 +233,49 @@ export const OAUTH_CONFIGS: Record<string, OAuthPlatformConfig> = {
     ],
     requiresLongLivedExchange: true,
     // Mentions/tags read needs the same Advanced Access grant as Facebook above.
-    extendedScopes: ["pages_read_user_content"],
+    // business_management backs the "View business info" panel on the connected
+    // Instagram card (see meta-business.ts / integrations-tab.tsx) — read-only,
+    // same client token, no separate connection.
+    extendedScopes: ["pages_read_user_content", "business_management"],
     envApprovalFlag: "META_ADVANCED_ACCESS_APPROVED",
+  },
+  /**
+   * "Instagram API with Instagram Login" (Business Login for Instagram) — a
+   * SECOND, PARALLEL Meta login product from "instagram" above, not a variant
+   * of it. Different authorize dialog (www.instagram.com, not
+   * www.facebook.com), different app credential (an "Instagram App ID/Secret"
+   * this app's "API setup with Instagram login" tab generates — Meta app
+   * 1563063488840237 → Instagram app id 1607174564441423 — DISTINCT from
+   * FACEBOOK_APP_ID even though both live under the same Meta app), and a
+   * different API host (graph.instagram.com — see meta-graph.ts). Exists as
+   * its own ClientIntegration platform ("instagram_business") rather than a
+   * second token on the "instagram" doc, because a client with an Instagram
+   * professional account NOT linked to a Facebook Page can use this without
+   * ever touching Facebook Login — the two are alternative on-ramps to
+   * overlapping data, not layers of one flow.
+   *
+   * Base scopes only (no extendedScopes/envApprovalFlag): unlike
+   * facebook/instagram above, there is no already-testable tier of this
+   * product to fall back to while these two clear App Review — they ARE the
+   * product this use case exists for. Works for Instagram Tester accounts
+   * before review the same way the flows above do.
+   */
+  instagram_business: {
+    envClientId: "INSTAGRAM_BUSINESS_APP_ID",
+    envClientSecret: "INSTAGRAM_BUSINESS_APP_SECRET",
+    authUrl: INSTAGRAM_BUSINESS_LOGIN_AUTH_URL,
+    tokenUrl: INSTAGRAM_BUSINESS_LOGIN_TOKEN_URL,
+    scopes: ["instagram_business_basic", "instagram_business_manage_insights"],
+    requiresLongLivedExchange: true,
+    // Comma-separated, like TikTok — confirmed against this app's own
+    // generated authorize link (`scope=a%2Cb%2Cc`, i.e. `a,b,c`), NOT the
+    // space-separated OAuth-standard join the facebook/instagram configs above
+    // use for www.facebook.com/dialog/oauth.
+    scopeSeparator: ",",
+    // Matches this app's own generated authorize link (API setup with
+    // Instagram login → "Set up Instagram business login", checked 2026-09-17)
+    // — forces the login screen instead of silently reusing a stale session.
+    extraAuthParams: { force_reauth: "true" },
   },
   twitter: {
     envClientId: "TWITTER_CLIENT_ID",

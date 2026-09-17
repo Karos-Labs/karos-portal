@@ -4,6 +4,7 @@ import type { ClientIntegration } from "@/lib/types";
 import { OAUTH_CONFIGS } from "@/lib/integrations/oauth";
 import { TokenExpiredError } from "@/lib/integrations/publishers";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
+import { INSTAGRAM_BUSINESS_REFRESH_URL } from "@/lib/integrations/meta-graph";
 import {
   getClientIntegration,
   markIntegrationExpired,
@@ -65,8 +66,18 @@ export const META_REFRESH_AHEAD_MS = 7 * DAY_MS;
 type RefreshPolicy =
   /** grant_type=refresh_token against the provider's token endpoint. */
   | { kind: "refresh-token"; defaultLifetimeMs: number }
-  /** Meta: exchange the still-valid long-lived token for a new one. */
+  /** Meta (Facebook Login): exchange the still-valid long-lived token for a new one. */
   | { kind: "long-lived-exchange"; defaultLifetimeMs: number }
+  /**
+   * Instagram Login's OWN re-exchange (`grant_type=ig_refresh_token` against
+   * graph.instagram.com) — same shape as "long-lived-exchange" (no refresh
+   * token, re-exchange the still-valid access token before it dies), but a
+   * DIFFERENT call: no app id/secret in the request at all, just the current
+   * token. Kept as its own kind rather than folded into "long-lived-exchange"
+   * so a future reader never assumes one call shape covers both Meta login
+   * products.
+   */
+  | { kind: "ig-refresh-token"; defaultLifetimeMs: number }
   /** No programmatic refresh; the client re-consents. */
   | { kind: "unsupported" };
 
@@ -89,6 +100,9 @@ const POLICIES: Record<string, RefreshPolicy> = {
   google_business_profile: { kind: "refresh-token", defaultLifetimeMs: HOUR_MS },
   facebook: { kind: "long-lived-exchange", defaultLifetimeMs: 60 * DAY_MS },
   instagram: { kind: "long-lived-exchange", defaultLifetimeMs: 60 * DAY_MS },
+  // Instagram Login's long-lived token also lasts 60 days (same headline
+  // number as Meta's, different mechanism — see the RefreshPolicy comment).
+  instagram_business: { kind: "ig-refresh-token", defaultLifetimeMs: 60 * DAY_MS },
   linkedin: { kind: "unsupported" },
   linkedin_community: { kind: "unsupported" },
 };
@@ -148,7 +162,7 @@ export function needsRefresh(
   if (!policy || policy.kind === "unsupported") return false;
   const credentials = integration.credentials ?? {};
   const expiresAt = credentialExpiresAt(credentials);
-  if (policy.kind === "long-lived-exchange") {
+  if (policy.kind === "long-lived-exchange" || policy.kind === "ig-refresh-token") {
     if (!credentials.accessToken) return false;
     return expiresAt !== null && expiresAt - now <= META_REFRESH_AHEAD_MS;
   }
@@ -339,6 +353,24 @@ export async function refreshIntegrationCredentials(
     url.searchParams.set("client_id", appClientId);
     url.searchParams.set("client_secret", appClientSecret);
     url.searchParams.set("fb_exchange_token", current);
+    const data = await tokenRequest(platform, url.toString(), { method: "GET" });
+    return {
+      outcome: "refreshed",
+      credentials: withExpiry({ accessToken: data.access_token }, data.expires_in, now, policy.defaultLifetimeMs),
+    };
+  }
+
+  if (policy.kind === "ig-refresh-token") {
+    const current = credentials.accessToken;
+    if (!current) throw new TokenRefreshError(platform, "no_refresh_token");
+    // `ig_refresh_token` — deliberately NOT the fb_exchange_token shape above:
+    // no client_id/client_secret at all, just the current long-lived token.
+    // (appClientId/appClientSecret were still required above so a misconfigured
+    // INSTAGRAM_BUSINESS_APP_ID/SECRET fails loudly rather than only at connect
+    // time — this call just doesn't happen to need them itself.)
+    const url = new URL(INSTAGRAM_BUSINESS_REFRESH_URL);
+    url.searchParams.set("grant_type", "ig_refresh_token");
+    url.searchParams.set("access_token", current);
     const data = await tokenRequest(platform, url.toString(), { method: "GET" });
     return {
       outcome: "refreshed",
