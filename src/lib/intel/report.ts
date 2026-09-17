@@ -220,18 +220,11 @@ export async function runIntelReportPipeline(
   // shows — the intel report was describing a background the portal had
   // already corrected. Best-effort, like everything on this side channel. (A
   // lab client's brand did not move; this projects the lab's, as every run does.)
-  try {
-    const [{ projectClientToWorkspace }, freshClient] = await Promise.all([import("@/lib/agent-engine/context-doc-projection"), getClient(clientId)]);
-    if (freshClient) await projectClientToWorkspace(freshClient, undefined);
-  } catch (err) {
-    console.error("[intel] brand/profile projection failed (non-fatal):", err);
-  }
-
-  // Branding just rewrote the client's palette; the projection that ran inside
-  // the doc pipeline read the client BEFORE that landed. Re-project brand and
-  // profile now so the engine's `client/brand.json` is the palette the portal
-  // shows — the intel report was describing a background the portal had
-  // already corrected. Best-effort, like everything on this side channel.
+  //
+  // ONCE, and the count is asserted: the merge that brought this block to main
+  // (#126) resolved its conflict by keeping BOTH sides, so every run since has
+  // written the same `brand.json` and `profile.json` twice over. See
+  // `agent-onboarding-lab-mode.test.ts`, "projects the client once per write".
   try {
     const [{ projectClientToWorkspace }, freshClient] = await Promise.all([import("@/lib/agent-engine/context-doc-projection"), getClient(clientId)]);
     if (freshClient) await projectClientToWorkspace(freshClient, undefined);
