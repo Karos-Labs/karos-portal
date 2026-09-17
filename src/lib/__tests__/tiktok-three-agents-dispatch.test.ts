@@ -1,3 +1,4 @@
+import { agentArchetype } from "@/lib/agent-archetype";
 /**
  * D08: TikTok is three agents, and each must reach its OWN workflow.
  *
@@ -78,5 +79,34 @@ describe("D08 dispatch trace", () => {
       expect(isSupersededAgentKey(c.key), c.key).toBe(false);
       expect(isUnlistedAgent({ key: c.key }), c.key).toBe(false);
     }
+  });
+});
+
+/**
+ * The client-facing page shape, for the one product that takes no footage.
+ *
+ * `agentArchetype` calls content design a `clip_maker` — correctly: its
+ * deliverable is a video file, and the archetype is about what an agent MAKES.
+ * The source-material card is about what an agent CONSUMES, and those are not
+ * the same question. Gating the card on the archetype put "What it cuts from ·
+ * Source material · Needed" on the one product defined by being handed
+ * nothing, above an empty hint, because the launch profile declares no
+ * attachments to describe.
+ */
+describe("content design asks for no source material", () => {
+  const CONTENT_DESIGN = { key: "karos-tiktok-content-design", name: "TikTok content design (beta)" };
+  const CLIPPING = { key: "karos-tiktok-clipping", name: "TikTok clipping" };
+  const EDITING = { key: "karos-tiktok-editing", name: "TikTok editing" };
+
+  it("is still a clip maker, because its deliverable is a video", () => {
+    expect(agentArchetype(CONTENT_DESIGN)).toBe("clip_maker");
+  });
+
+  it("declares no attachments, which is what the page gates the card on", () => {
+    // undefined -> no "What it cuts from" card. The other two declare one and
+    // keep theirs; that is the whole difference between the products.
+    expect(launchProfileFor(CONTENT_DESIGN).attachments).toBeUndefined();
+    expect(launchProfileFor(CLIPPING).attachments?.hint).toBeTruthy();
+    expect(launchProfileFor(EDITING).attachments?.hint).toBeTruthy();
   });
 });

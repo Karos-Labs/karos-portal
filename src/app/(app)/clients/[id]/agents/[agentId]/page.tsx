@@ -558,6 +558,11 @@ export default async function ClientAgentDetailPage({
   // the §7.3 idiom, and it decides the HERO only - status, archive, data,
   // connectors and feedback are the common chassis and render for all three.
   const archetype = agentArchetype({ key: agent.key, name: agent.name });
+
+  // The agent's own words for the footage it wants, or undefined when it
+  // asks for none — the launch profile is the single place that knows,
+  // and `attachmentModeForEngineProduct` states the same fact engine-side.
+  const clipSourceHint = launchProfileFor({ key: agent.key, name: agent.name }).attachments?.hint;
   // What ONE run of this agent makes, in the client's words. Every control and
   // refusal on this page is named from it, so a never-post product (Reddit)
   // cannot end up with "Create a new post" as its strongest affordance.
@@ -1585,11 +1590,16 @@ export default async function ClientAgentDetailPage({
               communities it is welcome in and a list it is banned from - and
               being banned somewhere is a fact a client wants to see on the
               page, not behind a link. */}
-          {archetype === "clip_maker" ? (
-            <SourceMaterialCard
-              files={sourceFiles}
-              hint={launchProfileFor({ key: agent.key, name: agent.name }).attachments?.hint ?? ""}
-            />
+          {/* A clip maker that takes NO source is not a contradiction: D08's
+              content-design product is defined by being handed nothing and
+              building the video from stock or generated footage. Its
+              deliverable is still a video file, so the archetype is right —
+              but "What it cuts from · Source material · Needed" is a demand
+              for something the run never asks for, sitting above an empty
+              hint because the profile declares no attachments to describe.
+              The card is gated on the same fact that leaves the hint empty. */}
+          {archetype === "clip_maker" && clipSourceHint !== undefined ? (
+            <SourceMaterialCard files={sourceFiles} hint={clipSourceHint} />
           ) : archetype === "daily_finder" && setup && !(inputs && !inputs.ready) ? (
             /* Kept even though the inputs band lists the same document: this
                card shows the ANSWERS (which communities it is welcome in, which

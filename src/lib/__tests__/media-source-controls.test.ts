@@ -114,6 +114,34 @@ describe("clientOnlyMediaIsRequired — who has a text fallback", () => {
     expect(mediaSourceHint("instagram-agent", "system")).toMatch(/sourced or generated as usual/);
     expect(mediaSourceHint("tiktok-agent", "client")).toMatch(/Nothing else is harvested or generated/);
   });
+
+  /**
+   * D08's split made the shared "source-video" sentence wrong for two of the
+   * three products that use it. The old line promised "leave it empty and the
+   * agent finds or generates its own" to an editing agent that refuses the run
+   * without a recording, and to a clipping agent that searches a source list
+   * but never generates a frame.
+   */
+  it("tells each video product the truth about leaving the box empty", () => {
+    // Editing: nothing to cut without the client's own recording.
+    expect(mediaSourceHint("tiktok-editing-agent", "system")).toMatch(/^Required\./);
+    expect(mediaSourceHint("tiktok-editing-agent", "system")).not.toMatch(/generates its own/);
+
+    // Clipping: the empty box IS a supported path — it searches the source
+    // list — but it never generates footage, and the hint must not imply it.
+    expect(mediaSourceHint("tiktok-clipping-agent", "system")).toMatch(/searches the shows on your source list/);
+    expect(mediaSourceHint("tiktok-clipping-agent", "system")).toMatch(/never generates footage/);
+
+    // The products the old sentence was true of keep it, byte for byte.
+    expect(mediaSourceHint("tiktok-agent", "system")).toMatch(/finds or generates its own/);
+    expect(mediaSourceHint("branded-shorts-agent", "system")).toMatch(/finds or generates its own/);
+  });
+
+  it("offers no attach control at all for content design, so it needs no hint", () => {
+    // Defined by being handed nothing: `attachmentModeForEngineProduct`
+    // returns undefined and the run dialog paints no attachment box.
+    expect(attachmentModeForEngineProduct("tiktok-content-design-agent")).toBeUndefined();
+  });
 });
 
 describe("the two media answers are data for the engine, not prose for the agent", () => {
