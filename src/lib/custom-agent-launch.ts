@@ -1357,7 +1357,13 @@ export function isSupersededAgentKey(key: string | undefined | null): boolean {
     // rollback has something to re-enable, and it loses its card for the same
     // reason e10 did: a disabled-but-granted agent renders as "Coming soon", so
     // leaving it listed promises a client something that is not coming.
-    key === "karos-reddit-agent"
+    key === "karos-reddit-agent" ||
+    // the original monolithic TikTok agent, replaced by D08's three-way split
+    // (karos-tiktok-clipping / -editing / -content-design), which together cover
+    // every input shape it handled. The doc stays exactly as it is — it is what
+    // every existing grant and in-flight schedule names, and repointing or
+    // deleting it would change what those produce — it only loses its card.
+    key === "karos-tiktok-agent"
   );
 }
 

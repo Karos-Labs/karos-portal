@@ -14,7 +14,7 @@
  * engine actually receives.
  */
 import { describe, expect, it } from "vitest";
-import { launchProfileFor, attachmentModeForEngineProduct, clientOnlyMediaIsRequired } from "@/lib/custom-agent-launch";
+import { launchProfileFor, attachmentModeForEngineProduct, clientOnlyMediaIsRequired, isSupersededAgentKey, isUnlistedAgent } from "@/lib/custom-agent-launch";
 import { toEngineRunInput, resolveAgentEngineProductIdForCustomAgent, ENGINE_PRODUCTS_READING_MEDIA_ASSETS } from "@/lib/agent-engine/product-mapping";
 
 const CASES = [
@@ -64,5 +64,19 @@ describe("D08 dispatch trace", () => {
     expect(p.fields.find((f) => f.key === "source_url")?.required).toBeFalsy();
     expect(p.attachments?.required).toBeFalsy();
     expect(clientOnlyMediaIsRequired("tiktok-clipping-agent")).toBe(true);
+  });
+
+  it("the original monolithic agent is superseded by the three-way split, WITHOUT calling it a step", () => {
+    // Same shape as the e10 LinkedIn / v1 Reddit precedent: no parentKey (nothing
+    // runs it as a step of another agent), so it stays out of `isSupersededAgentKey`'s
+    // sibling `isSubAgent` and is hidden purely because a newer generation replaced
+    // it. The doc itself is untouched — every existing grant and in-flight schedule
+    // still names `karos-tiktok-agent` — only its roster card disappears.
+    expect(isSupersededAgentKey("karos-tiktok-agent")).toBe(true);
+    expect(isUnlistedAgent({ key: "karos-tiktok-agent" })).toBe(true);
+    for (const c of CASES) {
+      expect(isSupersededAgentKey(c.key), c.key).toBe(false);
+      expect(isUnlistedAgent({ key: c.key }), c.key).toBe(false);
+    }
   });
 });
