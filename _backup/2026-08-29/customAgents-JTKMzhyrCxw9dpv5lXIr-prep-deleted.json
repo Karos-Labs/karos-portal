@@ -1,0 +1,26 @@
+{
+  "_collection": "customAgents",
+  "_id": "JTKMzhyrCxw9dpv5lXIr",
+  "_database": "prep",
+  "key": "karos-carousel-manager",
+  "name": "Carousel Manager",
+  "description": "Carousel Agent v2, the manager. The monthly pass: what shipped, how much catalogue is left, and which templates are worth changing. Appends fresh topics to the catalogue, and PROPOSES style-config changes without ever applying one — a look that changes underneath a client mid-month is a grid that stops matching itself.",
+  "clientBlurb": null,
+  "icon": "Images",
+  "color": "#A78BFA",
+  "entrySkillDir": "products/building/carousel-agent-v2/manager",
+  "skillRoots": [],
+  "includeClientSkills": true,
+  "instructions": "Run the monthly carousel review for this client. Run the manager skill at\nproducts/building/carousel-agent-v2/manager/SKILL.md end to end. No internet and\nno credentials: read on-disk state only.\n\nReport what shipped, how much catalogue is left, and which templates are earning\ntheir place. Append fresh unused rows to topic-catalog.yaml and deliver the whole\nfile back.\n\nPROPOSE style-config changes, NEVER APPLY ONE. A look that changes underneath a\nclient mid-month is a grid that stops matching itself, and the client agreed to\nthe look at setup. Write the proposal with the reason and let a person take it.",
+  "parentKey": "karos-carousel-runner",
+  "creditCost": null,
+  "source": {
+    "path": "products/building/carousel-agent-v2/manager",
+    "status": "blocked"
+  },
+  "createdBy": "script:register-carousel-agent-v2",
+  "createdAt": 1786121792373,
+  "enabled": true,
+  "updatedAt": 1786121798104,
+  "model": "claude-sonnet-4-6"
+}

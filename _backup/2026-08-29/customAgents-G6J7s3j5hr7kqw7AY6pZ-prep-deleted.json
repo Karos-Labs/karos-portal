@@ -1,0 +1,26 @@
+{
+  "_collection": "customAgents",
+  "_id": "G6J7s3j5hr7kqw7AY6pZ",
+  "_database": "prep",
+  "key": "karos-carousel-setup",
+  "name": "Carousel Setup",
+  "description": "Carousel Agent v2, the run-once client setup. Derives the visual system from the client's own brand material, builds the slide templates, writes the brand tokens every template reads, and seeds the topic catalogue every future post draws from. Renders one sample as the proof the system works, and records it as NOT RUN rather than passed when the renderer is unavailable. Data only: no skill files, no per-client code, never a .mjs or .py.",
+  "clientBlurb": null,
+  "icon": "Images",
+  "color": "#A78BFA",
+  "entrySkillDir": "products/building/carousel-agent-v2/setup",
+  "skillRoots": [],
+  "includeClientSkills": true,
+  "instructions": "Set this client up on carousels. Run the setup skill at\nproducts/building/carousel-agent-v2/setup/SKILL.md end to end.\n\nProduce the standing files every post reads: the visual system\n(02-style-config.json), the brand tokens every template reads\n(brand-tokens.json), the slide templates themselves (templates/), and the topic\ncatalogue (topic-catalog.yaml).\n\nDATA ONLY: no skill files, no per-client code, never a .mjs or .py.\n\nDerive the visual system from the client's OWN brand material. Where they have\nexisting posts you like, match them; where they have guidelines, follow them.\nDo not import a look from another client.\n\nRENDER ONE SAMPLE as the proof the system works. If the renderer is unavailable,\nrecord the sample check as NOT RUN rather than as passed — a style nobody\nrendered is a style nobody has seen, and the first real post is a bad place to\nfind that out.\n\nIF A TOPIC CATALOGUE ALREADY EXISTS, VERIFY IT, never re-seed it. Its rows record\nwhat has already been posted, and re-seeding would offer those subjects to a\npublic grid a second time.\n\nDo not build a carousel in this run. This is the setup.",
+  "parentKey": "karos-carousel-runner",
+  "creditCost": null,
+  "source": {
+    "path": "products/building/carousel-agent-v2/setup",
+    "status": "blocked"
+  },
+  "createdBy": "script:register-carousel-agent-v2",
+  "createdAt": 1786121791482,
+  "enabled": true,
+  "updatedAt": 1786121797247,
+  "model": "claude-sonnet-4-6"
+}

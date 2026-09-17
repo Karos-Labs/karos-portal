@@ -1,0 +1,26 @@
+{
+  "_collection": "customAgents",
+  "_id": "tZuMasTzAuX2PxHPGLv6",
+  "_database": "(default)",
+  "key": "karos-linkedin-manager-v2",
+  "name": "LinkedIn Manager",
+  "description": "LinkedIn Agent v2, the manager. Audits what shipped and what each identity did with it, adjusts the lane mix within bounds, and refills the topic catalog from ONE research pull cached per client and reused same-day. The only skill in the product that touches the network. It never drafts and never publishes.",
+  "clientBlurb": null,
+  "icon": "Bot",
+  "color": "#FBBF24",
+  "entrySkillDir": "products/building/linkedin-agent-v2/manager",
+  "skillRoots": [],
+  "includeClientSkills": true,
+  "instructions": "Run the LinkedIn manager for this client — the standalone pass (a normal post run\nalready includes one). Run manager/SKILL.md end to end, nine steps.\n\nRead first: client_context/brief.md and every file in client_context/files/.\nThe attached AGENT-MEMORY.md, linkedin-ledger.json, topic-catalog.yaml,\nLINKEDIN-FOUNDATION.md and manager-plan.json are the LIVE copies — the baked\nrepo's are stale. linkedin-portal-intake.md carries every identity's learning log\nand outcomes; company-updates.md carries the client's live section.\n\nCheck research-cache.json before pulling: if its date is TODAY, reuse it and\nrecord the reuse. One pull serves every identity and every run that day. When you\ndo pull, the raw payload lands in the cache before anything parses it.\n\nBounded authority. You may reweight lanes, retire an exhausted subject, and add\ntopic rows — every new row citing a source URL with a date AND the client profile\ndocument that makes it relevant to this client. You may NOT invent a post type,\nchange the default posts-per-run, change a voice, or alter a compliance rule:\nthose become recorded requests for a human, in memory and in the report.\n\nDeliver AGENT-MEMORY.md, the updated topic-catalog.yaml and 05-plan.json at their\ncontract paths — the portal captures them from there and hands them back to every\nlater run. Never draft a post, never publish, never write the ledger.\n\nWrite client/report.md: what went out per identity, what they did with it, what\nchanged in the plan and why, what is coming, and anything we need from them.\nClient-facing prose — sentence case, no em dashes, no jargon, no placeholders,\nevery number carrying its source or stated as client-reported. LinkedIn's own\nperformance numbers are CLIENT-REPORTED until the API is wired; say so.",
+  "creditCost": null,
+  "enabled": false,
+  "createdBy": "script:register-linkedin-agent-v2",
+  "createdAt": 1785877759913,
+  "parentKey": "karos-linkedin-writer-v2",
+  "source": {
+    "path": "products/building/linkedin-agent-v2/manager",
+    "status": "blocked",
+    "blocked_reason": "In build (products/building/), no pilot run yet, and XAI_API_KEY is not yet provisioned per client. Egress is FINITE (www.reddit.com keyless RSS + api.x.ai), which is the unblock condition Ben's analysis names for e10 - it is pinned to named legs rather than open-web research. Perplexity was dropped (Daniel, 2026-08-03) and Gmail was decided against. Unblock = key provisioned + one pilot run reviewed."
+  },
+  "updatedAt": 1785957237902
+}

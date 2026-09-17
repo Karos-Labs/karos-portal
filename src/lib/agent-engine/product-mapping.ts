@@ -178,6 +178,15 @@ const ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY: Readonly<Record<string, EngineProductW
   "karos-blog-writer-v2": "blog-agent",
   "karos-newsletter-writer-v2": "newsletter-agent",
   "karos-reputation-runner": "reputation-agent",
+  // The reputation setup key, routed to the pulse the same way the LinkedIn
+  // and Reddit setup keys route to their parents: agent-engine's
+  // `reputation-agent` now runs its own `00-roster-setup` pre-flight (resolves
+  // the client's listings from the intake the run carries and records them in
+  // client config), so there is no separate setup product to route to and
+  // nothing for a client to sequence. Before this row the key fell through to
+  // agent-service, which was deleted 2026-09-02 — every "Set it up" press on
+  // the reputation card was a guaranteed 404.
+  "karos-reputation-setup": "reputation-agent",
   // seo-geo-agent-v2 closes a split rather than opening a new route: the
   // engine's seo-geo-agent was ALREADY running in production, dispatched from
   // dispatch-research-agents.ts, while this custom agent went on running the

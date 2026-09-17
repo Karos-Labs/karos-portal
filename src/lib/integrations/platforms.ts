@@ -92,6 +92,7 @@ export const READ_ONLY_PLATFORM_IDS = new Set<string>([
   "google_search_console",
   "google_analytics",
   "google_business_profile",
+  "instagram_insights",
 ]);
 
 /**
@@ -227,6 +228,24 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
      and out of the onboarding wizard. `PLATFORM_LABELS.facebook` stays: a
      client with a Facebook integration already in Firestore must still see it
      named rather than see the raw id. */
+  {
+    id: "instagram_insights",
+    name: "Instagram performance",
+    icon: "TrendingUp",
+    color: "#E1306C",
+    description:
+      "Read post and reel performance across your account: reach, saves, shares, views, profile visits, and follows.",
+    fields: [
+      {
+        key: "pageId",
+        label: "Facebook Page ID (linked to your Instagram account)",
+        type: "text",
+        required: true,
+        hint: "Add Karos Labs as a partner on this Page in Meta Business Settings first, with Page and Instagram access — this connection reads through our own Business Manager System User, not a per-account OAuth login.",
+      },
+    ],
+    category: "analytics",
+  },
   {
     id: "linkedin",
     name: "LinkedIn",

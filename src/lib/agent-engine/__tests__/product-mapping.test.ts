@@ -65,14 +65,14 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
       "karos-linkedin-setup-v2", "karos-reddit-setup", "karos-instagram-agent",
       "landing-builder", "branded-shorts", "karos-blog-writer-v2",
       "karos-newsletter-writer-v2", "karos-reputation-runner", "seo-geo-agent-v2",
-      "karos-tiktok-agent",
+      "karos-tiktok-agent", "karos-reputation-setup",
     ]) {
       const productId = resolveAgentEngineProductIdForCustomAgent(key);
       expect(KNOWN.has(productId!), `${key} -> ${productId}`).toBe(true);
     }
   });
 
-  it("routes the two onboarding keys to the drafting agents that now absorb them", () => {
+  it("routes the three onboarding keys to the agents that now absorb them", () => {
     // These used to route to `linkedin-setup-agent`/`reddit-setup-agent`, which
     // were separate engine products. The setup routine is now each parent
     // agent's `00-channel-setup` pre-flight: the same filled form arrives on
@@ -84,6 +84,9 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
     // to start the right way.
     expect(resolveAgentEngineProductIdForCustomAgent("karos-linkedin-setup-v2")).toBe("linkedin-agent");
     expect(resolveAgentEngineProductIdForCustomAgent("karos-reddit-setup")).toBe("reddit-agent");
+    // The reputation pulse's `00-roster-setup` is the same shape, and the
+    // agent-service this key used to fall through to no longer exists.
+    expect(resolveAgentEngineProductIdForCustomAgent("karos-reputation-setup")).toBe("reputation-agent");
   });
 
   it("routes the three drafting agents whose engine workflows were built but idle", () => {
@@ -126,7 +129,6 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
       "karos-newsletter-manager-v2",
       "karos-blog-setup-v2",
       "karos-newsletter-setup-v2",
-      "karos-reputation-setup",
       "karos-compliance-lock-v2",
     ]) {
       expect(resolveAgentEngineProductIdForCustomAgent(key), key).toBeUndefined();
@@ -340,6 +342,7 @@ const ENGINE_ROUTED_DIALOGS: ReadonlyArray<{
   { key: "karos-blog-writer-v2", name: "Blog Writer", productId: "blog-agent", visibleFields: ["run_mode", "request", "audience", "keywords", "point_of_view", "sources", "customPrompt"] },
   { key: "karos-newsletter-writer-v2", name: "Newsletter Writer", productId: "newsletter-agent", visibleFields: ["request", "audience", "must_include", "cta", "tone", "customPrompt"] },
   { key: "karos-reputation-runner", name: "Reputation Runner", productId: "reputation-agent", visibleFields: ["request", "customPrompt"] },
+  { key: "karos-reputation-setup", name: "Reputation Setup", productId: "reputation-agent", visibleFields: ["request", "customPrompt"] },
   { key: "seo-geo-agent-v2", name: "SEO GEO Agent", productId: "seo-geo-agent", visibleFields: ["website", "scope", "request", "market", "competitors", "customPrompt"] },
 ];
 
@@ -569,7 +572,7 @@ describe("page/server engineProductId consistency (C3 mandatory fix #2)", () => 
       "karos-linkedin-setup-v2", "karos-reddit-setup", "karos-instagram-agent",
       "landing-builder", "branded-shorts", "karos-blog-writer-v2",
       "karos-newsletter-writer-v2", "karos-reputation-runner", "seo-geo-agent-v2",
-      "karos-tiktok-agent",
+      "karos-tiktok-agent", "karos-reputation-setup",
     ]) {
       expect(swept.has(key), `${key} routes to agent-engine but has no dialog-coverage case`).toBe(true);
     }

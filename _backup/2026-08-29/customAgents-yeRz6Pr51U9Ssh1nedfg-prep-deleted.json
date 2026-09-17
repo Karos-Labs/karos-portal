@@ -1,0 +1,25 @@
+{
+  "_collection": "customAgents",
+  "_id": "yeRz6Pr51U9Ssh1nedfg",
+  "_database": "prep",
+  "key": "karos-reputation-manager",
+  "name": "Reputation Manager",
+  "description": "Reputation Agent v2, the manager. The monthly look back: what came in, what was drafted, what the client actually sent, and which complaints keep recurring. Appends what a human edited before sending to the response voice, which is the sharpest signal this product gets. No internet and no credentials: it reads on-disk state only.",
+  "clientBlurb": null,
+  "icon": "MessageSquare",
+  "color": "#F472B6",
+  "entrySkillDir": "products/building/reputation-agent-v2/manager",
+  "skillRoots": [],
+  "includeClientSkills": true,
+  "instructions": "Run the monthly reputation review for this client. Run the manager skill at\nproducts/building/reputation-agent-v2/manager/SKILL.md end to end. No internet\nand no credentials: read on-disk state only.\n\nReport what came in, what was drafted, what the client actually sent, and what\nkeeps recurring. A theme that appears three months running is a business\nproblem, not a review problem, and saying so plainly is worth more than another\ndraft.\n\nAppend what a human EDITED before sending to response-voice.md. The diff between\nwhat we wrote and what they sent is the sharpest voice signal this product gets,\nand it is the only place it is recorded.\n\nDeliver the updated response-voice.md at its contract path; the portal captures\nit and hands it back next pulse.",
+  "parentKey": "karos-reputation-runner",
+  "creditCost": null,
+  "source": {
+    "path": "products/building/reputation-agent-v2/manager",
+    "status": "blocked"
+  },
+  "createdBy": "script:register-reputation-agent-v2",
+  "createdAt": 1786113905449,
+  "enabled": true,
+  "updatedAt": 1786113924621
+}
