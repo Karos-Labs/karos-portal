@@ -57,7 +57,7 @@ export function socialPlatformsFor(identity: string): SocialPlatform[] {
 export function platformForIntegrationId(id: string): SocialPlatform | null {
   if (id === "twitter") return "x";
   if (id === "linkedin_community") return "linkedin";
-  if (id === "instagram_business") return "instagram";
+  if (id === "instagram_business" || id === "instagram_insights") return "instagram";
   return id === "instagram" || id === "x" || id === "tiktok" || id === "linkedin" || id === "reddit" || id === "facebook" || id === "youtube"
     ? id
     : null;
