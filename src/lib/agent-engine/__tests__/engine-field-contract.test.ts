@@ -278,9 +278,9 @@ describe("ENGINE_FIELD_CONTRACT — the pinned classification (C3's deliverable 
     );
     expect(read).toEqual({
       customPrompt: [...REACHABLE_PRODUCTS].sort(),
-      mediaAssets: ["branded-shorts-agent", "instagram-agent", "linkedin-agent", "tiktok-agent", "x-agent"],
+      mediaAssets: ["branded-shorts-agent", "instagram-agent", "linkedin-agent", "tiktok-agent", "tiktok-clipping-agent", "tiktok-editing-agent", "x-agent"],
       // Every product with a sourcing or generation tier to switch off.
-      mediaSource: ["branded-shorts-agent", "instagram-agent", "linkedin-agent", "tiktok-agent", "x-agent"],
+      mediaSource: ["branded-shorts-agent", "instagram-agent", "linkedin-agent", "tiktok-agent", "tiktok-clipping-agent", "tiktok-content-design-agent", "tiktok-editing-agent", "x-agent"],
       // Every product whose dialog sends `request` (seo-geo's is direction, not
       // a topic): four read it off wf.input, the rest through readRunDirection.
       requestedTopic: [...REACHABLE_PRODUCTS].filter((p) => p !== "seo-geo-agent").sort(),

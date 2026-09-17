@@ -21,6 +21,7 @@ import { JobTranscript, TranscriptCount } from "@/components/job-transcript";
 import { fetchJobTranscript } from "@/lib/agent-service/transcript";
 import { AgentEngineRunPanel } from "@/components/agent-engine-run-panel";
 import { readAgentEngineRun } from "@/lib/agent-engine/read-run";
+import { expandJobInput, toRunInputRows } from "@/lib/agent-engine/run-input-display";
 import { isJobInProgress, scheduleAgentEngineJobStatusSync } from "@/lib/agent-engine/reconcile";
 import { pushablePlatformsByClient } from "@/lib/publish-targets";
 import { classifyJobError } from "@/lib/job-error-taxonomy";
@@ -265,21 +266,62 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
             <JobStepCostTable steps={job.stepBreakdown} />
           )}
 
-          <Card>
-            <CardTitle className="mb-3">Inputs</CardTitle>
-            {Object.entries(job.input).filter(([k, v]) => v && k !== "inputs").length === 0 ? (
-              <p className="text-sm text-muted-2">No inputs.</p>
-            ) : (
-              <dl className="space-y-2">
-                {Object.entries(job.input).filter(([k, v]) => v && k !== "inputs").map(([k, v]) => (
-                  <div key={k}>
-                    <dt className="text-xs text-muted-2">{k}</dt>
-                    <dd className="text-sm">{v}</dd>
-                  </div>
-                ))}
-              </dl>
-            )}
-          </Card>
+          {/*
+            WHAT THE RUN WAS GIVEN.
+
+            Two sources, and which one is shown matters. `agentEngineView.run.input`
+            is agent-engine's own persisted copy of the run envelope — what the
+            agent RECEIVED. `job.input` is this portal's display copy, written at
+            job creation — what we believe we SENT. They agree on a healthy run,
+            and when they disagree the engine's copy is the true one, which is the
+            only way a field lost in transit is visible at all.
+
+            The engine's copy does not exist for the first few seconds of a run
+            (the record is written when the worker picks the message up) and never
+            exists for a legacy non-engine job, so the portal's copy is the
+            fallback rather than a second panel — one list, always the best
+            available answer.
+
+            The old version of this card filtered out every falsy value AND the
+            `inputs` key, then said "No inputs." — which is how a run carrying a
+            typed direction came to report that it had none.
+          */}
+          {(() => {
+            const engineInput = agentEngineView?.run.input;
+            const engineRows = toRunInputRows(engineInput);
+            const rows = engineRows.length > 0 ? engineRows : toRunInputRows(expandJobInput(job.input));
+            const fromEngine = engineRows.length > 0;
+            return (
+              <Card>
+                <CardTitle className="mb-1">Inputs</CardTitle>
+                <p className="mb-3 text-xs text-muted-2">
+                  {fromEngine
+                    ? "What the agent received, read back from the run record."
+                    : "What the portal sent with this run."}
+                </p>
+                {rows.length === 0 ? (
+                  /*
+                    Not "No inputs." An empty envelope is the NORMAL shape of a
+                    scheduled run: nobody typed anything, and the agent drafts
+                    from the client's standing brief. Saying so is the difference
+                    between a reader closing the page and a reader opening a bug.
+                  */
+                  <p className="text-sm text-muted-2">
+                    Nothing was sent with this run — the agent drafted from this client&apos;s standing brief.
+                  </p>
+                ) : (
+                  <dl className="space-y-2">
+                    {rows.map((row) => (
+                      <div key={row.key}>
+                        <dt className="text-xs text-muted-2">{row.label}</dt>
+                        <dd className="whitespace-pre-line text-sm">{row.value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+              </Card>
+            );
+          })()}
 
           <Card>
             <CardTitle className="mb-3">Run log</CardTitle>

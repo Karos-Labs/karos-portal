@@ -97,12 +97,27 @@ describe("what a run dialog's helper text may claim", () => {
     ).toEqual([]);
   });
 
-  it("exactly three products have a recorded customPrompt precedence: tiktok's unconditional one, and the SCRUM-430 pair", () => {
+  it("exactly five products have a recorded customPrompt precedence: the three TikTok ids' unconditional one, and the SCRUM-430 pair", () => {
     // If this set changes, the copy in `intake-steer-copy.ts` must change
     // with it — the third test says how. Growing it is a contract edit with
     // engine line numbers; shrinking it means an engine change pulled the
     // behaviour out, and the helper must stop claiming it the same day.
-    expect(productsWithRecordedPrecedence()).toEqual(["linkedin-agent", "tiktok-agent", "x-agent"]);
+    //
+    // It grew from three to five when D08's product ids entered
+    // REACHABLE_PRODUCTS. That is not a behaviour change: `tiktok-clipping-agent`
+    // and `tiktok-content-design-agent` are `createTikTokAgentWorkflow` under
+    // two more names (wiring/workflows.ts:213,215), so they have had the same
+    // unconditional precedence as `tiktok-agent` since the day they were
+    // routable — the audit simply was not looking at them. `tiktok-editing-agent`
+    // is absent on purpose: it aliases branded-shorts, whose direction reaches
+    // the editorial steps without outranking anything.
+    expect(productsWithRecordedPrecedence()).toEqual([
+      "linkedin-agent",
+      "tiktok-agent",
+      "tiktok-clipping-agent",
+      "tiktok-content-design-agent",
+      "x-agent",
+    ]);
   });
 
   it("the shared helper claims the precedence only for products that have it recorded, and states its condition", () => {

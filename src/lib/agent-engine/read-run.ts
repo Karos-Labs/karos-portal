@@ -32,6 +32,22 @@ export interface AgentEngineRunRecord {
   reason?: string | null;
   /** The step currently executing — real-time progress reporting (agent-engine's `markStepRunning`). Absent on a run from before this field existed, or one with no steps recorded yet. */
   currentStepId?: string | null;
+  /**
+   * WHAT THE AGENT ACTUALLY RECEIVED — agent-engine's own
+   * `RunRecordSchema.input` (`packages/workflow/src/adapters/types.ts`), the
+   * run envelope's `input` object as the engine persisted it.
+   *
+   * It has always been on the document; this mirror simply never declared it,
+   * so the run page had nothing to print but `job.input` — a separate,
+   * portal-side copy that three of the four dispatch callers never filled in.
+   * Reading the engine's copy is the difference between "what we believe we
+   * sent" and "what arrived", and only the second can show a field being lost
+   * on the way, by its absence.
+   *
+   * Absent on a run dispatched with no input at all, which is the normal
+   * state for a scheduled run drafting from the client's standing brief.
+   */
+  input?: Record<string, unknown>;
 }
 
 export interface AgentEngineStepRecord {
