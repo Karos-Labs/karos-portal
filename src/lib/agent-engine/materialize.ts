@@ -345,7 +345,11 @@ async function materializeXPost(job: Job, deliverable: Record<string, unknown>):
     titleWhenAbsent: "X post",
     // `media`/`mediaStatus`/`mediaRationale`/`contentMode`/`thread`: RFC-12's
     // additions — provenance of the picture, the kind of post, the thread parts.
-    metaFields: ["lane", "angle", "targetHandle", "hook", "mediaRefs", "media", "mediaStatus", "mediaRationale", "contentMode", "thread"],
+    // `goal`/`audience`/`whyNow` are D11's line — the point of the post, in the
+    // three words the funnel uses. The engine has emitted them since
+    // x-craft@6 and nothing carried them onto the asset, so a client saw a
+    // lane label and no statement of what the post was for.
+    metaFields: ["goal", "audience", "whyNow", "lane", "angle", "targetHandle", "hook", "mediaRefs", "media", "mediaStatus", "mediaRationale", "contentMode", "thread"],
   });
   return withDeliverableMedia(job, deliverable, base);
 }
@@ -359,7 +363,15 @@ async function materializeLinkedInPost(job: Job, deliverable: Record<string, unk
     channels: ["linkedin"],
     titleFrom: ["headline", "hook", "text"],
     titleWhenAbsent: "LinkedIn post",
-    metaFields: ["archetype", "hook", "hashtags", "callToAction", "targetAudience", "takeaway", "media", "mediaStatus", "mediaRationale", "contentMode", "formattingNotes"],
+    // `formattingNotes` IS GONE, and this is the field that earned the rule.
+    // It is instruction to whoever formats the post — internal working text —
+    // and it reached a client through this list once. Nothing in this repo
+    // reads it back (verified: one reference, this line), so carrying it was
+    // pure leak surface.
+    //
+    // `goal`/`audience`/`whyNow` replace it with the thing a client should see:
+    // D11's statement of what the post is for, who it speaks to, and why now.
+    metaFields: ["goal", "audience", "whyNow", "archetype", "hook", "hashtags", "callToAction", "targetAudience", "takeaway", "media", "mediaStatus", "mediaRationale", "contentMode"],
   });
   return withDeliverableMedia(job, deliverable, base);
 }
@@ -375,7 +387,10 @@ function materializeRedditReply(deliverable: Record<string, unknown>): AssetMate
     rawTextFields: ["replyBody", "text"],
     titleFrom: ["targetThreadTitle", "replyBody", "text"],
     titleWhenAbsent: "Reddit reply",
-    metaFields: ["targetThreadUrl", "targetThreadTitle", "targetSubreddit", "parentCommentId", "disclosureIncluded"],
+    // `whyThread` is Reddit's own shape of the goal line (C7 §3): a reply has no
+    // funnel stage to state, but it does have to say why THIS thread was worth
+    // answering. `goal`/`audience` ride along for the agents that emit them.
+    metaFields: ["whyThread", "goal", "audience", "targetThreadUrl", "targetThreadTitle", "targetSubreddit", "parentCommentId", "disclosureIncluded"],
   });
 }
 
