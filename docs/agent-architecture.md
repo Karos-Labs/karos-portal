@@ -102,13 +102,45 @@ too late — by then the edit has already overwritten it.
 ## 3. The goal line, and the meta that must never reach a client
 
 Every output states its point: **goal, who it is for, why now** (D11). The engine emits it;
-the portal renders it. Three shapes arrive, and each already has a renderer:
+the portal renders it.
+
+**There is no `goalLine` field.** An earlier version of this section described one, and
+nothing has ever emitted or read it — the name appears in this repo only as an unrelated
+SEO/GEO gap line and as the local variable that renders the block below. The real shape is
+**three separate top-level fields on the deliverable**, and Reddit's own fourth:
+
+| Field | Sent by | Meaning |
+|---|---|---|
+| `goal` | x, linkedin, instagram, the three TikTok agents | the funnel stage, in the engine's own word — `attention` / `expertise` / `decide`. The client reads the sentence, not the word |
+| `audience` | the same | who this one is for |
+| `whyNow` | the same | why this week |
+| `whyThread` | reddit | its shape of the same line. A reply has no funnel stage to state, but it must say why THIS thread was worth answering. `goal`/`audience` ride along in Reddit's list for the agents that do emit them |
+
+They reach the client through **one path, for every product**:
+
+1. `src/lib/agent-engine/materialize.ts` projects them onto `asset.meta`. A product whose
+   deliverable is a bag of fields lists them in its `materializeDraftBatch` `metaFields`
+   (x, linkedin, reddit); a product whose deliverable is a typed shape spreads
+   `goalLineMeta(deliverable)` into its `meta` literal (instagram, the three TikTok
+   agents). Same rule, two spellings, because those materializers have no `metaFields`
+   list to add to.
+2. `src/components/asset-detail-modal.tsx` renders them as the "The point of this post"
+   block. It is a sibling of the content branch, not inside it, so a carousel and a video
+   reach it exactly as a drafts batch does — **there is no per-product renderer to write.**
+
+Read leniently at both ends: a field the run did not send stays off the asset, and the
+block renders only the rows that are there. A run from an older prompt version, or one that
+resumed mid-flight, legitimately carries none of it, and an empty labelled row is worse
+than no block.
+
+The three drafting agents have a **second** surface on top of that one. Their deliverable
+is a drafts batch — several drafts in one asset — and the asset-level meta above can only
+describe one thing, so each draft carries its own copy in the markdown or the envelope:
 
 | Shape | Agents | Read by |
 |---|---|---|
-| `- **Label:** value` bullets in the drafts markdown | x, linkedin | `src/lib/x-drafts.ts`, `src/lib/li-drafts.ts` — every such bullet is pushed onto the card |
-| a named slot in a JSON envelope | reddit (`whyThread`) | `envelopeToBatch` in `src/lib/reddit-drafts.ts` |
-| a structured `goalLine` field on the deliverable | instagram, the three TikTok agents | the asset card — the deliverable is a rendered PNG or mp4, with no markdown to hang a bullet on |
+| `- **Label:** value` bullets in the drafts markdown | x, linkedin | `src/lib/x-drafts.ts`, `src/lib/li-drafts.ts` — every such bullet is pushed onto that draft, and `x-drafts-review.tsx` / `li-drafts-review.tsx` render them per draft |
+| a named slot in a JSON envelope | reddit (`whyThread`) | `envelopeToBatch` in `src/lib/reddit-drafts.ts`, rendered as "Why this thread" by `reddit-drafts-review.tsx` |
 
 `classifyXMetaBullet` weighs a bullet's URL against a reply/quote phrase to find a draft's
 reply target. The engine therefore strips URLs from the why-now bullet. If you add a meta
@@ -169,7 +201,9 @@ Every new client is manual.
    platform, not the product, because a client has one account per platform and one subject
    history on it.
 4. Reconcile: call `collect` for it.
-5. Rendering: pick the goal-line shape from §3 and use the renderer that already exists.
+5. The goal line: carry `goal`/`audience`/`whyNow` onto the asset in `materialize.ts`, by
+   whichever of the two spellings in §3 that product's materializer uses. Nothing to
+   render — the modal's block already reads them.
 6. A portal doc under `docs/<agent>-portal.md`, like the ones already there.
 
 If a step in that list feels like it does not apply, say why in the PR. Every one of them has
