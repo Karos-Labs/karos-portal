@@ -233,6 +233,39 @@ export function AssetDetailModal({
 
   const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
   const imageConcept = asset.meta?.imageConcept as string | undefined;
+
+  /**
+   * D11's line: what this post is for, who it speaks to, and why now.
+   *
+   * THE ENGINE HAS ALWAYS SENT THIS and the portal has always dropped it. Every
+   * drafting agent emits `goal`/`audience`/`whyNow` (Reddit says `whyThread`
+   * instead, because a reply has no funnel stage to state), the decision says
+   * every output states its point, and a client saw a lane label on X, "why
+   * this thread" on Reddit and nothing at all on LinkedIn.
+   *
+   * Read leniently and rendered only when something is there: a run from an
+   * older prompt version, or one that resumed mid-flight, legitimately carries
+   * none of it, and an empty labelled block is worse than no block.
+   */
+  const goalLine = (() => {
+    const m = asset.meta ?? {};
+    const str = (v: unknown): string | undefined =>
+      typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined;
+    const GOAL_WORDS: Record<string, string> = {
+      attention: "Earn attention",
+      expertise: "Show expertise",
+      decide: "Help them decide",
+    };
+    const goalRaw = str(m.goal);
+    const rows: Array<{ label: string; value: string }> = [];
+    // The stored value is the funnel's own word; the client reads the sentence.
+    if (goalRaw) rows.push({ label: "Goal", value: GOAL_WORDS[goalRaw] ?? goalRaw });
+    const who = str(m.audience);
+    if (who) rows.push({ label: "Who it is for", value: who });
+    const why = str(m.whyNow) ?? str(m.whyThread);
+    if (why) rows.push({ label: "Why now", value: why });
+    return rows;
+  })();
   // The engine's email-safe render of a newsletter edition (2026-09-05). Only an
   // email asset carries one; every other type keeps the plain content view.
   const emailHtml = asset.type === "email" && typeof asset.meta?.html === "string" && asset.meta.html.length > 0 ? asset.meta.html : undefined;
@@ -460,6 +493,22 @@ export function AssetDetailModal({
 
         {hashtags.length > 0 && (liBatch || redditBatch || xBatch || emailHtml) && (
           <p className="text-xs text-muted">{hashtags.map((h) => "#" + h).join(" ")}</p>
+        )}
+
+        {goalLine.length > 0 && (
+          <div className="rounded-lg bg-surface-2 p-2.5">
+            <p className="mb-1.5 text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">
+              The point of this post
+            </p>
+            <dl className="space-y-1">
+              {goalLine.map((row) => (
+                <div key={row.label} className="flex gap-1.5 text-xs">
+                  <dt className="shrink-0 font-medium text-foreground">{row.label}:</dt>
+                  <dd className="text-muted">{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
         )}
 
         {imageConcept && (
