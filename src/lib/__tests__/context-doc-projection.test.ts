@@ -104,6 +104,36 @@ describe("projectClientToWorkspace", () => {
     expect(brand.voice).toBe("precise, bold");
   });
 
+  /**
+   * `brand.voice` is what the ENGINE reads as the brand's voice:
+   * `readBrandVoiceField` pulls it out as a first-class `brandVoice: "..."`
+   * drafting input and every channel's copy step threads it into its prompt.
+   * It used to be the tone keywords joined with commas, so the whole fleet was
+   * being told this brand sounds like "precise, bold" while the client's real
+   * voice spec — sentence unit, banned punctuation, the verbatim CTA line —
+   * was never projected at all.
+   */
+  it("projects the client's voice statement as brand.voice, keeping the keywords as keywords", async () => {
+    const { deps, written } = fakeDeps();
+    await projectClientToWorkspace(
+      { ...CLIENT, brandVoice: "Short declarative sentences. No exclamation marks. Every claim carries a number." } as never,
+      undefined,
+      deps,
+    );
+    const brand = written.get("clients/karoslabs/client/brand.json") as ReturnType<typeof toProjectedBrand>;
+    expect(brand.voice).toBe("Short declarative sentences. No exclamation marks. Every claim carries a number.");
+    expect(brand.toneKeywords).toEqual(["precise", "bold"]);
+  });
+
+  it("falls back to the keywords when the client has no voice statement yet", async () => {
+    // Branding has run but nobody wrote a voice: projecting the keywords is
+    // better than projecting nothing, and it is what this field used to be.
+    const { deps, written } = fakeDeps();
+    await projectClientToWorkspace(CLIENT, undefined, deps);
+    const brand = written.get("clients/karoslabs/client/brand.json") as ReturnType<typeof toProjectedBrand>;
+    expect(brand.voice).toBe("precise, bold");
+  });
+
   it("projects a hostname as the client domain, never an email address", async () => {
     // Prep's seeded profile carried `domains: ["hello@karoslabs.com"]`, which
     // no citation will ever match.

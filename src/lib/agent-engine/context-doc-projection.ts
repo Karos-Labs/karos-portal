@@ -87,7 +87,23 @@ export interface ProjectedContextDoc {
 
 /** The loose shape agent-engine's `client.getBrand` reads — see `packages/tools/karos-client/src/get-brand.ts`. */
 export interface ProjectedBrand {
+  /**
+   * The client's brand-voice STATEMENT — `Client.brandVoice` — because that is
+   * what the engine reads this field as. `readBrandVoiceField`
+   * (`@agent-engine/workflow`) pulls `brand.voice` out as a first-class
+   * `brandVoice: "..."` drafting input, and every channel's copy step threads
+   * it into its prompt.
+   *
+   * It used to be `toneKeywords.join(", ")`. So the one field the whole fleet
+   * reads as "how does this brand sound" was delivering five adjectives —
+   * "Innovative, Precise, Disruptive, Forward-thinking, Intelligent" — while
+   * the client's actual voice spec (sentence unit, banned words, banned
+   * punctuation, person and tense, the verbatim CTA line) sat unprojected on
+   * the client record. The keywords are still projected, under their own name.
+   */
   voice?: string;
+  /** `BrandingGuidelines.toneKeywords`, as the list it is. */
+  toneKeywords?: string[];
   colors?: string[];
   logoUrl?: string;
   tagline?: string;
@@ -157,12 +173,17 @@ export function toProjectedContextDoc(doc: ClientContextDoc, projectedAt: string
  * form the portal actually maintains, so an engine that learns to read roles
  * gets them without another projection change.
  */
-export function toProjectedBrand(g: BrandingGuidelines, projectedAt: string): ProjectedBrand {
+export function toProjectedBrand(g: BrandingGuidelines, projectedAt: string, brandVoice?: string): ProjectedBrand {
   const dominant = (g.dominantColors ?? []).filter((c) => typeof c.hex === "string" && c.hex.length > 0);
   const colors = dominant.length > 0 ? dominant.map((c) => c.hex.toLowerCase()) : [g.primaryAccent, g.secondaryAccent, g.brandNeutralDark, g.brandNeutralLight].filter((c): c is string => Boolean(c));
-  const voice = (g.toneKeywords ?? []).join(", ") || undefined;
+  // The statement first; the keywords only when there is no statement, so a
+  // client whose branding has run but whose voice was never written still
+  // projects something rather than nothing.
+  const keywords = (g.toneKeywords ?? []).filter((k) => k.trim().length > 0);
+  const voice = brandVoice?.trim() || keywords.join(", ") || undefined;
   return {
     ...(voice ? { voice } : {}),
+    ...(keywords.length > 0 ? { toneKeywords: keywords } : {}),
     ...(colors.length > 0 ? { colors } : {}),
     ...(g.logoUrl ? { logoUrl: g.logoUrl } : {}),
     ...(g.fontHeading || g.fontBody ? { fonts: { ...(g.fontHeading ? { heading: g.fontHeading } : {}), ...(g.fontBody ? { body: g.fontBody } : {}) } } : {}),
@@ -233,7 +254,7 @@ export async function projectClientToWorkspace(
   for (const doc of selected) {
     writes.push(deps.write(`${prefix}/context/${doc.docType}.json`, toProjectedContextDoc(doc, projectedAt)));
   }
-  const brand = client.brandingGuidelines ? toProjectedBrand(client.brandingGuidelines, projectedAt) : null;
+  const brand = client.brandingGuidelines ? toProjectedBrand(client.brandingGuidelines, projectedAt, client.brandVoice) : null;
   if (brand) writes.push(deps.write(`${prefix}/client/brand.json`, brand));
   writes.push(deps.write(`${prefix}/client/profile.json`, toProjectedProfile(client, projectedAt)));
 
