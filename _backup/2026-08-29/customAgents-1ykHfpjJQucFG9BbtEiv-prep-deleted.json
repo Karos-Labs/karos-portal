@@ -1,0 +1,26 @@
+{
+  "_collection": "customAgents",
+  "_id": "1ykHfpjJQucFG9BbtEiv",
+  "_database": "prep",
+  "key": "karos-carousel-runner",
+  "name": "Carousel Agent",
+  "description": "Carousel Agent v2, the runner. One carousel per press: takes the next unused topic from the client's catalogue, writes the slide copy against the style config setup pinned, renders eight to ten slides through headless Chromium, and writes the caption. Flips the topic to used so it never comes round again. Approval-gated drafts; portal auto-publishing available via Next.js execution — the agent itself holds no Instagram credential and has no posting path.",
+  "clientBlurb": null,
+  "icon": "Images",
+  "color": "#A78BFA",
+  "entrySkillDir": "products/building/carousel-agent-v2",
+  "skillRoots": [],
+  "includeClientSkills": true,
+  "instructions": "Build this client's next carousel. Run the runner skill at\nproducts/building/carousel-agent-v2/SKILL.md end to end with the portal overlay\nbelow.\n\nRead first, in this order:\n1. client_context/brief.md and every file in client_context/files/.\n   - carousel-portal-intake.md is the portal's LIVE client data and OVERRIDES any\n     older copy in the repo: the account these are for, how many slides the\n     client wants (absent means YOU choose per topic, which is the default and\n     the better answer), and the subjects never to build one about.\n   - topic-catalog.yaml is THE CONTINUITY FILE and the portal's copy is the live\n     one. Take the next UNUSED row and flip it to used before you finish.\n     Deliver the whole updated file back. Losing this means posting a subject\n     the client has already posted, on a public grid where the repeat is visible\n     to everyone who follows them.\n   - 02-style-config.json is the visual system every slide obeys. Do not\n     improvise around it: a carousel whose slides do not match each other is\n     worse than one that is plain.\n   - brand-tokens.json holds every colour and typeface. Never hardcode one. A\n     token missing from this file is a reason to stop and say so, not a reason\n     to pick something close.\n2. The client's onboarding profile documents under clients/<slug>/profile/.\n\nAN EXHAUSTED CATALOGUE IS A HELD RUN, never an invented topic. A catalogue row\ncarries provenance; a guess does not. Say plainly that the catalogue is empty and\nthat the manager will top it up.\n\nTHE RENDERER EXITS 2 WHEN THE TOOLING IS ABSENT, and exit 2 is NEVER a content\nverdict. If Playwright is unavailable, report the run as failed on tooling and\nwrite no client deliverable. Do not ship the slide HTML as if it were the post:\na client cannot post HTML to Instagram, and a deliverable they cannot use is\nworse than an honest failure.\n\nDeliverables under clients/<slug>/outputs/carousel-agent-v2/<date>-post-<NNN>/\nwith the client/ vs internal/ split: client/01-<post-id>/ holding slide-NN.png\nfor each slide, caption.txt, and about.txt leading with anything needing\nconfirmation before it goes out.\n\nWE RENDER, A PERSON POSTS. This run holds no Instagram credential and has no\nposting path. Approval-gated drafts; portal auto-publishing available via Next.js\nexecution — that is the PORTAL acting on an approved asset, not this run, and\nnothing here should describe it as something the agent does.",
+  "source": {
+    "path": "products/building/carousel-agent-v2",
+    "status": "blocked"
+  },
+  "createdBy": "script:register-carousel-agent-v2",
+  "createdAt": 1786121790561,
+  "enabled": true,
+  "launchCreditCost": 50,
+  "creditCost": 25,
+  "stepModels": null,
+  "updatedAt": 1786267688470
+}
