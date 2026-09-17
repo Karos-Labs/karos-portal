@@ -84,7 +84,7 @@ import { hasAiProcessingFailure, toClientPortalView } from "@/lib/client-visibil
 import { SettingsTabs, type SettingsTab } from "@/components/settings-tabs";
 import { AccountProfilePanel, AccountSecurityPanel } from "@/components/settings-form";
 import { ACCOUNT_TABS } from "@/lib/account-settings-tabs";
-import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
+import { agentKeyMatchesClientSlug, isUnlistedAgent } from "@/lib/custom-agent-launch";
 import { relativeTime } from "@/lib/utils";
 import type {
   Asset,
@@ -401,6 +401,14 @@ export default async function ClientSettingsPage({
   // per-client agent instance belonging to another one: granting it would be
   // inert (both submit cores refuse the pair) and scheduling it would build a
   // row that refuses on every fire.
+  //
+  // NOT filtered by `isUnlistedAgent` here: a `parentKey` step (e.g. "Newsletter
+  // Manager") still needs its OWN id in `customAgentIds` for its parent to be
+  // able to fire it (`isCustomAgentGrantedToClient` checks the step's id, not
+  // the parent's) — `ClientAgentAccessCard` gets the full list so saving the
+  // access card can never silently un-grant a step nothing here re-offers. It
+  // hides unlisted rows in its own render instead. `ScheduledRunsCard` has no
+  // such grant to protect, so it filters them out below directly.
   const clientAgents = customAgents.filter((a) =>
     agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug),
   );
@@ -928,7 +936,7 @@ export default async function ClientSettingsPage({
           clientId={client.id}
           runs={scheduledRuns}
           agents={clientAgents
-            .filter((a) => a.enabled)
+            .filter((a) => a.enabled && !isUnlistedAgent(a))
             .map((a) => ({ id: a.id, name: a.name, entrySkillDir: a.entrySkillDir }))}
         />
       </Card>

@@ -80,6 +80,7 @@ import {
   REPUTATION_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
   EMPTY_BRIEF_REQUEST,
+  isUnlistedAgent,
 } from "@/lib/custom-agent-launch";
 import {
   engineProductIdForPair,
@@ -2665,7 +2666,14 @@ export function ClientAgentAccessCard({
     });
   }
 
-  if (agents.length === 0) {
+  // Rendered rows only — a `parentKey` step (e.g. "Newsletter Manager") is not
+  // a product an admin chooses to grant on its own, so it gets no checkbox
+  // here. `selected` above still seeds from the FULL `agents`/`allowedIds`, so
+  // a step already granted alongside its parent stays in what gets saved even
+  // though nothing here re-offers it.
+  const visibleAgents = agents.filter((agent) => !isUnlistedAgent(agent));
+
+  if (visibleAgents.length === 0) {
     return (
       <p className="text-xs text-muted">
         No custom agents in the library yet. Import them on the{" "}
@@ -2680,7 +2688,7 @@ export function ClientAgentAccessCard({
   return (
     <div className="space-y-3">
       <div className="space-y-1">
-        {agents.map((agent) => (
+        {visibleAgents.map((agent) => (
           <label
             key={agent.id}
             className={cn(
