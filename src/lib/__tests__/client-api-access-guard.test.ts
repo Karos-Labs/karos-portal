@@ -688,6 +688,11 @@ describe("every API route that takes a client id asks the fence", () => {
     // own calendar day; the client ids come from the collection, never from the
     // request, which is the shape this bucket exists for.
     "daily-digest": "cron",
+    // SCRUM-495. Sweeps every client's connected channels for a follower count
+    // and writes one row per client per platform per day. Same shape as
+    // `daily-digest` and `analytics/sync`: the client ids come from the
+    // collection, never from the request.
+    "followers/sync": "cron",
     "ingest/fireflies": "signed",
     // Filed "self" on the first pass and rejected by the mechanical check
     // below — it takes `?clientId=` and signs it into an OAuth state. Sixth

@@ -1659,10 +1659,16 @@ export async function listClientFollowerSnapshots(
 }
 
 /**
- * Record one channel's follower count for one day. No caller exists yet — see
- * the ClientFollowerSnapshot docstring in types.ts — this is the write side a
- * future live-ingestion cron calls; `follower-tracking.ts`'s deterministic mock
- * fills the display until then.
+ * Record one channel's follower count for one day.
+ *
+ * Called by `/api/followers/sync` (SCRUM-495) and by nothing else — a follower
+ * count enters this system in exactly one place, on purpose, because the honesty
+ * rule the collection carries (a number a platform reported, or no row at all)
+ * is only as good as the narrowest way in.
+ *
+ * Idempotent on the deterministic doc id: the same client, platform and day
+ * rewrites one row, so the daily sweep can be re-run or retried without growing
+ * the series.
  */
 export async function recordClientFollowerSnapshot(
   input: Omit<ClientFollowerSnapshot, "id">,

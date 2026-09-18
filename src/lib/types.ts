@@ -2152,11 +2152,16 @@ export interface PerformanceBenchmarks {
  * `${clientId}_${platform}_${capturedAt}` — deterministic per day so a re-run
  * on the same day overwrites rather than duplicating.
  *
- * NO LIVE INGESTION CRON EXISTS YET (unlike clientMarketingAnalytics's
- * `/api/analytics/sync`) — this collection ships as the storage half of the
- * infrastructure only. Until something writes to it, `follower-tracking.ts`'s
- * deterministic mock fills the display in memory, same "mock path stops being
- * reached once wired" contract as `fetchLiveRaw` in analytics-providers.ts.
+ * WRITTEN BY `/api/followers/sync` (SCRUM-495), the daily Cloud Scheduler
+ * sweep that reads each client's connected channels. It shipped as the storage
+ * half of the infrastructure only and stayed that way for a long time: nothing
+ * called `recordClientFollowerSnapshot`, so this collection was empty for every
+ * client and the KPI cell reading it had never rendered for anybody.
+ *
+ * A row here is always a number a platform reported. The deterministic mock
+ * that used to fill the display was deleted in 2026-08 and nothing replaced it
+ * — a platform this sweep cannot read leaves a GAP in the series rather than an
+ * invented point (see `follower-tracking.ts`).
  */
 export interface ClientFollowerSnapshot {
   id: string;

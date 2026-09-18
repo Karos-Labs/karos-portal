@@ -173,10 +173,14 @@ export async function fetchInstagramMediaInsights(
 
 /**
  * The account's current follower total — a plain field, not an insights
- * metric. The natural first writer for `clientFollowerSnapshots`
- * (`src/lib/follower-tracking.ts`), which today has none — see that module's
- * own comment: "the moment an ingestion cron writes to
- * clientFollowerSnapshots... the audience cell lights up on its own".
+ * metric. Read daily by `/api/followers/sync` into `clientFollowerSnapshots`
+ * (SCRUM-495), which is what it was written for.
+ *
+ * `igUserId` is the IG BUSINESS ACCOUNT id. The sweep takes it from the
+ * integration's own `pageId` and reports the client as unreadable when there is
+ * none, rather than re-walking `me/accounts` and each page's
+ * `instagram_business_account` the way `publishInstagram` does — that resolver
+ * belongs in one place, and a second copy is how the two drift.
  */
 export async function fetchInstagramFollowerCount(systemUserToken: string, igUserId: string): Promise<number | null> {
   const res = await fetch(
