@@ -15,6 +15,7 @@ import {
   injectBrandVoiceSection,
   type BrandingGenResult,
 } from "@/lib/branding";
+import { projectClientOnSaveInBackground } from "@/lib/agent-engine/project-on-save";
 import type { BrandColor, BrandingGuidelines } from "@/lib/types";
 import { requireStaff, requireAdmin, requireClientAccess, logActivity } from "./_shared";
 
@@ -111,6 +112,11 @@ export async function saveBrandingGuidelinesAction(
     actor: user.name,
     actorRole: user.role === "CLIENT_USER" ? "client" : "staff",
   });
+
+  // T-B13: the brand the engine reads lives in the workspace, and this save
+  // just changed it. Not awaited — the correction is safe in Firestore, and the
+  // next dispatch re-projects from there regardless.
+  projectClientOnSaveInBackground(clientId, "branding-saved");
 
   revalidatePath(`/clients/${clientId}`);
 }

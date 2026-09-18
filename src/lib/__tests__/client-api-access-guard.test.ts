@@ -656,6 +656,12 @@ describe("every API route that takes a client id asks the fence", () => {
   const API_ROOT = join(process.cwd(), "src/app/api");
 
   const CLASSIFIED: Record<string, "fenced" | "cron" | "signed" | "self" | "resource"> = {
+    // T-B13's backfill. `cron` rather than `fenced` on the bucket's own terms:
+    // it iterates every client by design, so a per-client fence would be
+    // meaningless. The optional `?clientId=` narrows that sweep for an operator
+    // who wants one client — it never widens what a caller can reach, because
+    // the shared secret is the whole gate either way.
+    "agent-engine/project-context": "cron",
     "agent-engine/reconcile": "cron",
     // Signs a PUT into `clients/<id>/run-attachments/`, so the id arrives
     // asserted by the caller and the fence is the only thing between a guessed

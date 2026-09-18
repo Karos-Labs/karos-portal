@@ -44,6 +44,7 @@ import {
   clampIntervalMonths,
   clampScheduleDayOfMonth,
 } from "@/lib/intel-schedule";
+import { projectClientOnSaveInBackground } from "@/lib/agent-engine/project-on-save";
 
 const CONTEXT_DOC_TIERS: ContextDocTier[] = ["internal", "client", "internal-only"];
 
@@ -477,6 +478,11 @@ export async function refreshClientContextDocsAction(clientId: string): Promise<
     }),
   );
 
+  // T-B13: a corrected document must reach the engine's workspace, not just
+  // Firestore. Best-effort and unawaited — the correction is already saved, and
+  // the next dispatch re-projects from the record regardless.
+  projectClientOnSaveInBackground(clientId, "context-doc-refreshed");
+
   revalidatePath(`/clients/${clientId}`);
 }
 
@@ -757,6 +763,11 @@ async function applyTargetedDocCorrection(
     }),
   ]);
 
+  // T-B13: a corrected document must reach the engine's workspace, not just
+  // Firestore. Best-effort and unawaited — the correction is already saved, and
+  // the next dispatch re-projects from the record regardless.
+  projectClientOnSaveInBackground(doc.clientId, "context-doc-corrected");
+
   revalidatePath(`/clients/${doc.clientId}`);
   return { changed: true };
 }
@@ -823,6 +834,11 @@ export async function applyDocCorrectionAction(
       creatorRole: "staff",
     }),
   ]);
+
+  // T-B13: a corrected document must reach the engine's workspace, not just
+  // Firestore. Best-effort and unawaited — the correction is already saved, and
+  // the next dispatch re-projects from the record regardless.
+  projectClientOnSaveInBackground(clientId, "context-doc-corrected");
 
   revalidatePath(`/clients/${clientId}`);
 }
@@ -935,6 +951,11 @@ async function applyGlobalDocCorrection(clientId: string, corrections: string): 
       creatorRole: actorRole,
     }),
   ]);
+
+  // T-B13: a corrected document must reach the engine's workspace, not just
+  // Firestore. Best-effort and unawaited — the correction is already saved, and
+  // the next dispatch re-projects from the record regardless.
+  projectClientOnSaveInBackground(clientId, "context-doc-corrected-globally");
 
   revalidatePath(`/clients/${clientId}`);
 }

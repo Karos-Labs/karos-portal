@@ -24,6 +24,9 @@ import { toStoredPace } from "@/lib/daily-pace";
 import { isValidTimeZone } from "@/lib/run-cadence";
 import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
 import { parseForbiddenTopics, validateForbiddenTopics } from "@/lib/dynamic-agent-guardrails";
+import { parseForbiddenTerms, validateForbiddenTerms } from "@/lib/brand-compliance-terms";
+import { projectClientOnSaveInBackground } from "@/lib/agent-engine/project-on-save";
+import { isTopicApprovalMode } from "@/lib/agent-engine/topic-approval";
 import { requireStaff, logGenerationFailure } from "./_shared";
 
 export async function createClientAction(input: {
@@ -366,6 +369,12 @@ export async function updateClientAction(
     postsPerDay?: string;
     /** The forbidden-topics box, one topic per line. See dynamic-agent-guardrails.ts. */
     forbiddenTopicsText?: string;
+    /** The brand-compliance terms list, when a caller already has it as an array. */
+    forbiddenTerms?: string[];
+    /** The "words we never use" box, one term per line. See brand-compliance-terms.ts. */
+    forbiddenTermsText?: string;
+    /** G3/D18's switch. Anything that is not one of the three words is ignored. */
+    topicApproval?: string;
   },
 ) {
   await requireStaff();
@@ -429,6 +438,35 @@ export async function updateClientAction(
     if (error) return { ok: false as const, error };
     patch.forbiddenTopics = topics;
   }
+  // Brand-compliance terms (T-A11 / SCRUM-240). Same shape as the topics above
+  // and for the same reasons: parsed on the write side so the limits are true
+  // of the API rather than of one form, and an empty box stores `[]` rather
+  // than dropping the key, because updateClient merges and a clearing edit that
+  // silently does nothing is worse than one that errors.
+  //
+  // Projected onto `client/brand.json` by `projectClientToWorkspace`, which now
+  // runs before every dispatch — so a term added here is in force on the next
+  // run without anyone re-running onboarding.
+  if (input.forbiddenTermsText !== undefined) {
+    const terms = parseForbiddenTerms(input.forbiddenTermsText);
+    const error = validateForbiddenTerms(terms);
+    if (error) return { ok: false as const, error };
+    patch.forbiddenTerms = terms;
+  } else if (Array.isArray(input.forbiddenTerms)) {
+    const terms = parseForbiddenTerms(input.forbiddenTerms.filter((t) => typeof t === "string").join("\n"));
+    const error = validateForbiddenTerms(terms);
+    if (error) return { ok: false as const, error };
+    patch.forbiddenTerms = terms;
+  }
+  // G3/D18. VALIDATED, NOT COERCED: an unrecognised word is dropped rather
+  // than written or defaulted, because the two wrong answers here are opposite
+  // and both bad — silently storing junk makes `topicApprovalForRun` fall back
+  // to `default` forever with the settings page showing something else, and
+  // silently rewriting it to `default` would turn a typo into a gate somebody
+  // deliberately turned off coming back on.
+  if (input.topicApproval !== undefined && isTopicApprovalMode(input.topicApproval)) {
+    patch.topicApproval = input.topicApproval;
+  }
   if (typeof input.domainsCsv === "string") {
     patch.domains = input.domainsCsv.split(",").map((d) => d.trim().toLowerCase()).filter(Boolean);
   }
@@ -448,6 +486,14 @@ export async function updateClientAction(
   }
 
   await updateClient(id, patch);
+
+  // T-B13. This action is the one place a human edits the profile, the brand
+  // voice, the domains and — since SCRUM-240 — the forbidden terms, all four of
+  // which the engine reads out of the projected workspace rather than out of
+  // Firestore. Projecting here is what makes a correction visible before the
+  // next run rather than only during it.
+  projectClientOnSaveInBackground(id, "client-record-saved");
+
   revalidatePath(`/clients/${id}`);
   revalidatePath("/clients");
   return { ok: true as const };

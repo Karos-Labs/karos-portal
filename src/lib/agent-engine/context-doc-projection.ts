@@ -111,6 +111,19 @@ export interface ProjectedBrand {
   dominantColors?: Array<{ hex: string; role?: string; dominanceRank: number }>;
   visualStyle?: string;
   guidelines?: string;
+  /**
+   * `Client.forbiddenTerms` — T-A11 / SCRUM-240. The producer for
+   * `gate.brandCompliance`, which reads `clientContext.brand.forbiddenTerms`
+   * and, until this was written, received `[]` on every run in the fleet.
+   *
+   * OMITTED WHEN EMPTY rather than projected as `[]`. The engine's gate reports
+   * `configStatus: "unconfigured"` when it gets nothing, which is the honest
+   * answer for a client whose brand rules were never entered; writing an empty
+   * array would say the same thing in a shape that reads like a configured
+   * client who happens to ban nothing. Absent and empty mean the same to the
+   * gate, so the one that cannot be misread is the one to send.
+   */
+  forbiddenTerms?: string[];
   projectedAt: string;
   projectedBy: string;
 }
@@ -173,7 +186,27 @@ export function toProjectedContextDoc(doc: ClientContextDoc, projectedAt: string
  * form the portal actually maintains, so an engine that learns to read roles
  * gets them without another projection change.
  */
-export function toProjectedBrand(g: BrandingGuidelines, projectedAt: string, brandVoice?: string): ProjectedBrand {
+export function toProjectedBrand(
+  /**
+   * `Partial` because a client can now reach this function with no branding at
+   * all: `forbiddenTerms` rides on `brand.json` and is entered on the settings
+   * page, which a client fills in long before anyone runs the branding step.
+   * Every field read below was already optional — the only required key on
+   * `BrandingGuidelines` is `updatedAt`, which this projection does not read.
+   */
+  g: Partial<BrandingGuidelines>,
+  projectedAt: string,
+  /**
+   * The parts of the brand that live on the CLIENT rather than in the branding
+   * guidelines. An object rather than a third and fourth positional string,
+   * because these two arrived one ticket apart and a third will arrive the same
+   * way — `toProjectedBrand(g, at, voice, terms, ...)` is how a call site ends
+   * up passing `undefined` into the wrong slot.
+   */
+  fromClient: { brandVoice?: string; forbiddenTerms?: readonly string[] } = {},
+): ProjectedBrand {
+  const { brandVoice } = fromClient;
+  const forbiddenTerms = (fromClient.forbiddenTerms ?? []).filter((t) => t.trim().length > 0);
   const dominant = (g.dominantColors ?? []).filter((c) => typeof c.hex === "string" && c.hex.length > 0);
   const colors = dominant.length > 0 ? dominant.map((c) => c.hex.toLowerCase()) : [g.primaryAccent, g.secondaryAccent, g.brandNeutralDark, g.brandNeutralLight].filter((c): c is string => Boolean(c));
   // The statement first; the keywords only when there is no statement, so a
@@ -190,6 +223,7 @@ export function toProjectedBrand(g: BrandingGuidelines, projectedAt: string, bra
     ...(dominant.length > 0 ? { dominantColors: dominant.map((c) => ({ hex: c.hex.toLowerCase(), ...(c.role ? { role: c.role } : {}), dominanceRank: c.dominanceRank })) } : {}),
     ...(g.visualStyle ? { visualStyle: g.visualStyle } : {}),
     ...(g.guidelines ? { guidelines: cap(g.guidelines) } : {}),
+    ...(forbiddenTerms.length > 0 ? { forbiddenTerms: [...forbiddenTerms] } : {}),
     projectedAt,
     projectedBy: PROJECTED_BY,
   };
@@ -254,7 +288,17 @@ export async function projectClientToWorkspace(
   for (const doc of selected) {
     writes.push(deps.write(`${prefix}/context/${doc.docType}.json`, toProjectedContextDoc(doc, projectedAt)));
   }
-  const brand = client.brandingGuidelines ? toProjectedBrand(client.brandingGuidelines, projectedAt, client.brandVoice) : null;
+  // Guidelines OR forbidden terms — NOT guidelines alone. `forbiddenTerms`
+  // rides on `brand.json` because that is where `gate.brandCompliance` reads
+  // it, but a client can have banned vocabulary long before anyone runs the
+  // branding step; gating the whole file on `brandingGuidelines` would leave
+  // exactly those clients' gate unconfigured with the rules sitting filled in
+  // on the settings page, which is the failure this ticket exists to end.
+  const hasForbiddenTerms = (client.forbiddenTerms ?? []).some((t) => t.trim().length > 0);
+  const brand =
+    client.brandingGuidelines || hasForbiddenTerms
+      ? toProjectedBrand(client.brandingGuidelines ?? {}, projectedAt, { brandVoice: client.brandVoice, forbiddenTerms: client.forbiddenTerms })
+      : null;
   if (brand) writes.push(deps.write(`${prefix}/client/brand.json`, brand));
   writes.push(deps.write(`${prefix}/client/profile.json`, toProjectedProfile(client, projectedAt)));
 

@@ -19,6 +19,8 @@
  * the moment someone builds a new one.
  */
 
+import { parseLineList } from "@/lib/brand-compliance-terms";
+
 /** Cap chosen to match the Studio's own MAX_INPUT_FIELDS/MAX_STEPS order of magnitude. */
 export const MAX_FORBIDDEN_TOPICS = 40;
 export const MAX_FORBIDDEN_TOPIC_CHARS = 120;
@@ -37,18 +39,7 @@ export const MAX_FORBIDDEN_TOPIC_CHARS = 120;
  * rejects, and it runs against the parsed result.
  */
 export function parseForbiddenTopics(text: string): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.trim().slice(0, MAX_FORBIDDEN_TOPIC_CHARS).trim();
-    if (!line) continue;
-    const key = line.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(line);
-    if (out.length >= MAX_FORBIDDEN_TOPICS) break;
-  }
-  return out;
+  return parseLineList(text, { maxEntries: MAX_FORBIDDEN_TOPICS, maxChars: MAX_FORBIDDEN_TOPIC_CHARS });
 }
 
 /** The stored array back into textarea text — the exact inverse of parseForbiddenTopics for any already-parsed list. */

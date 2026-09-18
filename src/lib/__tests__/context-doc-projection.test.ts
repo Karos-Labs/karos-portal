@@ -134,6 +134,52 @@ describe("projectClientToWorkspace", () => {
     expect(brand.voice).toBe("precise, bold");
   });
 
+  /**
+   * T-A11 / SCRUM-240. `gate.brandCompliance` reads
+   * `clientContext.brand.forbiddenTerms` and ran in every workflow with `[]`,
+   * because nothing in this repo had ever written the field. These three cases
+   * are the producer: that a configured list arrives, that an empty one is
+   * OMITTED rather than sent as `[]`, and that a client with terms but no
+   * branding still gets a brand file at all.
+   */
+  it("projects the client's forbidden terms onto the brand the gate reads", async () => {
+    const { deps, written } = fakeDeps();
+    await projectClientToWorkspace({ ...CLIENT, forbiddenTerms: ["revolutionary", "best-in-class"] } as never, undefined, deps);
+    const brand = written.get("clients/karoslabs/client/brand.json") as ReturnType<typeof toProjectedBrand>;
+    expect(brand.forbiddenTerms).toEqual(["revolutionary", "best-in-class"]);
+  });
+
+  it("omits forbiddenTerms entirely when the client has none, so the gate reports unconfigured rather than clean", async () => {
+    // An empty array and an absent key mean the same thing to the gate, and
+    // only one of them can be misread as "this client bans nothing on purpose".
+    const { deps, written } = fakeDeps();
+    await projectClientToWorkspace({ ...CLIENT, forbiddenTerms: [] } as never, undefined, deps);
+    const brand = written.get("clients/karoslabs/client/brand.json") as ReturnType<typeof toProjectedBrand>;
+    expect(brand).not.toHaveProperty("forbiddenTerms");
+  });
+
+  it("writes a brand file for a client that has forbidden terms but has never had branding run", async () => {
+    // The terms are entered on the settings page, which a client fills in long
+    // before anyone runs branding. Gating brand.json on `brandingGuidelines`
+    // would leave exactly those clients' gate unconfigured with the rules
+    // visibly filled in — the failure this ticket exists to end.
+    const { deps, written } = fakeDeps();
+    const noBranding = { ...CLIENT, brandingGuidelines: undefined, brandVoice: undefined, forbiddenTerms: ["risk-free-ish"] };
+    const result = await projectClientToWorkspace(noBranding as never, undefined, deps);
+    expect(result.brand).toBe(true);
+    const brand = written.get("clients/karoslabs/client/brand.json") as ReturnType<typeof toProjectedBrand>;
+    expect(brand.forbiddenTerms).toEqual(["risk-free-ish"]);
+    expect(brand.colors).toBeUndefined();
+  });
+
+  it("writes no brand file when the client has neither branding nor forbidden terms", async () => {
+    const { deps, written } = fakeDeps();
+    const bare = { ...CLIENT, brandingGuidelines: undefined, brandVoice: undefined, forbiddenTerms: [] };
+    const result = await projectClientToWorkspace(bare as never, undefined, deps);
+    expect(result.brand).toBe(false);
+    expect(written.has("clients/karoslabs/client/brand.json")).toBe(false);
+  });
+
   it("projects a hostname as the client domain, never an email address", async () => {
     // Prep's seeded profile carried `domains: ["hello@karoslabs.com"]`, which
     // no citation will ever match.

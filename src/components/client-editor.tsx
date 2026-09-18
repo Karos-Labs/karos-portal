@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Card, CardTitle, Button, Input, Textarea, Label } from "@/components/ui";
+import { Card, CardTitle, Button, Input, Textarea, Label, Select } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { CLIENT_CATEGORY_MAX_LENGTH, clientCategoryValue, cn } from "@/lib/utils";
 import { updateClientAction } from "@/lib/actions";
@@ -11,7 +11,23 @@ import {
   formatForbiddenTopics,
   parseForbiddenTopics,
 } from "@/lib/dynamic-agent-guardrails";
+import {
+  MAX_FORBIDDEN_TERMS,
+  formatForbiddenTerms,
+  parseForbiddenTerms,
+} from "@/lib/brand-compliance-terms";
 import type { Client } from "@/lib/types";
+
+/**
+ * The three switch positions, in the client's words rather than the stored
+ * enum's. One table, read by both the view card and the edit control, so the
+ * two cannot drift into describing the same setting differently.
+ */
+const TOPIC_APPROVAL_LABEL = {
+  default: "On manual runs (recommended)",
+  always: "On every run, including scheduled",
+  never: "Never pause",
+} as const;
 
 export function ClientEditor({ client }: { client: Client }) {
   const router = useRouter();
@@ -31,6 +47,13 @@ export function ClientEditor({ client }: { client: Client }) {
     // Topic guardrails, one per line. Parsed server-side by updateClientAction
     // (docs/dynamic-agent-guardrails.md) — this box only round-trips the text.
     forbiddenTopicsText: formatForbiddenTopics(client.forbiddenTopics),
+    // Brand-compliance terms, one per line. Same round-trip as the topics box
+    // above and a different rule — a term is scanned for as a substring, a
+    // topic is vetted by a model. See lib/brand-compliance-terms.ts.
+    forbiddenTermsText: formatForbiddenTerms(client.forbiddenTerms),
+    // G3/D18. Stored as one of three words; absent reads as "default", which is
+    // what every client gets until someone changes it.
+    topicApproval: client.topicApproval ?? "default",
   });
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -154,6 +177,12 @@ export function ClientEditor({ client }: { client: Client }) {
           value={formatForbiddenTopics(client.forbiddenTopics)}
           multiline
         />
+        <Field
+          label={`Words we never use (${(client.forbiddenTerms ?? []).length})`}
+          value={formatForbiddenTerms(client.forbiddenTerms)}
+          multiline
+        />
+        <Field label="Approve the topic first" value={TOPIC_APPROVAL_LABEL[client.topicApproval ?? "default"]} />
       </Card>
     );
   }
@@ -303,6 +332,37 @@ export function ClientEditor({ client }: { client: Client }) {
         <p className="mt-1 text-[11px] text-muted-2">
           {parseForbiddenTopics(form.forbiddenTopicsText).length} / {MAX_FORBIDDEN_TOPICS}
         </p>
+      </div>
+      <div>
+        <Label>Words we never use</Label>
+        <p className="mb-1.5 text-[11px] leading-snug text-muted-2">
+          One word or phrase per line, up to {MAX_FORBIDDEN_TERMS}. Every finished draft is scanned for these
+          exactly as written, before your team sees it. Use this for banned vocabulary, a retired product name
+          or a competitor&rsquo;s trademark. Subjects belong in the box above. Leave it empty and the scan
+          reports itself as unconfigured rather than as clean.
+        </p>
+        <Textarea
+          value={form.forbiddenTermsText}
+          onChange={(e) => set("forbiddenTermsText", e.target.value)}
+          className="min-h-[90px]"
+          placeholder={"revolutionary\nbest-in-class\ngame-changing"}
+        />
+        <p className="mt-1 text-[11px] text-muted-2">
+          {parseForbiddenTerms(form.forbiddenTermsText).length} / {MAX_FORBIDDEN_TERMS}
+        </p>
+      </div>
+      <div>
+        <Label>Approve the topic first</Label>
+        <p className="mb-1.5 text-[11px] leading-snug text-muted-2">
+          Pause an Instagram run once the topic is chosen, before any visuals are made, so nothing expensive is
+          built for a post this client did not want. Scheduled runs skip the pause by default, because nobody is
+          there to answer it.
+        </p>
+        <Select value={form.topicApproval} onChange={(e) => set("topicApproval", e.target.value)}>
+          <option value="default">{TOPIC_APPROVAL_LABEL.default}</option>
+          <option value="always">{TOPIC_APPROVAL_LABEL.always}</option>
+          <option value="never">{TOPIC_APPROVAL_LABEL.never}</option>
+        </Select>
       </div>
       {saveError ? <p className="text-xs text-danger" role="alert">{saveError}</p> : null}
       <div className="flex gap-2">
