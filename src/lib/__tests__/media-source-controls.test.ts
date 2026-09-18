@@ -3,6 +3,7 @@ import {
   attachmentModeForEngineProduct,
   buildCustomAgentPrompt,
   clientOnlyMediaIsRequired,
+  engineProductSourcesItsOwnMedia,
   isMediaSource,
   mediaSourceHint,
   parseRunAttachmentsJson,
@@ -37,7 +38,9 @@ const BASE_PROFILE: AgentLaunchProfile = {
 // "appends neither" case below is what proves it: the product is defined by
 // being given no footage, and an attach control would contradict it.
 const MEDIA_PRODUCTS = [
-  "x-agent",
+  // `x-agent` is deliberately NOT here: it reads media (the attach box is
+  // painted for it) but it has no SOURCE CHOICE, because D24 makes it text
+  // only. Its own case is below.
   "linkedin-agent",
   "instagram-agent",
   "tiktok-agent",
@@ -62,8 +65,25 @@ describe("withEngineRunFields — the media block", () => {
     });
   }
 
+  /**
+   * D24: X is text only — it does not create or source pictures, and a
+   * client's own picture is attached if given. agent-engine enforces that by
+   * passing `clientMediaOnly: true` unconditionally, so "Karos sources or
+   * generates the visuals" was an option the engine could not honour and a
+   * sentence under it that promised a picture nobody would ever source. The
+   * attach box stays, because the client's own picture is the permitted half.
+   */
+  it("paints the upload field but NO source selector for x-agent, because one of its two answers was not real", () => {
+    const keys = withEngineRunFields(BASE_PROFILE, "x-agent").fields.map((f) => f.key);
+    expect(keys).toContain(MEDIA_ASSETS_FIELD_KEY);
+    expect(keys).not.toContain(MEDIA_SOURCE_FIELD_KEY);
+    expect(engineProductSourcesItsOwnMedia("x-agent")).toBe(false);
+    for (const product of MEDIA_PRODUCTS) expect(engineProductSourcesItsOwnMedia(product), product).toBe(true);
+  });
+
   it("appends neither to a product that never reads media", () => {
-    for (const product of KNOWN_ENGINE_PRODUCT_IDS.filter((p) => !(MEDIA_PRODUCTS as readonly string[]).includes(p))) {
+    const takesMedia = new Set<string>([...MEDIA_PRODUCTS, "x-agent"]);
+    for (const product of KNOWN_ENGINE_PRODUCT_IDS.filter((p) => !takesMedia.has(p))) {
       const keys = withEngineRunFields(BASE_PROFILE, product).fields.map((f) => f.key);
       expect(keys, product).not.toContain(MEDIA_SOURCE_FIELD_KEY);
       expect(keys, product).not.toContain(MEDIA_ASSETS_FIELD_KEY);
@@ -108,8 +128,15 @@ describe("clientOnlyMediaIsRequired — who has a text fallback", () => {
   });
 
   it("words the hint for the choice actually made", () => {
-    expect(mediaSourceHint("x-agent", "client")).toMatch(/ships as text/);
-    expect(mediaSourceHint("x-agent", "system")).toMatch(/sources one/);
+    // Both settings, one sentence, because X has one behaviour: the wire
+    // value cannot change what the engine does, so the hint must not suggest
+    // it can. This is the line that used to promise "the agent sources one
+    // when the post wants a visual" about an agent that never does.
+    for (const source of ["client", "system"] as const) {
+      expect(mediaSourceHint("x-agent", source)).toMatch(/ships as text/);
+      expect(mediaSourceHint("x-agent", source)).not.toMatch(/sources one/);
+    }
+    expect(mediaSourceHint("linkedin-agent", "system")).toMatch(/sources one/);
     expect(mediaSourceHint("instagram-agent", "client")).toMatch(/Nothing is sourced or generated/);
     expect(mediaSourceHint("instagram-agent", "system")).toMatch(/sourced or generated as usual/);
     expect(mediaSourceHint("tiktok-agent", "client")).toMatch(/Nothing else is harvested or generated/);

@@ -183,7 +183,7 @@ Per D35 and D38, and these are product rules, not defaults to tune:
 |---|---|
 | LinkedIn | draft-only; the person posts in one click. Karos staff are never a client's page admin |
 | Reddit | draft-only by hard product rule; no posting code path exists or may be added (D25) |
-| X | autopilot only behind the consent screen X requires; text only — no images sourced or created (D24) |
+| X | autopilot only behind the consent screen X requires; text only — no images sourced or created, and a client's own picture is attached and written to if they give one (D24). The run dialog offers no "where do the visuals come from" choice here, because there is only one answer |
 | Instagram | autopilot offered; format and visuals chosen per post by performance, never by a fixed rotation (D17) |
 | TikTok | autopilot only after the Content Posting audit |
 | Google Business Profile, Pinterest | never |

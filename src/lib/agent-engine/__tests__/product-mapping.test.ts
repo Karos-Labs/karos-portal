@@ -297,7 +297,11 @@ const ENGINE_ROUTED_DIALOGS: ReadonlyArray<{
   productId: string;
   visibleFields: readonly string[];
 }> = [
-  { key: "karos-x-agent-v2", name: "X Agent", productId: "x-agent", visibleFields: ["run_scope", "requestedMode", "batch_size", "request", "media_source", "mediaAssets"] },
+  // No `media_source`: D24 makes X text only, agent-engine hardcodes it
+  // (`clientMediaOnly: true`), so the dialog offers no choice about where the
+  // visuals come from — there is one answer. `mediaAssets` stays, because a
+  // client's own picture is the permitted half of the decision.
+  { key: "karos-x-agent-v2", name: "X Agent", productId: "x-agent", visibleFields: ["run_scope", "requestedMode", "batch_size", "request", "mediaAssets"] },
   { key: "karos-linkedin-writer-v2", name: "LinkedIn Writer", productId: "linkedin-agent", visibleFields: ["li_identity", "requestedMode", "batch_size", "request", "media_source", "mediaAssets"] },
   { key: "karos-linkedin-setup-v2", name: "LinkedIn Setup", productId: "linkedin-agent", visibleFields: ["li_identity", "request", "customPrompt", "media_source", "mediaAssets"] },
   { key: "karos-reddit-runner", name: "Reddit Runner", productId: "reddit-agent", visibleFields: ["request"] },

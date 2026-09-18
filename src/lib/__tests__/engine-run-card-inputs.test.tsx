@@ -87,8 +87,8 @@ describe("the run card only offers what the workflow behind it reads", () => {
     expect(html).not.toContain("video/mp4");
   });
 
-  it("offers the media-source choice on every media card and on no other (2026-09-06)", () => {
-    for (const slug of READS_MEDIA_ASSETS) {
+  it("offers the media-source choice on every media card that has two real answers, and on no other (2026-09-06)", () => {
+    for (const slug of READS_MEDIA_ASSETS.filter((s) => s !== "x-agent")) {
       const html = markup(slug);
       expect(html, slug).toContain(`id="media-source-${slug}"`);
       expect(html, slug).toContain("Only media uploaded for this job");
@@ -96,6 +96,24 @@ describe("the run card only offers what the workflow behind it reads", () => {
     for (const slug of DOES_NOT) {
       expect(markup(slug), slug).not.toContain("media-source-");
     }
+  });
+
+  /**
+   * D24 — X is text only: it does not create or source pictures, and a
+   * client's own picture is attached if given. agent-engine enforces it by
+   * passing `clientMediaOnly: true` unconditionally, so "Karos sources or
+   * generates the visuals" was an option the engine could not honour. The
+   * card keeps the attach box — the client's own picture is the permitted
+   * half — and drops the choice, because a control whose two settings do the
+   * same thing is a claim about the product that is not true.
+   */
+  it("offers x-agent the attach box but no media-source choice, because D24 leaves one answer", () => {
+    const html = markup("x-agent");
+    expect(html).toContain("Attach an image");
+    expect(html).not.toContain("media-source-");
+    expect(html).not.toContain("Karos sources or generates the visuals");
+    expect(html).toContain("Media for this run");
+    expect(html).toContain(mediaSourceHint("x-agent", "system"));
   });
 
   it("asks the text-first channels for one picture, and branded-shorts for the footage", () => {
