@@ -30,6 +30,11 @@ import { isLaunchInFlight } from "@/lib/client-agents";
 import { umbrellaOwnsClientCard } from "@/lib/client-agent-runs";
 import { BindAgentControl } from "@/components/client-agents/client-agents-section";
 import { StaffOnlySection } from "@/components/staff-only-section";
+import { SubjectTable } from "@/components/subject-table";
+import { StrategyMapPanel } from "@/components/strategy-map-panel";
+import { readSubjectRowsByPlatform } from "@/lib/agent-engine/learning-subjects";
+import { readStrategyMapsByPlatform } from "@/lib/agent-engine/learning-strategy-map";
+import { learningPlatformForProduct } from "@/lib/agent-engine/learning-feedback";
 import { ClientAgentRoster } from "@/components/client-agents/roster";
 import { buildClientRosterEntries } from "@/lib/client-roster";
 import { TaskKickoffStrip } from "@/components/client-agents/task-kickoff-strip";
@@ -424,6 +429,38 @@ export default async function ClientAgentsPage({
   // Same rule as the client branch: engine-routed agents are not paused by agent-service.
   const agentServiceConfigured =
     agentServiceOnlyConfigured || clientHasEngineRoutedCustomAgent(client.agentsRepoSlug, enabledAgents.map((a) => a.key));
+
+  /**
+   * B1's reader (SCRUM-493). The subject table is the only place that answers
+   * "what have we already said to this audience, and how did it land" as one
+   * list, and until now nothing in this repo asked for it.
+   *
+   * PLATFORMS DERIVED FROM THIS CLIENT'S OWN RUNS, not from the five the loop
+   * supports. `agentEngineProductId` is stamped on the job at dispatch, so this
+   * asks only for platforms that have actually produced a row — a client with
+   * one X agent costs one round trip here, not five, and a client who has never
+   * run an engine agent costs none and renders nothing.
+   */
+  const subjectPlatforms = [
+    ...new Set(
+      jobs
+        .map((job) => learningPlatformForProduct(job.agentEngineProductId))
+        .filter((platform): platform is NonNullable<typeof platform> => platform !== undefined),
+    ),
+  ];
+  const [subjectsByPlatform, strategyByPlatform] =
+    subjectPlatforms.length > 0
+      ? await Promise.all([
+          readSubjectRowsByPlatform(client, subjectPlatforms, { limit: 50 }),
+          // C1's read (SCRUM-486), beside B1's because they are one story: the
+          // map is what is left to say, the table is what has been said. Two
+          // round trips per platform rather than one — there is no
+          // `GET .../strategy-map`, so the map arrives inside the context
+          // payload. Asked in parallel with the subjects rather than after.
+          readStrategyMapsByPlatform(client, subjectPlatforms),
+        ])
+      : [{}, {}];
+
   return (
     <>
       {/* Sentence case, matching the client branch above and every nav label
@@ -576,6 +613,20 @@ export default async function ClientAgentsPage({
           {staffRuns.length > 0 && (
             <StaffOnlySection className="mt-6 sm:mt-8" label="Staff only · run history">
               <AgentRunHistory runs={staffRuns} agents={enabledAgents} />
+            </StaffOnlySection>
+          )}
+          {/* B1 (SCRUM-493). Staff-only by product decision rather than by
+              convenience: a subject row carries the machinery's own vocabulary
+              — a run id, a funnel stage, an anti-repetition window — and D34
+              keeps the stage language internal. The client's view of the same
+              work is their calendar and their drafts, which are above. */}
+          {subjectPlatforms.length > 0 && (
+            <StaffOnlySection className="mt-6 sm:mt-8" label="Staff only · what is left to say, and what has been said">
+              {/* The map first and the table under it, because that is the
+                  order the questions come in before a planning call: what is
+                  still in the pool, then what the client has already had. */}
+              <StrategyMapPanel byPlatform={strategyByPlatform} />
+              <SubjectTable byPlatform={subjectsByPlatform} />
             </StaffOnlySection>
           )}
         </>
