@@ -87,6 +87,19 @@ async function condenseOneOrThrow(
   }
 
   const today = new Date().toISOString().slice(0, 10);
+  /**
+   * Whether the internal document actually opens with a frontmatter block.
+   *
+   * The instruction below used to say "Update the frontmatter" unconditionally.
+   * Since the composer stopped emitting one, there is nothing to update — and
+   * the model resolved that differently each time, INVENTING a
+   * `**status:** published / **last_updated:** / **published_at:**` block on
+   * some documents and not others. Two real client Regenerates (karoslabs +
+   * geektime, 2026-09-18) landed it on `target-audience` for both and on
+   * `brand-voice` for one, which is leaked template metadata at the top of a
+   * document the CLIENT reads, present on some tabs and absent on others.
+   */
+  const hasFrontmatter = /^\s*(---|\*\*status:\*\*)/.test(internalContent);
   const systemPrompt = `${rules}\n\n${CONDENSATION_RULES}\n\nYou are preparing a client-facing version of an internal analyst document.`;
   const userMessage = `Condense this internal ${docType} document for ${client.name} into a client-facing version.
 
@@ -103,10 +116,14 @@ Apply the condensation contract:
 - Never soften or omit compliance/regulatory hard gates
 - Target ~50% of the original length by condensing WITHIN each section — not by dropping sections
 
-Update the frontmatter:
+${
+    hasFrontmatter
+      ? `Update the frontmatter:
 - Set status to: published
 - Set last_updated to: ${today}
-- Add a line: published_at: ${today}
+- Add a line: published_at: ${today}`
+      : `This document has NO frontmatter. Do not add one — no status, no dates, no metadata block. Begin the output at the document's first heading.`
+  }
 
 Return ONLY the condensed markdown document. No preamble, no explanation.`;
 
