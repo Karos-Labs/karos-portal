@@ -1,6 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const {
+  getClientMock,
+  listContextDocsMock,
+  projectMock,
   createJobMock,
   updateJobMock,
   publishAgentEngineRunMock,
@@ -14,10 +17,19 @@ const {
   dispatchViaMiddlewareMock: vi.fn(),
   middlewareEnabledMock: vi.fn(() => false),
   pubsubConfiguredMock: vi.fn(() => true),
+  getClientMock: vi.fn(),
+  listContextDocsMock: vi.fn(),
+  projectMock: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/data", () => ({ createJob: createJobMock, updateJob: updateJobMock }));
+vi.mock("@/lib/data", () => ({
+  createJob: createJobMock,
+  updateJob: updateJobMock,
+  getClient: getClientMock,
+  listClientContextDocs: listContextDocsMock,
+}));
+vi.mock("../context-doc-projection", () => ({ projectClientToWorkspace: projectMock }));
 vi.mock("../pubsub-client", () => ({
   isAgentEnginePubSubConfigured: pubsubConfiguredMock,
   publishAgentEngineRun: publishAgentEngineRunMock,
@@ -41,6 +53,9 @@ describe("dispatchAgentEngineRun", () => {
     createJobMock.mockReset().mockResolvedValue("job_1");
     updateJobMock.mockReset();
     publishAgentEngineRunMock.mockReset();
+    getClientMock.mockReset().mockResolvedValue({ id: "client_1", agentsRepoSlug: "acme" });
+    listContextDocsMock.mockReset().mockResolvedValue([{ docType: "brand-voice" }]);
+    projectMock.mockReset().mockResolvedValue({ projected: true, contextDocs: 1, brand: true, profile: true });
   });
 
   /**
@@ -241,6 +256,9 @@ describe("dispatchAgentEngineRun transport selection", () => {
     createJobMock.mockReset().mockResolvedValue("job_1");
     updateJobMock.mockReset();
     publishAgentEngineRunMock.mockReset();
+    getClientMock.mockReset().mockResolvedValue({ id: "client_1", agentsRepoSlug: "acme" });
+    listContextDocsMock.mockReset().mockResolvedValue([{ docType: "brand-voice" }]);
+    projectMock.mockReset().mockResolvedValue({ projected: true, contextDocs: 1, brand: true, profile: true });
     dispatchViaMiddlewareMock.mockReset();
     middlewareEnabledMock.mockReset().mockReturnValue(false);
   });
@@ -426,5 +444,112 @@ describe("dispatchAgentEngineRun middleware fallback", () => {
 
     expect(publishAgentEngineRunMock).not.toHaveBeenCalled();
     expect(result).toHaveProperty("error");
+  });
+});
+
+/**
+ * ── A1: THE RUN IS ABOUT THE CLIENT AS THEY ARE NOW (SCRUM-482). ──
+ *
+ * `projectClientToWorkspace` writes the files agent-engine's own
+ * `client.getContextDoc` reads, and until this it had exactly two callers — the
+ * end of a Regenerate and a branding refresh. Neither is a run. So a client who
+ * corrected their brand voice or rewrote their market strategy and then pressed
+ * Run got an agent working from the previous projection, with nothing saying
+ * so: the files were present and well-formed, just old.
+ */
+describe("A1 — the live context is projected before the run is published", () => {
+  beforeEach(() => {
+    createJobMock.mockReset().mockResolvedValue("job_1");
+    updateJobMock.mockReset();
+    publishAgentEngineRunMock.mockReset();
+    dispatchViaMiddlewareMock.mockReset();
+    middlewareEnabledMock.mockReset().mockReturnValue(false);
+    pubsubConfiguredMock.mockReset().mockReturnValue(true);
+    getClientMock.mockReset().mockResolvedValue({ id: "client_1", agentsRepoSlug: "acme" });
+    listContextDocsMock.mockReset().mockResolvedValue([{ docType: "brand-voice" }]);
+    projectMock.mockReset().mockResolvedValue({ projected: true, contextDocs: 1, brand: true, profile: true });
+  });
+
+  const dispatch = async (): Promise<unknown> =>
+    dispatchAgentEngineRun({
+      clientId: "client_1",
+      clientSlug: "acme",
+      productId: "x-agent",
+      runKind: "recurring",
+      agentName: "X Agent",
+      title: "Test dispatch",
+    });
+
+  it("projects the client's current docs, brand and profile", async () => {
+    publishAgentEngineRunMock.mockResolvedValue({ messageId: "msg_a1" });
+
+    await dispatch();
+
+    expect(getClientMock).toHaveBeenCalledWith("client_1");
+    expect(listContextDocsMock).toHaveBeenCalledWith("client_1");
+    expect(projectMock).toHaveBeenCalledWith({ id: "client_1", agentsRepoSlug: "acme" }, [{ docType: "brand-voice" }]);
+  });
+
+  it("projects BEFORE publishing, because the engine reads the files as the run starts", async () => {
+    // Ordering is the whole of the fix. Projecting beside the publish is a race
+    // the portal loses about as often as it wins, and a run that reads the
+    // previous projection looks exactly like a run that read the right one.
+    const order: string[] = [];
+    projectMock.mockImplementation(async () => {
+      order.push("project");
+      return { projected: true, contextDocs: 1, brand: true, profile: true };
+    });
+    publishAgentEngineRunMock.mockImplementation(async () => {
+      order.push("publish");
+      return { messageId: "msg_order" };
+    });
+
+    await dispatch();
+
+    expect(order).toEqual(["project", "publish"]);
+  });
+
+  it("projects before the MIDDLEWARE transport too, not just direct publish", async () => {
+    // Two transports, one requirement. The control-plane path resolves a
+    // prompt version and hands the run straight on, so a projection that only
+    // guarded the fallback would cover the rarer of the two.
+    const order: string[] = [];
+    middlewareEnabledMock.mockReturnValue(true);
+    projectMock.mockImplementation(async () => {
+      order.push("project");
+      return { projected: true, contextDocs: 1, brand: true, profile: true };
+    });
+    dispatchViaMiddlewareMock.mockImplementation(async () => {
+      order.push("dispatch");
+      return { pubsubMessageId: "msg_mw" };
+    });
+
+    await dispatch();
+
+    expect(order).toEqual(["project", "dispatch"]);
+  });
+
+  it("dispatches anyway when the projection throws", async () => {
+    // Best-effort, like the projector itself. An unwritable bucket means the
+    // run goes out against the last projection — which is exactly what happened
+    // before this existed — and failing the dispatch would trade a stale
+    // context for no run at all.
+    projectMock.mockRejectedValue(new Error("bucket not writable"));
+    publishAgentEngineRunMock.mockResolvedValue({ messageId: "msg_fail" });
+
+    const result = await dispatch();
+
+    expect(result).toEqual({ jobId: "job_1", agentEngineRunId: "pubsub-msg_fail" });
+    expect(publishAgentEngineRunMock).toHaveBeenCalled();
+  });
+
+  it("dispatches anyway for a client the portal cannot read", async () => {
+    getClientMock.mockResolvedValue(null);
+    publishAgentEngineRunMock.mockResolvedValue({ messageId: "msg_noclient" });
+
+    const result = await dispatch();
+
+    expect(projectMock).not.toHaveBeenCalled();
+    expect(result).toEqual({ jobId: "job_1", agentEngineRunId: "pubsub-msg_noclient" });
   });
 });
