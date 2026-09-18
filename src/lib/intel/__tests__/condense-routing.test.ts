@@ -54,7 +54,7 @@ interface TaggedModel {
 /** Per-test controllable handler: given the model a call targeted, return text or throw. */
 let handleCall: (model: TaggedModel) => string;
 
-const streamTextMock = vi.fn((opts: { model: TaggedModel }) => {
+const streamTextMock = vi.fn((opts: { model: TaggedModel; messages?: Array<{ content: string }> }) => {
   const text = handleCall(opts.model);
   return {
     text: Promise.resolve(text),
@@ -62,7 +62,7 @@ const streamTextMock = vi.fn((opts: { model: TaggedModel }) => {
     providerMetadata: Promise.resolve(undefined),
   };
 });
-vi.mock("ai", () => ({ streamText: (opts: { model: TaggedModel }) => streamTextMock(opts) }));
+vi.mock("ai", () => ({ streamText: (opts: { model: TaggedModel; messages?: Array<{ content: string }> }) => streamTextMock(opts) }));
 
 const { condenseDocs, isTransientCondensationError, CONDENSATION_RETRY_DELAY_MS } = await import("../condense");
 const { HIGH_COMPLEXITY_MODEL, LARGE_CONTEXT_MODEL } = await import("../context-doc-routing");
@@ -237,5 +237,41 @@ describe("complexity-driven escalation reaches streamText (AC2)", () => {
 
     expect(complexModelId).not.toBe(simpleModelId);
     expect(complexModelId).toBe(HIGH_COMPLEXITY_MODEL);
+  });
+});
+
+/**
+ * The frontmatter instruction, which is conditional since 2026-09-18.
+ *
+ * It used to read "Update the frontmatter: set status to published, set
+ * last_updated…" unconditionally. The composer stopped emitting frontmatter, so
+ * there was nothing to update, and the model resolved that differently each
+ * time — INVENTING a `**status:** published` block on some documents and not
+ * others. Two real client Regenerates (karoslabs + geektime) landed it on
+ * `target-audience` for both and `brand-voice` for one: leaked template
+ * metadata at the top of a document the CLIENT reads, on some tabs only.
+ */
+describe("the frontmatter instruction follows the document", () => {
+  it("tells the model NOT to add one when the internal document has none", async () => {
+    const { condenseDocs } = await import("../condense");
+    await condenseDocs(CLIENT, ["brand-voice"] as never, { "brand-voice": "# Brand Voice — Acme\n\n## How this brand sounds\n\nPlain and exact." }, "rules");
+
+    const prompt = streamTextMock.mock.calls[0]![0].messages?.[0]?.content ?? "";
+    expect(prompt).toContain("This document has NO frontmatter. Do not add one");
+    expect(prompt).not.toContain("Set status to: published");
+  });
+
+  it("still asks for the update when the document does carry one", async () => {
+    const { condenseDocs } = await import("../condense");
+    await condenseDocs(
+      CLIENT,
+      ["brand-voice"] as never,
+      { "brand-voice": "**status:** draft\n**last_updated:** 2026-01-01\n\n## How this brand sounds\n\nPlain and exact." },
+      "rules",
+    );
+
+    const prompt = streamTextMock.mock.calls[0]![0].messages?.[0]?.content ?? "";
+    expect(prompt).toContain("Set status to: published");
+    expect(prompt).not.toContain("Do not add one");
   });
 });
