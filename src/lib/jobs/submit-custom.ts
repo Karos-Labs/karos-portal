@@ -6,6 +6,8 @@ import {
   resolveAgentEngineRunKind,
   toEngineRunInput,
 } from "@/lib/agent-engine/product-mapping";
+import { effectiveForbiddenTopics } from "@/lib/agent-engine/never-topics";
+import { slotStageForCalendarRun } from "@/lib/agent-engine/learning-sequence";
 import { normalizeDashes } from "@/lib/text-utils";
 
 import {
@@ -880,6 +882,14 @@ export async function submitCustomAgentJob(
           requestSteersRun: requestSteersRun(launchProfileFor(agent)),
         }),
         ...engineExtraInputs,
+        // THE ONE FIELD SEQUENCING OWNS (agent-architecture §1.1, SCRUM-468).
+        //
+        // Last in the spread on purpose: `slotStage` is the calendar's
+        // decision, and there is no dialog field and no intake key it may be
+        // shadowed by. Present only for a calendar fire — see
+        // `slotStageForCalendarRun`, and §1.1 on why a manual run must not
+        // carry one.
+        ...(await slotStageForCalendarRun(client, engineProductId, input.runType)),
       },
       createdBy: user.uid,
     });
@@ -1192,7 +1202,13 @@ export async function submitDynamicAgentJob(
   // Both are also inert by construction: a client with no forbidden topics
   // produces no `guardrails` field, and an agent without the opt-in never even
   // reads its history. Neither costs an unconfigured run anything.
-  const forbiddenTopics = hasForbiddenTopics(client.forbiddenTopics) ? client.forbiddenTopics! : [];
+  // The client's own list AND the never-topics they gave the loop in review.
+  // Until now only the first reached the vet, so a topic a client asked us to
+  // drop while reviewing a draft was injected into the prompt as an
+  // instruction and enforced by nobody — see `never-topics.ts` for why this is
+  // a read and not a mirror into the stored field.
+  const effectiveTopics = await effectiveForbiddenTopics(client);
+  const forbiddenTopics = hasForbiddenTopics(effectiveTopics) ? effectiveTopics : [];
   const wantsDedupe = specSnapshot.dedupeAgainstHistory === true;
   const outputHistory = wantsDedupe ? await buildDynamicAgentHistory(spec.id, input.clientId) : [];
 

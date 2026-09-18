@@ -39,6 +39,19 @@ against the D32 mix. Cadence is the client's choice in the calendar, not a per-a
 
 Do not send `slotStage` on a manual run to "be helpful". The absence is information.
 
+**Where the stage comes from** (SCRUM-487/N4, wired SCRUM-468): the middleware plans the next
+slots from the strategy map and the subject rows, and the first slot in that plan is by
+definition what goes out next. `slotStageForCalendarRun`
+(`src/lib/agent-engine/learning-sequence.ts`) asks for that one slot and sends its stage when
+`runType === "scheduled"`, which is the only run type the calendar produces. The portal does
+not compute the stage and must not: the plan is only correct in the light of the posts either
+side of it, and only the control plane can see those.
+
+Every way of not getting one is survivable and silent — no map yet, an exhausted pool, a
+product with no platform, a control plane that is down. The engine's `stageForRun` falls back
+to the account's own history, so the cost is a run sequenced slightly worse rather than no
+run.
+
 ---
 
 ## 2. After the run: collect, then render
