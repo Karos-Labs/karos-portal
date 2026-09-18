@@ -32,9 +32,21 @@ Set these once in the shell you are about to use:
 
 ```bash
 PROD_PROJECT_ID=karoscmo          # the production project — NOT karoscmo-prep
-REGION=us-central1
+REGION=europe-west1               # where the service actually runs, checked 2026-09-18
 SERVICE=karos-cmo
 ```
+
+> **The region was wrong in this file until 2026-09-18** and it said `us-central1`, which
+> is not a region this project has anything in. Step 1 then answers
+> `ERROR: Cannot find service [karos-cmo]` — which reads like the service name is wrong,
+> so the natural next move is to go hunting for the wrong thing. Everything in `karoscmo`
+> is in **europe-west1**: `karos-cmo`, `agent-middleware`, `agent-engine-prod`,
+> `agent-engine-prod-worker` and `landing-page`. If step 1 ever fails again, list them
+> rather than guessing:
+>
+> ```bash
+> gcloud run services list --project="$PROD_PROJECT_ID" --format='value(REGION,metadata.name,status.url)'
+> ```
 
 ---
 
@@ -64,12 +76,22 @@ CRON_SECRET=$(gcloud secrets versions access latest \
 [ -n "$CRON_SECRET" ] && echo "got it (${#CRON_SECRET} chars)"
 ```
 
+Checked on 2026-09-18: it exists and is **64 characters**, which is the 32 bytes of
+`openssl rand -hex 32` the bootstrap script writes. If you get a different length the
+secret was set by hand and is worth re-checking; if you get nothing, read the paragraph
+below before creating one.
+
 It prints only the length, not the value. Keep it in the shell variable — do not paste it
 into a file, a ticket or a chat. If the command fails, the secret does not exist in the
 production project and the route will be answering **503**, not 401; create it first with
 `openssl rand -hex 32` and redeploy so the service picks it up.
 
 ## Step 3 — Create the job
+
+**Send the output to a file.** `gcloud scheduler jobs create` echoes the job it made, and
+that includes the `Authorization` header — so the default is to print the cron secret into
+your scrollback, and into anything you paste it into afterwards. The redirect below is the
+whole of the fix.
 
 ```bash
 gcloud scheduler jobs create http followers-sync \
@@ -82,7 +104,13 @@ gcloud scheduler jobs create http followers-sync \
   --headers="Authorization=Bearer $CRON_SECRET" \
   --attempt-deadline=300s \
   --max-retry-attempts=1 \
-  --description="SCRUM-495: daily follower counts into clientFollowerSnapshots"
+  --description="SCRUM-495: daily follower counts into clientFollowerSnapshots" \
+  >/tmp/followers-sync-create.log 2>&1; echo "exit=$?"
+
+# Read it back WITHOUT the header, which is the one field you must not print.
+gcloud scheduler jobs describe followers-sync \
+  --project="$PROD_PROJECT_ID" --location="$REGION" \
+  --format='value(name,schedule,timeZone,state,httpTarget.uri,attemptDeadline)'
 ```
 
 Four of those values are deliberate rather than defaults:
