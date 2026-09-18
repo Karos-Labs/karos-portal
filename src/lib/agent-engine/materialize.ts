@@ -8,6 +8,7 @@ import { deliverableAssetType } from "@/lib/agent-service/deliverable-asset-type
 import { generateAssetTitle } from "@/lib/asset-titles";
 import { AgentEngineCredentialError, getAgentEngineDeliverable } from "./client";
 import { readContextGroundingMarker } from "./context-grounding";
+import { goalLineFromDraftsEnvelope, goalLineFromDraftsMarkdown } from "./goal-line-from-drafts";
 import { groupRecommendationsByOwner, hasClassifiedOwner, toRoutableRecommendation } from "./routable-recommendation";
 import { renderIntelReport } from "./intel-report-render";
 import { persistSeoGeoInsightsFromDeliverable } from "./persist-seo-geo-insights";
@@ -324,12 +325,34 @@ function materializeDraftBatch(
     channels?: string[];
   },
 ): AssetMaterialization {
+  const content = firstOf(deliverable[opts.readerField], ...opts.rawTextFields.map((f) => deliverable[f])) ?? "";
   return {
     title: fallbackTitle(firstOf(...opts.titleFrom.map((f) => deliverable[f])), opts.titleWhenAbsent),
-    content: firstOf(deliverable[opts.readerField], ...opts.rawTextFields.map((f) => deliverable[f])) ?? "",
+    content,
     ...(opts.channels ? { channels: opts.channels } : {}),
-    meta: metaFrom(deliverable, opts.metaFields),
+    // ── D11's LINE, FROM THE STRING THE ASSET IS ALREADY STORING. ──
+    //
+    // The deliverable wins where it has a value; this fills only what it left
+    // empty. On these three products that is usually everything: the engine
+    // resolves the line once and writes it into the DRAFTS STRING (C7 §3), and
+    // the deliverable's own `goal`/`audience`/`whyNow` are optional fields
+    // holding whatever the model happened to state — which is precisely the
+    // case `resolveGoalLine`'s fallback exists to cover. Reddit's deliverable
+    // names the same fact `whyThisThread`, which nothing here reads at all.
+    //
+    // So the modal's block was populated by luck on X and LinkedIn and never on
+    // Reddit, while the card beside it — parsing these same bullets and this
+    // same envelope — showed the line correctly. One run resolves it once; the
+    // two surfaces must not disagree about it (SCRUM-474).
+    meta: { ...goalLineFromContent(content, opts.readerField), ...metaFrom(deliverable, opts.metaFields) },
   };
+}
+
+/** The goal line as the engine wrote it into this product's own drafts string — markdown bullets, or the v2 envelope's slot. */
+function goalLineFromContent(content: string, readerField: "draftsMarkdown" | "draftsEnvelope"): Record<string, string> {
+  if (content.trim().length === 0) return {};
+  const line = readerField === "draftsEnvelope" ? goalLineFromDraftsEnvelope(content) : goalLineFromDraftsMarkdown(content);
+  return Object.fromEntries(Object.entries(line).filter(([, v]) => typeof v === "string" && v.length > 0)) as Record<string, string>;
 }
 
 /**
