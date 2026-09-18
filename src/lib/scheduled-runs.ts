@@ -306,7 +306,8 @@ const CADENCE_LABEL: Record<PlannedRunCadence, string> = {
   monthly: "Monthly",
 };
 
-const WEEKDAY_LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/** Short weekday names, index 0 = Sunday — the order every weekday array in this repo uses. */
+export const WEEKDAY_LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /**
  * Short label for a zone, e.g. "GMT-3" — what goes next to a wall-clock time so
@@ -443,7 +444,52 @@ export function clientCadenceLabel(run: {
   }
 }
 
-/** Balanced publishing days for a requested 1–7 posts per week. */
+/**
+ * D15 — THE CLIENT'S CADENCE, from what they picked.
+ *
+ * The decision says cadence is the client's choice in the calendar: daily, a
+ * few times a week, or weekly. All three of those were already expressible —
+ * one day a week, some days, all seven — and two things were missing.
+ *
+ * **The days were not the client's.** The dialog took a COUNT and
+ * `weeklyCadenceDays` chose the days for them from a preset table. Three a week
+ * meant Monday, Wednesday and Friday whether or not that is when their audience
+ * reads. The count stays (it is how a client thinks about pace, and it is what
+ * the week's cost is quoted from), and a chosen day set now overrides it —
+ * `postsPerWeek` is then DERIVED from the days, so the two can never disagree.
+ *
+ * **Seven days was stored as `weekly` with every weekday in it.** Every reader
+ * coped — `firingWeekdays` returns all seven either way — but the stored token
+ * did not say what it meant, the client's card read "7 posts a week · Sun, Mon,
+ * Tue, …" where "Every day" is the sentence, and agent-middleware's
+ * `config.schedules` refuses that shape outright: its `schedules_cadence_fields_agree`
+ * constraint requires `weekdays` to be NULL on a daily row. A row this portal
+ * writes must be one that table can hold.
+ *
+ * `weekdays` is returned for a daily cadence too, because the caller still
+ * needs the firing days to price the week — but a daily row must not STORE
+ * them, which is the caller's half of the contract.
+ */
+export interface ClientCadenceChoice {
+  /** `"daily"` exactly when the choice is all seven days. */
+  cadence: Extract<PlannedRunCadence, "daily" | "weekly">;
+  /** The days it fires on, Sunday first. Always populated — daily is all seven. */
+  weekdays: number[];
+  /** How many days a week, derived from `weekdays` so the count and the days agree. */
+  postsPerWeek: number;
+}
+
+export function resolveClientCadence(postsPerWeek: number, chosen?: readonly number[] | undefined): ClientCadenceChoice {
+  const picked = [...new Set((chosen ?? []).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort((a, b) => a - b);
+  const weekdays = picked.length > 0 ? picked : weeklyCadenceDays(postsPerWeek);
+  return {
+    cadence: weekdays.length === 7 ? "daily" : "weekly",
+    weekdays,
+    postsPerWeek: weekdays.length,
+  };
+}
+
+/** Balanced publishing days for a requested 1–7 posts per week, when the client did not pick their own. */
 export function weeklyCadenceDays(postsPerWeek: number): number[] {
   const count = Math.max(1, Math.min(7, Math.round(postsPerWeek)));
   const presets: Record<number, number[]> = {

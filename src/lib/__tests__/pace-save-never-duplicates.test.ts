@@ -89,11 +89,44 @@ describe("the pace dialog edits the schedule the card showed", () => {
       outputsPerRun: 1, prompt: "post something", hour: 9, minute: 0, timeZone: "UTC",
     } as any);
     const patch = vi.mocked(data.updatePlannedScheduledRun).mock.calls[0]![1] as any;
-    // Weekly is the only pace this dialog can express, so saving through it
-    // converts the row. That is strictly fewer fires than the duplicate it
-    // replaced, which is the only direction a change here may move.
+    // Five days a week is weekly, so saving through the dialog converts the
+    // daily row. That is strictly fewer fires than the duplicate it replaced,
+    // which is the only direction a change here may move.
     expect(patch.cadence).toBe("weekly");
     expect(patch.weekdays.length).toBe(5);
+  });
+
+  /**
+   * D15 — the dialog can express daily now, and it says so in the stored token.
+   *
+   * Seven days used to save as `weekly` with every weekday in it: every reader
+   * coped, but the row did not say what it meant and agent-middleware's
+   * `schedules_cadence_fields_agree` refuses a daily row that carries a day set
+   * at all. Converting the other way has to LEAVE NO DAYS BEHIND, and a merge
+   * patch cannot delete a key it does not mention — so the weekday clear is
+   * part of the save rather than an afterthought.
+   */
+  it("saves seven days as DAILY, with no day set left on the row", async () => {
+    await configureClientAgentScheduleAction({
+      clientId: "c1", customAgentId: "ca1", postsPerWeek: 7,
+      outputsPerRun: 1, prompt: "post something", hour: 9, minute: 0, timeZone: "UTC",
+    } as any);
+    const patch = vi.mocked(data.updatePlannedScheduledRun).mock.calls[0]![1] as any;
+    expect(patch.cadence).toBe("daily");
+    expect(patch).not.toHaveProperty("weekdays");
+    expect(patch).not.toHaveProperty("weekday");
+  });
+
+  it("lets the client's own days win over the count, and prices the week from the days", async () => {
+    await configureClientAgentScheduleAction({
+      clientId: "c1", customAgentId: "ca1", postsPerWeek: 5, weekdays: [2, 4],
+      outputsPerRun: 1, prompt: "post something", hour: 9, minute: 0, timeZone: "UTC",
+    } as any);
+    const patch = vi.mocked(data.updatePlannedScheduledRun).mock.calls[0]![1] as any;
+    expect(patch.cadence).toBe("weekly");
+    // Tue and Thu, not the Mon/Tue/Wed/Thu/Fri the preset would have spread a
+    // five onto: a client who says which days gets those days.
+    expect(patch.weekdays).toEqual([2, 4]);
   });
 
   it("still creates one when the agent genuinely has none", async () => {

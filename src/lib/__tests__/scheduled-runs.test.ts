@@ -9,6 +9,7 @@ import {
   MAX_RUNS_PER_WEEK,
   nextRunCountdown,
   projectRunOccurrences,
+  resolveClientCadence,
   scheduleLimitsFor,
   weeklyCadenceDays,
 } from "@/lib/scheduled-runs";
@@ -496,5 +497,52 @@ describe("nextRunCountdown", () => {
   it("reads as due once the moment has passed, rather than a negative countdown", () => {
     expect(nextRunCountdown(now - 1, now)).toBe("due any moment");
     expect(nextRunCountdown(now, now)).toBe("due any moment");
+  });
+});
+
+/**
+ * D15 — cadence is the client's choice in the calendar: daily, a few times a
+ * week, or weekly. All three were already expressible and two things were
+ * missing: the DAYS were chosen for the client by a preset table, and seven
+ * days was stored as `weekly` with every weekday in it rather than as `daily`.
+ */
+describe("resolveClientCadence — the client's own days (D15)", () => {
+  it("falls back to the preset spread when the client picked none, so a count-only caller is unchanged", () => {
+    expect(resolveClientCadence(3)).toEqual({ cadence: "weekly", weekdays: [1, 3, 5], postsPerWeek: 3 });
+    expect(resolveClientCadence(1)).toEqual({ cadence: "weekly", weekdays: [2], postsPerWeek: 1 });
+  });
+
+  it("lets the chosen days win, and derives the count FROM them so the two cannot disagree", () => {
+    // The count says three and the days say two. The days fire, so the days win
+    // and the count follows — a stale number on the wire must not be able to
+    // price a week the schedule will not deliver.
+    expect(resolveClientCadence(3, [2, 4])).toEqual({ cadence: "weekly", weekdays: [2, 4], postsPerWeek: 2 });
+  });
+
+  it("stores all seven days as DAILY, which is the cadence that shape means", () => {
+    // Every reader coped with `weekly` + [0..6] — `firingWeekdays` returns all
+    // seven either way — but the token did not say what it meant, the card read
+    // "7 posts a week · Sun, Mon, Tue…" where "Every day" is the sentence, and
+    // agent-middleware's `schedules_cadence_fields_agree` refuses a daily row
+    // that carries a day set at all.
+    const daily = resolveClientCadence(7);
+    expect(daily.cadence).toBe("daily");
+    expect(daily.postsPerWeek).toBe(7);
+    // The days are still returned: the caller needs them to price the week.
+    expect(daily.weekdays).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(resolveClientCadence(1, [0, 1, 2, 3, 4, 5, 6]).cadence).toBe("daily");
+  });
+
+  it("cleans what it is given: out-of-range, duplicated and unsorted days", () => {
+    expect(resolveClientCadence(3, [5, 1, 1, 9, -2, 3.5])).toEqual({
+      cadence: "weekly",
+      weekdays: [1, 5],
+      postsPerWeek: 2,
+    });
+  });
+
+  it("treats an empty choice as no choice rather than as a schedule that never fires", () => {
+    expect(resolveClientCadence(2, [])).toEqual({ cadence: "weekly", weekdays: [2, 4], postsPerWeek: 2 });
+    expect(resolveClientCadence(2, [8, 9])).toEqual({ cadence: "weekly", weekdays: [2, 4], postsPerWeek: 2 });
   });
 });
