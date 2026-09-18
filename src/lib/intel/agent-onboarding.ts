@@ -573,7 +573,14 @@ function voiceSpecBlock(spec: Record<string, unknown>): string | undefined {
       const position = str(d["position"]);
       if (!scale || !position) return undefined;
       const shifts = str(d["shiftsWhen"]);
-      return `- **${scale}:** ${position}${shifts ? ` — shifts when ${shifts}` : ""}`;
+      // The condition goes on its own line under a NOUN label, not spliced
+      // into ours. Rendering it as `— shifts when ${shifts}` assumed the model
+      // writes a bare clause, and it does not reliably: Geektime's real run
+      // produced "shifts when Shifts toward formal on Ethics Code pages" (a
+      // stutter) and "shifts when Never shifts to observer frame" (a flat
+      // contradiction), while Karos Labs' happened to read fine. A label the
+      // value does not have to agree with grammatically is correct for both.
+      return shifts ? `- **${scale}:** ${position}\n  _When it shifts:_ ${shifts}` : `- **${scale}:** ${position}`;
     })
     .filter((l): l is string => Boolean(l));
   const platforms = objArray(spec["platformVoice"])
@@ -629,7 +636,11 @@ function messagingBlock(m: Record<string, unknown>): string | undefined {
       return joinBlocks([
         `**${pillar}**${meaning ? ` — ${meaning}` : ""}`,
         proof.length ? proof.map((p) => `- ${p}`).join("\n") : undefined,
-        when ? `_Lead with this when:_ ${when}` : undefined,
+        // Same reason as `shiftsWhen` above: Geektime's pillars came back as
+        // "Lead with this when: Lead with this pillar in every advertiser
+        // pitch". A noun label reads correctly whichever way the model phrases
+        // it.
+        when ? `_When to lead with it:_ ${when}` : undefined,
       ]);
     })
     .filter((b): b is string => Boolean(b));
@@ -1139,7 +1150,11 @@ export function composeContextDocsFromAgentReports(input: {
     "action-plan": document(header("Action Plan"), [
       section("From the intel report", joinBlocks(recommendations.map(recommendationBlock))),
       section("From the SEO/GEO audit", joinBlocks(fired.map(firedBlock))),
-      section("Measured site facts", bullets(measuredFacts)),
+      // `measuredFacts` used to render here as well as in `market-strategy`.
+      // It is the evidence BEHIND the scores, so it belongs with them; an
+      // action plan needs the actions. Missed until two real client runs
+      // showed it, because the local render that measured duplication passed
+      // an empty `seoGeo` and this list was empty in it.
       section("Prepared fixes", labelledList(objArray(sg["fixDrafts"]), ["title", "target", "id"])),
     ]),
   };

@@ -425,7 +425,11 @@ describe("composeContextDocsFromAgentReports", () => {
     const doc = docs["brand-voice"];
     expect(doc).toContain("A calm operator who moves fast.");
     expect(doc).toContain("plain to technical");
-    expect(doc).toContain("shifts when the reader is an engineer");
+    // A NOUN label, so the condition need not agree with our sentence — two
+    // real Geektime rows came back as "Shifts toward formal..." and "Never
+    // shifts to observer frame", which the old prefix turned into a stutter
+    // and a contradiction respectively.
+    expect(doc).toContain("_When it shifts:_ the reader is an engineer");
     expect(doc).toContain("No exclamation marks");
     expect(doc).toContain("Never say this");
     expect(doc).toContain("LinkedIn");
@@ -525,6 +529,46 @@ describe("composeContextDocsFromAgentReports", () => {
    * recommendation list — which is what made the set read as one report
    * reshuffled eight ways.
    */
+  /**
+   * Two real Geektime rows, verbatim from the 2026-09-18 Regenerate. The model
+   * restates the field's own name inside the value, which the old prefixes
+   * ("— shifts when ", "_Lead with this when:_ ") turned into a stutter and,
+   * once, a flat contradiction: "shifts when Never shifts to observer frame".
+   * Karos Labs' run happened to phrase both as bare clauses, so one client
+   * alone would never have shown this. A noun label reads correctly whichever
+   * way the model writes it.
+   */
+  it("reads correctly when the model restates the field name inside its own value", () => {
+    const docs = composeContextDocsFromAgentReports({
+      client: CLIENT,
+      intelReport: {
+        ...INTEL_REPORT,
+        brandVoiceSpec: {
+          ...INTEL_REPORT.brandVoiceSpec,
+          dimensions: [
+            { scale: "insider to observer", position: "Always insider", shiftsWhen: "Never shifts to observer frame — this is the brand moat" },
+          ],
+        },
+        messaging: {
+          ...INTEL_REPORT.messaging,
+          messagingPillars: [
+            {
+              pillar: "Of the community",
+              whatItMeans: "The publication is of the industry, not covering it.",
+              whenToLead: "Lead with this pillar in all editorial brand campaigns",
+            },
+          ],
+        },
+      },
+      seoGeo: SEO_GEO,
+    });
+
+    expect(docs["brand-voice"]).not.toContain("shifts when Never shifts");
+    expect(docs["brand-voice"]).toContain("_When it shifts:_ Never shifts to observer frame");
+    expect(docs["market-strategy"]).not.toContain("Lead with this when:_ Lead with this pillar");
+    expect(docs["market-strategy"]).toContain("_When to lead with it:_ Lead with this pillar");
+  });
+
   /**
    * The owner's complaint, measured. On the real Karos Labs documents, 23
    * paragraphs over 200 characters appeared in more than one of the eight —
