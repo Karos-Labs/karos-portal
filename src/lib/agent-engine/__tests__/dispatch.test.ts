@@ -529,6 +529,56 @@ describe("A1 — the live context is projected before the run is published", () 
     expect(order).toEqual(["project", "dispatch"]);
   });
 
+  it("records what was projected on the job, so a run can be checked afterwards", async () => {
+    // SCRUM-492: the read-back "could not be verified from the portal". A
+    // projection that writes to a bucket and logs a line leaves a run that
+    // drafted from a stale context looking exactly like one that did not.
+    projectMock.mockResolvedValue({ projected: true, contextDocs: 9, brand: true, profile: true });
+    publishAgentEngineRunMock.mockResolvedValue({ messageId: "msg_rec" });
+
+    await dispatch();
+
+    expect(updateJobMock).toHaveBeenCalledWith(
+      "job_1",
+      expect.objectContaining({ contextProjection: "9 docs, brand, profile", contextProjectedAt: expect.any(Number) }),
+    );
+  });
+
+  it("records the REASON when nothing was projected, rather than a silent success", async () => {
+    // "no bucket configured" and "nine documents went out" must not read the
+    // same on the job, or the field is worse than absent.
+    projectMock.mockResolvedValue({
+      projected: false,
+      contextDocs: 0,
+      brand: false,
+      profile: false,
+      reason: "AGENT_ENGINE_WORKSPACE_BUCKET is not set",
+    });
+    publishAgentEngineRunMock.mockResolvedValue({ messageId: "msg_none" });
+
+    await dispatch();
+
+    expect(updateJobMock).toHaveBeenCalledWith(
+      "job_1",
+      expect.objectContaining({ contextProjection: "AGENT_ENGINE_WORKSPACE_BUCKET is not set" }),
+    );
+  });
+
+  it("records the projection on a FAILED dispatch too", async () => {
+    // "the context was fresh and the publish broke" and "the projection failed
+    // and then so did the publish" are different problems, and the second is
+    // the one nobody would think to look for.
+    projectMock.mockRejectedValue(new Error("bucket not writable"));
+    publishAgentEngineRunMock.mockRejectedValue(new Error("pubsub down"));
+
+    await dispatch();
+
+    expect(updateJobMock).toHaveBeenCalledWith(
+      "job_1",
+      expect.objectContaining({ status: "failed", contextProjection: "failed: bucket not writable" }),
+    );
+  });
+
   it("dispatches anyway when the projection throws", async () => {
     // Best-effort, like the projector itself. An unwritable bucket means the
     // run goes out against the last projection — which is exactly what happened
