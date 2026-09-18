@@ -1463,6 +1463,30 @@ export function attachmentModeForEngineProduct(engineProductId: string | undefin
 }
 
 /**
+ * Whether this product will source, scrape or generate a visual of its own at
+ * all — i.e. whether "Karos sources or generates the visuals" is something it
+ * can actually do.
+ *
+ * `x-agent` is the one that cannot, and it is a PRODUCT RULE rather than a
+ * setting: D24 — *"X is text only: it does not create or source pictures; a
+ * client's own picture is attached if given"* — and agent-engine enforces it by
+ * passing `clientMediaOnly: true` unconditionally into the media resolver
+ * (`create-x-agent-workflow.ts`, step 14e), not by reading `mediaSource`. A
+ * generated illustration or a scraped screenshot on an X post is exactly what
+ * marks an account as automated, which is why the decision exists.
+ *
+ * So the selector was a control with no effect on one of its two settings, and
+ * the sentence under it promised a client that leaving the box empty would get
+ * them a sourced picture. It would not. The control is not painted for a
+ * product that answers `false` here, and the hint says what will really happen.
+ * The attach box stays: a client's own picture is the permitted half of D24,
+ * and it is still read with a vision model and written to.
+ */
+export function engineProductSourcesItsOwnMedia(engineProductId: string | undefined): boolean {
+  return engineProductId !== "x-agent";
+}
+
+/**
  * Whether "client-provided media only" is a run that CANNOT proceed with
  * nothing attached. A text-first channel ships as text; a video or carousel
  * agent has nothing to make.
@@ -1486,6 +1510,12 @@ export function clientOnlyMediaIsRequired(engineProductId: string | undefined): 
 /** The sentence under the attach control, for this product and this choice of source. */
 export function mediaSourceHint(engineProductId: string | undefined, source: MediaSource): string {
   const mode = attachmentModeForEngineProduct(engineProductId);
+  // A product that sources nothing has one truthful sentence, whatever the
+  // wire value says — and no selector is painted for it either, so `source`
+  // here is only ever the untouched default.
+  if (!engineProductSourcesItsOwnMedia(engineProductId)) {
+    return "Optional. Attach a picture and the post is written to it; leave it empty and the post ships as text — X posts never carry a picture Karos sourced or generated.";
+  }
   if (source === "client") {
     if (mode === "slides") return "Only these images are used, in this order, first file on slide 1. Nothing is sourced or generated for the slides you leave uncovered.";
     if (mode === "source-video") return "The footage this run works from. Nothing else is harvested or generated.";
@@ -1620,7 +1650,8 @@ export function withEngineRunFields(
     // the files themselves. Painted by the dialog as one "Media for this run"
     // block under the primary question rather than behind "More options",
     // because for a media agent this is the second question, not a detail.
-    if (!profile.fields.some((f) => f.key === MEDIA_SOURCE_FIELD_KEY)) {
+    // Only where the choice is real: see `engineProductSourcesItsOwnMedia`.
+    if (engineProductSourcesItsOwnMedia(engineProductId) && !profile.fields.some((f) => f.key === MEDIA_SOURCE_FIELD_KEY)) {
       extra.push({
         key: MEDIA_SOURCE_FIELD_KEY,
         label: "Media for this run",

@@ -10,6 +10,7 @@ import { agentStudioHref, type EngineAgentCardModel } from "@/lib/agent-engine/c
 import {
   agentEngineProductAcceptsMediaAssets,
   attachmentModeForEngineProduct,
+  engineProductSourcesItsOwnMedia,
   clientOnlyMediaIsRequired,
   mediaSourceHint,
   MEDIA_SOURCE_DEFAULT,
@@ -53,6 +54,13 @@ export function EngineAgentCard({
    */
   const acceptsMedia = agentEngineProductAcceptsMediaAssets(agent.slug);
   const attachmentMode = attachmentModeForEngineProduct(agent.slug) ?? "slides";
+  /**
+   * Whether the "where do the visuals come from" question has two real
+   * answers here. On `x-agent` it does not — D24 makes it text-only and the
+   * engine hardcodes that — so the selector is not painted and the run goes
+   * out on the default, which is the only behaviour the engine has.
+   */
+  const offersMediaSourceChoice = engineProductSourcesItsOwnMedia(agent.slug);
   // "Only media I upload" on an agent with no text fallback needs a file.
   const mediaMissing = acceptsMedia && mediaSource === "client" && clientOnlyMediaIsRequired(agent.slug) && attachments.length === 0;
 
@@ -112,15 +120,24 @@ export function EngineAgentCard({
 
       {acceptsMedia && (
         <div className="mt-3 space-y-1 rounded-lg border border-white/10 p-3">
-          <Label htmlFor={`media-source-${agent.slug}`}>Media for this run</Label>
-          <Select
-            id={`media-source-${agent.slug}`}
-            value={mediaSource}
-            onChange={(e) => setMediaSource(e.target.value === "client" ? "client" : "system")}
-          >
-            <option value="system">Karos sources or generates the visuals</option>
-            <option value="client">Only media uploaded for this job</option>
-          </Select>
+          {/* The heading labels the SELECT when there is one; with no control
+              to point at, `htmlFor` would dangle, so it is dropped rather than
+              left addressing an id that is not rendered. */}
+          {offersMediaSourceChoice ? (
+            <Label htmlFor={`media-source-${agent.slug}`}>Media for this run</Label>
+          ) : (
+            <p className="text-sm font-medium">Media for this run</p>
+          )}
+          {offersMediaSourceChoice && (
+            <Select
+              id={`media-source-${agent.slug}`}
+              value={mediaSource}
+              onChange={(e) => setMediaSource(e.target.value === "client" ? "client" : "system")}
+            >
+              <option value="system">Karos sources or generates the visuals</option>
+              <option value="client">Only media uploaded for this job</option>
+            </Select>
+          )}
           <RunAttachments
             clientId={clientId}
             attachments={attachments}

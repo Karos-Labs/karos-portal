@@ -133,14 +133,14 @@ Catalog = `customAgents` docs seeded by `scripts/sync-engine-agent-roster.ts:69-
 | Agent | Key → engine product | Runnable | Note |
 |---|---|---|---|
 | X | `karos-x-agent-v2` → `x-agent` | yes | 15 credits, launch 25 |
-| LinkedIn | `karos-linkedin-writer-v2` → `linkedin-agent` | **verify** | gate needs a `liAgentState` foundation row only the dead webhook wrote (`submit-custom.ts:497-505`); new client may be refused every press |
+| LinkedIn | `karos-linkedin-writer-v2` → `linkedin-agent` | yes | was **verify**; the `liAgentState` foundation gate was real and is carved out of the engine path by `460a77cc` — `00-channel-setup` resolves the channel from the form |
 | Reddit | `karos-reddit-runner` → `reddit-agent` | yes | no price row → 25 |
 | Instagram | `karos-instagram-agent` → `instagram-agent` | halts | empty topics catalog; no price row |
 | TikTok (clipping + original shorts) | `karos-tiktok-agent` → `tiktok-agent` | yes | same form as Instagram; no price row |
 | Branded Shorts (editing) | `branded-shorts` → `branded-shorts-agent` | blocked | needs `brandedShortsProfilePath`; no price row |
 | Content designing | none | no | nearest: tiktok-agent original-short mode |
-| Blog | `karos-blog-writer-v2` → `blog-agent` | **verify** | same gate problem (`:579-583`); 10 credits |
-| Newsletter | `karos-newsletter-writer-v2` → `newsletter-agent` | **verify** | same gate problem (`:559-563`); 10 credits |
+| Blog | `karos-blog-writer-v2` → `blog-agent` | yes | same gate, same carve-out (`460a77cc`); 10 credits |
+| Newsletter | `karos-newsletter-writer-v2` → `newsletter-agent` | yes | same gate, same carve-out (`460a77cc`); 10 credits |
 | Landing Builder | `landing-builder` → `landing-builder-agent` | yes | fresh build only, no feedback rounds |
 | Campaign | `karos-campaign-orchestrator` → `campaign-orchestrator` | yes | exists, granted to all, not in Albert's list → decide |
 | Reputation | `karos-reputation-runner` → `reputation-agent` | yes | move to Reporting; 25 credits |
@@ -206,7 +206,7 @@ Catalog = `customAgents` docs seeded by `scripts/sync-engine-agent-roster.ts:69-
 1. **Per-run context never reaches the engine.** Intake, voice profiles, learning logs, prior drafts, feedback: built, then dropped at the deleted agent-service boundary. No agent learns between runs. (`submit-custom.ts:420-651,900`)
 2. **No profile enrichment, no subject table.** Nothing writes back; nothing queryable.
 3. **No performance ingestion.** Followers never written, rankings never fetched, per-post metrics never reach a run or the client.
-4. **LinkedIn, Newsletter, Blog may be unrunnable for a new client.** Setup gates read rows only the dead webhook wrote. Verify on prep. If confirmed: only X + Reddit are live.
+4. ~~**LinkedIn, Newsletter, Blog may be unrunnable for a new client.**~~ **CLOSED 2026-09-16** by `460a77cc` (PR #122). It was confirmed rather than disproved — the gates really did read rows only the dead agent-service webhook ever wrote — and the fix was to carve the ENGINE path out of all three (`submit-custom.ts`: each rung is now behind `!engineProductId`). `linkedin-agent` resolves its own channel in `00-channel-setup` from the filled form, and the newsletter and blog rungs made the same class of claim about indices the engine builds itself. The INTAKE rung stays on both paths, because the form is what the pre-flight resolves from. Verified in code, not on prep: a new client is refused on none of the three.
 5. **No client feedback loop.** Stored, never regenerates; "request changes" staff-only; no revisions.
 6. **No vetting for live agents.** Forbidden topics = Dynamic Studio only; no competitor check.
 7. **No first run.** No intro doc, no company-page voice file, X has no setup.
