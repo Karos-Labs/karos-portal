@@ -31,8 +31,17 @@ describe("context documents carry the measured facts and the measured-basis scor
     const docs = composeContextDocsFromAgentReports({ client: CLIENT, intelReport: INTEL, seoGeo: SEO_GEO });
     expect(docs["market-strategy"]).toContain("**SEO 62 (90% of checks measured; 69 on the checks that ran) · GEO readiness 41 (71% of checks measured; 58 on the checks that ran) · AI visibility index 23**");
     expect(docs["market-strategy"]).toContain("## Measured site facts\n\n- Technical crawl: 12 of 12 checked URLs answered HTTP 200");
-    expect(docs["action-plan"]).toContain("## Measured site facts");
-    expect(docs["action-plan"]).toContain("- No /llms.txt is published.");
+    // NOT in the action plan. These facts are the evidence behind the scores,
+    // so they belong with them; the action plan needs the actions. Rendering
+    // them in both put an identical long block in two documents, which two
+    // real client Regenerates (karoslabs + geektime, 2026-09-18) surfaced and
+    // the local duplication check had missed by passing an empty `seoGeo`.
+    expect(docs["action-plan"]).not.toContain("## Measured site facts");
+    expect(docs["action-plan"]).not.toContain("- No /llms.txt is published.");
+    // The action plan keeps the ACTIONS, which is what it is for.
+    expect(docs["action-plan"]).toContain("Publish an llms.txt file");
+    // And the facts are still stored — in the one document that scores them.
+    expect(docs["market-strategy"]).toContain("- No /llms.txt is published.");
   });
 
   it("an older deliverable without the new fields renders exactly the line it always did", () => {
