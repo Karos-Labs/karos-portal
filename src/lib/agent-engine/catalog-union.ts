@@ -71,6 +71,11 @@ export function buildEngineAgentCards(
   const present = new Set(middlewareAgents.map((agent) => agent.slug));
   const cards = middlewareAgents
     .filter((agent) => agent.slug !== "")
+    // `legacy_only` rows (seed_all_agents.py's LEGACY_ONLY_AGENTS) exist only so
+    // the chat router can resolve a portal-only key with no agent-engine
+    // workflow behind it — `is_public: false` in the same seed, and the seed's
+    // own comment says they are "not client-facing" and not meant as a card.
+    .filter((agent) => agent.status !== "legacy_only")
     .filter((agent) => !(agent.supersededBy && present.has(agent.supersededBy)))
     .map((agent) => ({
       slug: agent.slug,

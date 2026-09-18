@@ -127,6 +127,18 @@ describe("buildEngineAgentCards", () => {
     // the engine cards.
     expect(buildEngineAgentCards([])).toEqual([]);
   });
+
+  it("hides a legacy_only row, seeded only so the chat router can resolve its key", () => {
+    // seed_all_agents.py's LEGACY_ONLY_AGENTS ("Carousel Runner (legacy)",
+    // "LinkedIn Manager (legacy)", etc.) have no agent-engine workflow and
+    // `is_public: false` — the seed's own comment says they are not client- or
+    // staff-facing cards, just a key the router can look up.
+    const cards = buildEngineAgentCards([
+      mw("karos-carousel-runner", { name: "Carousel Runner (legacy)", status: "legacy_only", isPublic: false }),
+      mw("x-agent"),
+    ]);
+    expect(cards.map((c) => c.slug)).toEqual(["x-agent"]);
+  });
 });
 
 describe("agentStudioHref", () => {
