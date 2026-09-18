@@ -42,6 +42,31 @@ What each step takes in, what it does, what it writes, and what the next run rea
 
 ## 3. The learning loop in detail
 
+### 3.0 Where the store lives (D42)
+
+**The learning tables are Postgres tables in the `config` schema, and they live inside
+agent-middleware.** That is the answer O09 was asking for, and it was an option nobody put
+on the list: the question read "Firestore or Postgres", and both answers assumed whoever
+needed a row would open a connection to it. Neither the portal nor the engine has one.
+agent-middleware owns the schema and is the only thing that connects to it; everyone else
+asks it. The engine receives a projection into its run workspace before the run and hands
+its state back to `collect` afterwards, and it never sees a database of any kind — that is
+invariant 3 of the C7 run-context contract, not a convention. The portal reads the same way,
+through the middleware's API.
+
+What is in there: the subject table, the feedback log and the preferences derived from it,
+the strategy map and its rows, the craft rules, the per-client-per-platform platform state,
+the per-run state records, and the learning settings. Nine tables, all keyed by client slug
+and platform, all created by `migrations/0007_learning_loop.sql`.
+
+**What stays in Firestore is everything a person looks at.** Clients, jobs, assets and their
+meta, credits and the credit ledger, the marketing-analytics rows, and the follower
+snapshots. The rule that separates them is not "old versus new": it is whether the row is
+rendered to a human in the portal, or read by an agent to write better next time. A follower
+count is on a client's dashboard, so it is Firestore; a subject row exists so that next
+week's post does not repeat this week's, so it is Postgres. Anything that needs to be both
+is written once, where its reader is, and projected — never copied.
+
 ### 3.1 Three sources, and what is catalogued from each
 
 **Research (step 6).**
@@ -243,4 +268,4 @@ Every item needed to get from §5 to §2–§4. Owner and size to be assigned by
 
 ### 6.3 Decisions
 
-Settled: D01 to D41 in 05. Open: O09, O10 and O11, all with Tomer and Shlomi, each with what it blocks.
+Settled: D01 to D43 in 05 — D42 (O09: the store is Postgres inside agent-middleware, see 3.0) and D43 (O10: connected platforms only, no scraping provider) were settled on 2026-09-18, which unblocks B1, B2, C1, N4 and N6. Open: O11 alone, with Tomer and Shlomi.
