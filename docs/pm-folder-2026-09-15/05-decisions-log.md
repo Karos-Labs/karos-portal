@@ -49,9 +49,8 @@ Status: approved 2026-09-15 · Owner: Albert · Changes when: a decision is made
 | D41 | 2026-09-15 | The writing rules on each Craft page are the agent's instructions, not a checklist applied afterwards. A draft graded after the fact is written wrong first, which is slower and produces worse drafts. The pre-delivery checklist stays, as the last gate rather than the method | K5, Craft, engine |
 | D42 | 2026-09-18 | **O09 settled.** The learning tables live in Postgres, in the `config` schema, inside **agent-middleware** — and agent-middleware is the only thing that connects to them. The portal and the engine reach them through `project` and `collect`, never through a connection string. Firestore keeps what the portal renders to a person: assets, jobs, clients, credits, follower snapshots | 02, B1, B2, C1, N4, C7 contract |
 | D43 | 2026-09-18 | **O10 settled.** Connected platforms only. We read a number when the client has connected the account and the platform's own API will tell us; for everything else we record nothing and say so. No scraping provider, this quarter or next | N6, reporting |
+| D44 | 2026-09-18 | **O11 settled.** Every row in 04 has a size and an owner, in 04 §1.5, measured against the code in all three repos rather than against the row's description. Owners follow 04 §5's existing rule — portal rows to a cloud session reviewed by Shlomi, engine rows to Tomer and Shlomi — so the only per-row owners named separately are the ones needing an account, a vendor or a call, which are Albert's. Three things the sizing found and 04 now records: the engine's A1, A2, C1 and C3 halves are substantially done for the six publishing agents and the middleware has no open row at all, so the learning loop's remaining gap is portal-side wiring; G3 and N5 are one capability (suspend a run for a person) wearing two ids and together they are the largest item in the file; and N1 and K5 cannot be scheduled as single rows | 04, all items |
 
 ## Open
 
-| Id | Question | Owner | Blocks | Proposed default until decided |
-|---|---|---|---|---|
-| O11 | Who takes each item in 04, and how long each one is. Without it we cannot say what fits in a week | Tomer, Shlomi | all items | Not estimated yet |
+Nothing. O09, O10 and O11 were settled on 2026-09-18 as D42, D43 and D44.
