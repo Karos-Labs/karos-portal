@@ -46,7 +46,7 @@ import { intakePageHref, type IntakeFamily } from "@/lib/agent-intake-links";
 import { agentArchetype, OUTPUT_NOUN } from "@/lib/agent-archetype";
 import { useRunWatchActions, useShowRunInPage, useWatchedRun, watchedOutcome } from "@/components/run-watch";
 import { runOutcomeSentence } from "@/lib/run-progress";
-import { scheduleLimitsFor } from "@/lib/scheduled-runs";
+import { scheduleLimitsFor, WEEKDAY_LABEL, weeklyCadenceDays } from "@/lib/scheduled-runs";
 import { validateScheduleTiming } from "@/lib/scheduling";
 import { classifyJobError } from "@/lib/job-error-taxonomy";
 import { jobStatusLabel } from "@/lib/job-status-copy";
@@ -244,6 +244,17 @@ export interface ClientAgentScheduleRow {
   agentId: string;
   status: "active" | "paused";
   postsPerWeek: number;
+  /**
+   * The days it fires on, Sunday first (D15).
+   *
+   * Carried so the pace dialog can prefill what the client actually chose
+   * rather than re-deriving a preset spread from the count — which would
+   * silently move a schedule someone had set to Tue/Thu onto Mon/Wed the next
+   * time they opened the dialog to change the time. Seven days is a DAILY row,
+   * which stores no day set of its own; `firingWeekdays` answers all seven from
+   * the cadence, so this is populated for both.
+   */
+  weekdays: number[];
   outputsPerRun: number;
   nextRunAt: number;
   /**
@@ -1286,9 +1297,34 @@ export function AgentScheduleModal({
   // written before the cap existed would otherwise seed a value the dropdown
   // cannot show, which renders as an empty select.
   const limits = scheduleLimitsFor(agent.key);
-  const [postsPerWeek, setPostsPerWeek] = useState(
-    Math.min(schedule?.postsPerWeek ?? 3, limits.maxRunsPerWeek),
-  );
+  /**
+   * D15 — THE DAYS ARE THE STATE, and the count is read off them.
+   *
+   * The dialog used to hold a count and let the server choose the days from a
+   * preset table, so "three a week" meant Monday, Wednesday and Friday whether
+   * or not that is when this client's audience reads, and a client who wanted
+   * Tue/Thu had no way to say so. Holding one of the two and deriving the other
+   * is also what keeps them from disagreeing: there is no state here that can
+   * say "five a week" while four days are ticked.
+   *
+   * Seeded from what was STORED rather than re-spread from the count, so
+   * opening this dialog to change the time cannot quietly move a schedule
+   * someone had set to Tue/Thu onto Mon/Wed.
+   */
+  const [weekdays, setWeekdays] = useState<number[]>(() => {
+    const stored = schedule?.weekdays?.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6) ?? [];
+    const seed = stored.length > 0 ? stored : weeklyCadenceDays(Math.min(schedule?.postsPerWeek ?? 3, limits.maxRunsPerWeek));
+    return [...new Set(seed)].sort((a, b) => a - b).slice(0, limits.maxRunsPerWeek);
+  });
+  const postsPerWeek = weekdays.length;
+  /** Picking a COUNT re-spreads the week; picking DAYS is the finer control beside it. */
+  const setPostsPerWeek = (count: number) => setWeekdays(weeklyCadenceDays(Math.min(count, limits.maxRunsPerWeek)));
+  /** A schedule with no days is not a pace, so the last one standing cannot be switched off. */
+  const toggleWeekday = (day: number) =>
+    setWeekdays((current) => {
+      if (!current.includes(day)) return [...current, day].sort((a, b) => a - b).slice(0, limits.maxRunsPerWeek);
+      return current.length > 1 ? current.filter((d) => d !== day) : current;
+    });
   // ALWAYS the stored value, in both faces of the dialog. Pinning this to 1 for
   // paceOnly (as it briefly did) was two bugs in one: a schedule stored at 3×5
   // quoted its weekly cost from 3×1 - five times under - and pressing "Save
@@ -1336,6 +1372,10 @@ export function AgentScheduleModal({
         clientId,
         customAgentId: agent.id,
         postsPerWeek,
+        // The days the client ticked. The server still falls back to the preset
+        // spread when this is absent, so an older page that sends only a count
+        // behaves exactly as it did.
+        weekdays,
         outputsPerRun,
         prompt,
         hour,
@@ -1497,6 +1537,41 @@ export function AgentScheduleModal({
               </Select>
             </div>
           )}
+        </div>
+
+        {/* D15 — WHICH DAYS, not just how many. The count above re-spreads the
+            week when it changes; these are the finer control beside it, and the
+            two cannot disagree because the count is read off this set. All seven
+            is a DAILY schedule, and the sentence under the row says so rather
+            than leaving a client to read it off seven ticked boxes. */}
+        <div>
+          <Label htmlFor={`schedule-days-${agent.id}`}>Posting days</Label>
+          <div id={`schedule-days-${agent.id}`} className="flex flex-wrap gap-1.5">
+            {WEEKDAY_LABEL.map((label, day) => {
+              const on = weekdays.includes(day);
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => toggleWeekday(day)}
+                  className={cn(
+                    "focus-ring rounded-md border px-2.5 py-1.5 text-xs transition-colors",
+                    on
+                      ? "border-neon/40 bg-neon/10 text-foreground"
+                      : "border-border bg-surface-2 text-muted hover:border-border-strong hover:text-foreground",
+                  )}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-1 text-xs text-muted">
+            {postsPerWeek === 7
+              ? "Every day."
+              : `${postsPerWeek} day${postsPerWeek === 1 ? "" : "s"} a week · ${weekdays.map((d) => WEEKDAY_LABEL[d]).join(", ")}.`}
+          </p>
         </div>
 
         <div>

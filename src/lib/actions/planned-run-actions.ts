@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import {
+  clearPlannedScheduledRunWeekdays,
   createPlannedScheduledRun,
   deletePlannedScheduledRun,
   getClient,
@@ -17,7 +18,7 @@ import { selectAgentSchedule } from "@/lib/agent-schedule-selection";
 import {
   computeNextRun,
   scheduleLimitsFor,
-  weeklyCadenceDays,
+  resolveClientCadence,
 } from "@/lib/scheduled-runs";
 import { isValidTimeZone, runtimeTimeZone } from "@/lib/run-cadence";
 import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
@@ -63,6 +64,15 @@ export interface ClientAgentScheduleInput {
   clientId: string;
   customAgentId: string;
   postsPerWeek: number;
+  /**
+   * D15 — the days the client picked, Sunday first.
+   *
+   * Optional, and absent means exactly what it meant before this field
+   * existed: `weeklyCadenceDays` spreads `postsPerWeek` across the week for
+   * them. Present, it WINS, and `postsPerWeek` is derived from its length so a
+   * stale count on the wire cannot disagree with the days that will fire.
+   */
+  weekdays?: number[];
   outputsPerRun: number;
   prompt: string;
   hour?: number;
@@ -330,7 +340,19 @@ export async function configureClientAgentScheduleAction(
   // 7x5 would both bill for 35 and get the client's account treated as spam by
   // the subreddits the agent is building standing in.
   const limits = scheduleLimitsFor(agent.key);
-  const postsPerWeek = clampInt(input.postsPerWeek, 1, limits.maxRunsPerWeek);
+  // The days first, then the count FROM the days (D15). `resolveClientCadence`
+  // falls back to the preset spread when the client picked none, so a caller
+  // that sends only a count behaves exactly as it did before the choice
+  // existed. The ceiling is applied to the resolved count rather than to the
+  // submitted one: a client who ticks all seven boxes on an agent capped at
+  // five is asking for a pace the product does not sell, and the cap has to
+  // catch it on the days, not on a number nobody sent.
+  const chosen = resolveClientCadence(clampInt(input.postsPerWeek, 1, limits.maxRunsPerWeek), input.weekdays);
+  const withinCap =
+    chosen.postsPerWeek > limits.maxRunsPerWeek
+      ? resolveClientCadence(limits.maxRunsPerWeek, chosen.weekdays.slice(0, limits.maxRunsPerWeek))
+      : chosen;
+  const postsPerWeek = withinCap.postsPerWeek;
 
   // WHAT A CLIENT MAY CHANGE HERE: the posting days and the time of day. That
   // is the whole of "pace". Two fields are deliberately NOT theirs, and the
@@ -366,7 +388,8 @@ export async function configureClientAgentScheduleAction(
 
   const hour = clampInt(input.hour ?? 9, 0, 23);
   const minute = clampInt(input.minute ?? 0, 0, 59);
-  const weekdays = weeklyCadenceDays(postsPerWeek);
+  const weekdays = withinCap.weekdays;
+  const cadence = withinCap.cadence;
   const now = Date.now();
   const timeZone = resolveTimeZone(input.timeZone);
   // The day that already fired is not on offer again. Recomputing purely from
@@ -377,7 +400,7 @@ export async function configureClientAgentScheduleAction(
   // the information was there and unread. `existing` is the row being edited;
   // on a create there is nothing to have fired.
   const nextRunAt = computeNextRun({
-    cadence: "weekly",
+    cadence,
     hour,
     minute,
     weekdays,
@@ -396,12 +419,17 @@ export async function configureClientAgentScheduleAction(
     agentIcon: agent.icon,
     agentColor: agent.color,
     prompt,
-    cadence: "weekly" as const,
+    cadence,
     hour,
     minute,
     timeZone,
-    weekday: weekdays[0],
-    weekdays,
+    // A DAILY ROW STORES NO DAY SET. `firingWeekdays` answers "all seven" from
+    // the cadence alone, `computeNextRun` advances a daily row by one day
+    // without reading them, and agent-middleware's `schedules_cadence_fields_agree`
+    // requires the column to be NULL — so a leftover array would be a value two
+    // readers could disagree about and one store would refuse. The stale keys
+    // from a row that WAS weekly are removed below rather than left behind.
+    ...(cadence === "weekly" ? { weekday: weekdays[0], weekdays } : {}),
     outputsPerRun,
     // billClientCredits is DELIBERATELY absent from the shared patch — see the
     // note on the create branch below. It is create-only.
@@ -420,6 +448,15 @@ export async function configureClientAgentScheduleAction(
     // An EDIT changes the pace, never who pays for it: `patch` carries no
     // billClientCredits, so the stored flag survives untouched.
     await updatePlannedScheduledRun(existing.id, patch);
+    // The patch above OMITS `weekday`/`weekdays` on a daily row rather than
+    // writing them, and a merge cannot delete what it does not mention — so a
+    // weekly row converted to daily would keep the day set it fired on. The
+    // readers would still agree (daily means seven days whatever the array
+    // says), but the row would describe two cadences at once and the control
+    // plane's own constraint refuses exactly that shape.
+    if (cadence !== "weekly" && (existing.weekdays !== undefined || existing.weekday !== undefined)) {
+      await clearPlannedScheduledRunWeekdays(existing.id);
+    }
   } else {
     id = await createPlannedScheduledRun({
       clientId: input.clientId,

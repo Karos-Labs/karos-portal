@@ -804,6 +804,24 @@ export async function updatePlannedScheduledRun(id: string, data: Partial<Planne
   await col.plannedScheduledRuns().doc(id).set(data, { merge: true });
 }
 
+/**
+ * Remove a planned run's weekly day set.
+ *
+ * A cadence that is no longer weekly must not leave one behind: `weekday` and
+ * `weekdays` mean nothing on a daily or monthly row, agent-middleware's
+ * `schedules_cadence_fields_agree` constraint refuses a daily row that carries
+ * them, and a merge-patch cannot express "this key is gone" — omitting it keeps
+ * the old value, which is how a converted row ends up describing two cadences
+ * at once. Called only on the transition; a row created daily never had them.
+ */
+export async function clearPlannedScheduledRunWeekdays(id: string): Promise<void> {
+  const { FieldValue } = await import("firebase-admin/firestore");
+  await col
+    .plannedScheduledRuns()
+    .doc(id)
+    .set({ weekday: FieldValue.delete(), weekdays: FieldValue.delete() } as never, { merge: true });
+}
+
 export async function deletePlannedScheduledRun(id: string): Promise<void> {
   await col.plannedScheduledRuns().doc(id).delete();
 }

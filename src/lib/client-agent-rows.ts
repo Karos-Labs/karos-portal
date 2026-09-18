@@ -38,7 +38,7 @@ import {
 } from "@/lib/custom-agent-launch";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { agentArchetype, OUTPUT_NOUN } from "@/lib/agent-archetype";
-import { selectAgentSchedules, weeklyFireDays } from "@/lib/agent-schedule-selection";
+import { firingWeekdays, selectAgentSchedules, weeklyFireDays } from "@/lib/agent-schedule-selection";
 import { runRowLabel, type ClientAgentIdentity } from "@/lib/agent-identity-map";
 import { listClientAgentFeedback } from "@/lib/data-client-agents";
 import {
@@ -355,6 +355,12 @@ export function toScheduleRows(
       agentId: run.customAgentId,
       status: run.status === "paused" ? ("paused" as const) : ("active" as const),
       postsPerWeek,
+      // The days themselves, not just how many (D15). `firingWeekdays` cannot
+      // be null here — the `postsPerWeek == null` guard above already dropped
+      // every cadence that does not decompose into weekdays — but the fallback
+      // is spelled out rather than asserted, because a non-null assertion on a
+      // client-facing projection is a crash waiting for the next cadence.
+      weekdays: firingWeekdays(run) ?? [],
       // The multiplier stays: the client's pace dialog has to quote the REAL
       // weekly cost of a schedule someone set at more than one output per fire,
       // and it cannot do that without this number. No client-visible copy

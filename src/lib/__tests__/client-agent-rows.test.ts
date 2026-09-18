@@ -138,6 +138,11 @@ const SCHEDULE_ROW_CLIENT_KEYS = [
   "agentId",
   "status",
   "postsPerWeek",
+  // D15: the days themselves, so the pace dialog prefills what the client
+  // actually chose instead of re-deriving a preset spread from the count —
+  // which would move a Tue/Thu schedule onto Mon/Wed the next time they opened
+  // it to change the time. Client-visible by design: it is their own choice.
+  "weekdays",
   "outputsPerRun",
   "nextRunAt",
   "hour",
