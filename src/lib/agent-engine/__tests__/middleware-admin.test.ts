@@ -125,6 +125,41 @@ describe("agents", () => {
     expect(page.items[0]!.status).toBe("active");
   });
 
+  it("keeps legacy_only distinct from active, rather than collapsing it", async () => {
+    // seed_all_agents.py's LEGACY_ONLY_AGENTS ("Carousel Runner (legacy)",
+    // "LinkedIn Manager (legacy)", etc.) exist only so the chat router can
+    // resolve a portal-only key with no agent-engine workflow behind it.
+    // Reading them back as "active" is what put dead cards on the catalog.
+    capture(
+      json({
+        items: [
+          {
+            id: "karos-carousel-runner",
+            slug: "karos-carousel-runner",
+            name: "Carousel Runner (legacy)",
+            description: null,
+            status: "legacy_only",
+            agent_type: null,
+            model: null,
+            model_params: {},
+            config: {},
+            tags: ["legacy", "carousel"],
+            is_public: false,
+            created_at: "2026-08-01T00:00:00Z",
+            updated_at: "2026-08-02T00:00:00Z",
+          },
+        ],
+        limit: 50,
+        offset: 0,
+        has_more: false,
+        total: 1,
+      }),
+    );
+    const page = await listAgents();
+    expect(page.items[0]!.status).toBe("legacy_only");
+    expect(page.items[0]!.isPublic).toBe(false);
+  });
+
   it("carries each stage's engine facts (agent id, compiled default model, vendor) and a model's fallback", async () => {
     // These are what let the Studio name the engine default per stage instead
     // of one agent-wide "Sonnet", and what dispatch keys a stage override by.

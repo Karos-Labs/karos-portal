@@ -25,7 +25,15 @@ import { middlewareFetch, MiddlewareRequestError } from "./middleware-http";
 
 export { MiddlewareRequestError } from "./middleware-http";
 
-export type AgentStatus = "active" | "disabled";
+/**
+ * `"legacy_only"` is agent-middleware's `seed_all_agents.py` `LEGACY_ONLY_AGENTS`
+ * marker: a row seeded ONLY so the chat router can resolve a portal-only key
+ * (e.g. "karos-carousel-runner") to a descriptor, with no agent-engine workflow
+ * behind it and `is_public: false`. It must stay distinct from `"active"` —
+ * collapsing it there is what put five dead cards ("Carousel Runner (legacy)",
+ * "LinkedIn Manager (legacy)", etc.) on the staff catalog page.
+ */
+export type AgentStatus = "active" | "disabled" | "legacy_only";
 export type FeedbackStatus = "approved" | "rejected" | "needs_changes";
 export type TemplateKind = "layout" | "email" | "social" | "prompt_fragment" | "other";
 
@@ -226,7 +234,7 @@ function toAgent(row: Row): MiddlewareAgent {
     slug: str(row.slug),
     name: str(row.name),
     description: strOrNull(row.description),
-    status: row.status === "disabled" ? "disabled" : "active",
+    status: row.status === "disabled" ? "disabled" : row.status === "legacy_only" ? "legacy_only" : "active",
     agentType: strOrNull(row.agent_type),
     model: strOrNull(row.model),
     modelParams: obj(row.model_params),
