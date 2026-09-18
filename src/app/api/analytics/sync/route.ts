@@ -11,7 +11,7 @@ import {
   reconcileAssetPublished,
 } from "@/lib/data";
 import { shouldReconcilePublished } from "@/lib/asset-lifecycle";
-import { syncSlotPostedForAsset } from "@/lib/client-agent-slots";
+import { afterAssetPosted } from "@/lib/asset-posted";
 import { DEFAULT_PLATFORM_FOR_TYPE } from "@/lib/scheduling";
 import { blockingPredecessor } from "@/lib/post-chain";
 import { fetchPlatformMetrics, fetchSeatMetrics } from "@/lib/integrations/analytics-providers";
@@ -102,11 +102,11 @@ export async function GET(req: NextRequest) {
         try {
           const r = await reconcileAssetPublished(a.id, now);
           if (r.changed) {
-            // The slot this asset fulfils records that its day happened (§3).
-            // Best-effort: a missed stamp costs nothing and re-derives later.
-            await syncSlotPostedForAsset({ clientId: client.id, assetId: a.id, now }).catch(
-              () => {},
-            );
+            // Everything that follows a post, in the one place all four doors
+            // call: the slot stamp this door already did, plus the X option row
+            // and the learning-loop event it did not. A post we only NOTICED is
+            // still a post the agent got right, and it used to teach nothing.
+            await afterAssetPosted(a).catch(() => {});
             publishedReconciled++;
             results.push({ clientId: client.id, platform: a.scheduledPlatform ?? "-", assetId: a.id, action: "published" });
           }
