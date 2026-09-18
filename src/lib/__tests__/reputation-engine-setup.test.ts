@@ -106,8 +106,13 @@ describe("the wiring that has to agree across modules (engine path)", () => {
     // ...and the intake gate is asked BEFORE the branch, on both paths.
     expect(core.indexOf("hasReputationAgentIntake(input.clientId)")).toBeLessThan(core.indexOf("toReputationEngineRunInput("));
     // Merged after the dialog fields, so a dialog key wins over an intake key.
+    //
+    // `slotStage` is spread after BOTH (SCRUM-468): it is the calendar's own
+    // decision and there is no dialog field and no intake key it could be
+    // shadowed by, so the order that matters to this test is still the two
+    // named here.
     expect(core.replace(/\s+/g, " ")).toMatch(
-      /inputs: \{ \.\.\.toEngineRunInput\(engineBriefValues, engineProductId, \{.*?\}\), \.\.\.engineExtraInputs, \}/,
+      /inputs: \{ \.\.\.toEngineRunInput\(engineBriefValues, engineProductId, \{.*?\}\), \.\.\.engineExtraInputs,/,
     );
   });
 
