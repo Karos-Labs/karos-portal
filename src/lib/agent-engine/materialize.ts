@@ -255,6 +255,44 @@ function metaFrom(deliverable: Record<string, unknown>, fields: readonly string[
   return meta;
 }
 
+/**
+ * D11's line — what this post is for, who it speaks to, why now — on the
+ * products whose deliverable is a TYPED shape rather than the bag of fields
+ * `metaFrom` reads.
+ *
+ * Instagram and the three TikTok agents emit the same three fields the drafting
+ * agents do, and there the resemblance ends: their deliverable is a rendered
+ * PNG or mp4, so they have no drafts markdown to hang a `- **Why now:**` bullet
+ * on and no `materializeDraftBatch` call whose `metaFields` list could carry
+ * them. They build `meta` as a literal, one product at a time. This is the
+ * same rule for those three literals, in one place rather than three, and the only
+ * reason it is not just a `metaFrom` call is that their deliverable interfaces
+ * have no index signature to read through.
+ *
+ * PRESENCE, not truthiness — deliberately the same test `metaFrom` applies, so
+ * every product stores the goal line identically. A run from an older prompt
+ * version, or one that resumed mid-flight, legitimately carries none of these,
+ * and the modal's block renders only the rows that are actually there: an
+ * absent field must stay absent rather than become an empty labelled row.
+ */
+const GOAL_LINE_FIELDS = ["goal", "audience", "whyNow"] as const;
+
+interface GoalLineFields {
+  /** The funnel stage, in the engine's own word (`attention`/`expertise`/`decide`); the modal renders the sentence. */
+  goal?: string;
+  audience?: string;
+  whyNow?: string;
+}
+
+function goalLineMeta(deliverable: GoalLineFields): Record<string, string> {
+  const meta: Record<string, string> = {};
+  for (const field of GOAL_LINE_FIELDS) {
+    const value = deliverable[field];
+    if (value !== undefined) meta[field] = value;
+  }
+  return meta;
+}
+
 /* ───────────────────── per-product materializers ────────────────────── */
 
 /**
@@ -464,7 +502,7 @@ function materializeNewsletterEdition(deliverable: Record<string, unknown>): Ass
  * deliverable already in Firestore (written before this field existed)
  * still materializes something rather than throwing.
  */
-interface InstagramCarouselDeliverable {
+interface InstagramCarouselDeliverable extends GoalLineFields {
   postId?: string;
   topic?: string;
   caption?: string;
@@ -524,6 +562,10 @@ async function materializeInstagramCarousel(job: Job, deliverable: InstagramCaro
     channels: ["instagram"],
     meta: {
       taskType: "social_post",
+      // D11's line. First in the literal for the same reason it is first in the
+      // draft-batch products' `metaFields`: it is the thing a client reads, and
+      // everything under it is plumbing.
+      ...goalLineMeta(deliverable),
       postId: deliverable.postId,
       slideCount: rendered.length,
       // `assetImages()` reads this shape FIRST, ahead of `meta.artifacts` —
@@ -534,12 +576,21 @@ async function materializeInstagramCarousel(job: Job, deliverable: InstagramCaro
   };
 }
 
-interface BrandedShortsVideoDeliverable {
+interface BrandedShortsVideoDeliverable extends GoalLineFields {
   gcsUri?: string;
   signedUrl?: string;
   durationSeconds?: number;
 }
 
+/**
+ * The branded short — `tiktok-editing-agent`'s deliverable as well as
+ * `branded-shorts-agent`'s. `content` is the empty string by construction: the
+ * video IS the post, and this deliverable carries no caption to put under it.
+ *
+ * Which is exactly why the goal line matters most here. A client opening this
+ * asset sees a player and nothing else; the three fields are the only words on
+ * the card that say what the video is for.
+ */
 async function materializeBrandedShortsVideo(job: Job, deliverable: BrandedShortsVideoDeliverable): Promise<AssetMaterialization> {
   const videoUrl = await rehostIfFetchable(deliverable.signedUrl, `agent-engine/${job.id}/final.mp4`, "video/mp4");
   return {
@@ -549,6 +600,7 @@ async function materializeBrandedShortsVideo(job: Job, deliverable: BrandedShort
     channels: ["tiktok"],
     meta: {
       taskType: "social_post",
+      ...goalLineMeta(deliverable),
       durationSeconds: deliverable.durationSeconds,
       artifacts: deliverable.gcsUri ? [{ gcsUri: deliverable.gcsUri }] : [],
     },
@@ -562,7 +614,7 @@ async function materializeBrandedShortsVideo(job: Job, deliverable: BrandedShort
  * source credit the engine enforces in code — so `content` carries it rather
  * than the empty string the branded-shorts materializer ships.
  */
-interface TiktokClipDeliverable {
+interface TiktokClipDeliverable extends GoalLineFields {
   topic?: string;
   caption?: string;
   about?: string;
@@ -584,6 +636,9 @@ async function materializeTiktokClip(job: Job, deliverable: TiktokClipDeliverabl
     channels: ["tiktok"],
     meta: {
       taskType: "social_post",
+      // The same presence test every conditional spread below it applies, in
+      // the helper the other two visual materializers share.
+      ...goalLineMeta(deliverable),
       ...(deliverable.about !== undefined ? { about: deliverable.about } : {}),
       ...(deliverable.sourceCredit !== undefined ? { sourceCredit: deliverable.sourceCredit } : {}),
       ...(deliverable.hookLine !== undefined ? { hookLine: deliverable.hookLine } : {}),

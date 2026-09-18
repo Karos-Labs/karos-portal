@@ -10,12 +10,70 @@
  * The other half of the same rule is what must NOT travel. `formattingNotes`
  * is instruction to whoever formats the post, it reached a client once through
  * this exact list, and nothing in the repo reads it back.
+ *
+ * SCRUM-483 added the visual half. Instagram and the three TikTok agents emit
+ * the same three fields, and their materializers build `meta` as a literal
+ * rather than through a `metaFields` list — so the source scan below could
+ * never have caught them, and did not. Those assertions run the real
+ * materialization instead; see the second half of this file.
  */
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const {
+  createAssetMock,
+  attachAssetToJobMock,
+  getJobMock,
+  updateJobMock,
+  getClientMock,
+  listClientCompetitorsMock,
+  upsertClientSeoGeoMock,
+  uploadBytesMock,
+  reflowMock,
+  generateTitleMock,
+  getDeliverableMock,
+  readAgentEngineRunMock,
+} = vi.hoisted(() => ({
+  createAssetMock: vi.fn(),
+  attachAssetToJobMock: vi.fn(),
+  getJobMock: vi.fn(),
+  updateJobMock: vi.fn(),
+  getClientMock: vi.fn(),
+  listClientCompetitorsMock: vi.fn(),
+  upsertClientSeoGeoMock: vi.fn(),
+  uploadBytesMock: vi.fn(),
+  reflowMock: vi.fn(),
+  generateTitleMock: vi.fn(),
+  getDeliverableMock: vi.fn(),
+  readAgentEngineRunMock: vi.fn(),
+}));
 
 vi.mock("server-only", () => ({}));
+// The same seam materialize.test.ts uses, for the same reason: this module's
+// whole job is the payload it hands `createAsset`, so that call is the only
+// honest place to read what a client would see.
+vi.mock("@/lib/data", () => ({
+  createAsset: createAssetMock,
+  attachAssetToJob: attachAssetToJobMock,
+  getJob: getJobMock,
+  updateJob: updateJobMock,
+  getClient: getClientMock,
+  listClientCompetitors: listClientCompetitorsMock,
+  upsertClientSeoGeo: upsertClientSeoGeoMock,
+}));
+vi.mock("@/lib/storage", () => ({ uploadBytes: uploadBytesMock }));
+vi.mock("@/lib/chain", () => ({ reflowClientChain: reflowMock }));
+vi.mock("@/lib/asset-titles", () => ({ generateAssetTitle: generateTitleMock }));
+vi.mock("../read-run", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../read-run")>()),
+  readAgentEngineRun: readAgentEngineRunMock,
+}));
+vi.mock("../client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../client")>()),
+  getAgentEngineDeliverable: getDeliverableMock,
+}));
 
-import { PRODUCT_DELIVERABLE_KINDS } from "../materialize";
+import { materializeAgentEngineDeliverable, PRODUCT_DELIVERABLE_KINDS } from "../materialize";
+import type { Asset, Job } from "@/lib/types";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -63,5 +121,166 @@ describe("internal working text stays off the client's card", () => {
 describe("the products are all still mapped", () => {
   it("did not lose a product while editing the meta lists", () => {
     expect(Object.keys(PRODUCT_DELIVERABLE_KINDS)).toHaveLength(16);
+  });
+});
+
+/* ─────────────────── the visual agents (SCRUM-483) ───────────────────
+ *
+ * A scan of `metaFields` is the wrong instrument here — these four products
+ * have no such list. Their deliverable is a rendered PNG or mp4 and each
+ * materializer writes its `meta` literally, which is precisely how they were
+ * missed: the three fields arrived from the engine, nothing put them on the
+ * asset, and the client's card had nowhere to read them from.
+ *
+ * So these go through the real materialization and read the payload that
+ * reaches `createAsset` — the only thing a card can render. The renderer
+ * itself needed no change: the modal's block is a sibling of the content
+ * branch, not inside it, so a carousel and a video reach it exactly as a
+ * drafts batch does.
+ */
+
+/** The goal line as the engine sends it: the funnel's own word, plus two sentences. */
+const GOAL_LINE = {
+  goal: "expertise",
+  audience: "Heads of growth at Series-B fintechs",
+  whyNow: "The EU ad rules landed this week and nobody has explained them plainly.",
+} as const;
+
+/**
+ * One deliverable per visual materializer, in the shape that materializer
+ * actually reads — not one payload reused three times. Instagram wants
+ * slides, branded-shorts wants a duration and nothing else, and the clip
+ * wants the caption that IS its post text.
+ */
+const VISUAL_DELIVERABLES: ReadonlyArray<readonly [string, string, Record<string, unknown>]> = [
+  [
+    "instagram-agent",
+    "materializeInstagramCarousel",
+    {
+      topic: "What the EU ad rules changed",
+      caption: "Three things changed this week. Here is what each one costs you.",
+      slides: [{ n: 1, fields: { headline: "What the EU ad rules changed" } }],
+      rendered: [{ n: 1, path: "https://signed.example/slide-1.png", gcsUri: "gs://b/1.png" }],
+    },
+  ],
+  [
+    "branded-shorts-agent",
+    "materializeBrandedShortsVideo",
+    { durationSeconds: 30, gcsUri: "gs://media/shorts/final.mp4" },
+  ],
+  [
+    "tiktok-agent",
+    "materializeTiktokClip",
+    {
+      topic: "The margin call moment",
+      caption: "Our read: the number is right, the conclusion is wrong.",
+      sourceCredit: "Jane Doe on The Show ep. 12",
+      durationSeconds: 40,
+    },
+  ],
+];
+
+function job(productId: string): Job {
+  return {
+    id: "job_1",
+    clientId: "client_1",
+    agentId: "agent-engine",
+    agentName: "Instagram Content Specialist",
+    title: "Test job",
+    status: "review",
+    input: {},
+    assetIds: [],
+    events: [],
+    createdBy: "user_1",
+    createdAt: 1000,
+    updatedAt: 1000,
+    agentEngineRunId: "pubsub-1",
+    agentEngineProductId: productId,
+  } as Job;
+}
+
+async function materialize(productId: string, deliverable: unknown): Promise<Omit<Asset, "id">> {
+  getDeliverableMock.mockResolvedValue(deliverable);
+  await materializeAgentEngineDeliverable(job(productId));
+  expect(createAssetMock).toHaveBeenCalledTimes(1);
+  return createAssetMock.mock.calls[0]![0] as Omit<Asset, "id">;
+}
+
+beforeEach(() => {
+  createAssetMock.mockReset().mockImplementation(async (_data: unknown, id: string) => ({ id, created: true }));
+  attachAssetToJobMock.mockReset();
+  getJobMock.mockReset().mockResolvedValue(null); // no fresh information — the snapshot stands
+  updateJobMock.mockReset().mockResolvedValue(undefined);
+  getDeliverableMock.mockReset();
+  // Null by default, so every assertion reads the deterministic field-derived
+  // title rather than a live Haiku call.
+  generateTitleMock.mockReset().mockResolvedValue(null);
+  reflowMock.mockReset().mockResolvedValue(undefined);
+  uploadBytesMock.mockReset().mockResolvedValue({ url: "https://karos.example/rehosted.png" });
+  getClientMock.mockReset().mockResolvedValue({ id: "client_1", name: "Acme Fintech" });
+  listClientCompetitorsMock.mockReset().mockResolvedValue([]);
+  upsertClientSeoGeoMock.mockReset().mockResolvedValue(undefined);
+  readAgentEngineRunMock.mockReset().mockResolvedValue(null);
+  globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) }) as unknown as typeof fetch;
+});
+
+describe("the goal line reaches the visual agents' cards (D11, SCRUM-483)", () => {
+  it("instagram-carousel carries goal, audience and whyNow onto the asset", async () => {
+    const [, , deliverable] = VISUAL_DELIVERABLES[0]!;
+    const asset = await materialize("instagram-agent", { ...deliverable, ...GOAL_LINE });
+    expect(asset.meta).toMatchObject(GOAL_LINE);
+    // Still the carousel it was: the line rides alongside the gallery, it does
+    // not stand in for it.
+    expect((asset.meta?.slides as unknown[]).length).toBe(1);
+  });
+
+  it("branded-shorts-video carries them — and this asset has no caption at all, so they are the only words on the card", async () => {
+    const [, , deliverable] = VISUAL_DELIVERABLES[1]!;
+    const asset = await materialize("branded-shorts-agent", { ...deliverable, ...GOAL_LINE });
+    expect(asset.content).toBe("");
+    expect(asset.meta).toMatchObject(GOAL_LINE);
+  });
+
+  it("tiktok-clip carries them alongside its own commentary fields", async () => {
+    const [, , deliverable] = VISUAL_DELIVERABLES[2]!;
+    const asset = await materialize("tiktok-agent", { ...deliverable, ...GOAL_LINE });
+    expect(asset.meta).toMatchObject({ ...GOAL_LINE, sourceCredit: "Jane Doe on The Show ep. 12", durationSeconds: 40 });
+  });
+
+  // D08's three TikTok cards are three product ids over two deliverable shapes:
+  // clipping and content design both run the tiktok workflow and materialize as
+  // a clip, editing runs the branded-shorts one. Content design has NO
+  // materializer of its own, so it inherits this line only because
+  // `materializeTiktokClip` carries it — which is the thing worth pinning.
+  it.each([
+    ["tiktok-clipping-agent", VISUAL_DELIVERABLES[2]![2]],
+    ["tiktok-content-design-agent", VISUAL_DELIVERABLES[2]![2]],
+    ["tiktok-editing-agent", VISUAL_DELIVERABLES[1]![2]],
+  ])("%s lands the line through the materializer it shares", async (productId, deliverable) => {
+    const asset = await materialize(productId, { ...deliverable, ...GOAL_LINE });
+    expect(asset.meta).toMatchObject(GOAL_LINE);
+  });
+});
+
+describe("nothing is invented when the run did not send it", () => {
+  // A run from an older prompt version, or one that resumed mid-flight,
+  // legitimately carries none of these. The modal renders only the rows that
+  // are there, so an absent field must stay ABSENT rather than land as an
+  // empty labelled row under "The point of this post".
+  it.each(VISUAL_DELIVERABLES)("%s (%s) leaves the three keys off the meta entirely", async (productId, _fn, deliverable) => {
+    const asset = await materialize(productId, deliverable);
+    for (const key of ["goal", "audience", "whyNow"]) {
+      expect(asset.meta, key).not.toHaveProperty(key);
+    }
+  });
+
+  it("a partial line travels as far as it goes, and no further", async () => {
+    // Half a goal line is not a broken one — the engine legitimately sends
+    // `whyNow` on a product that has no funnel stage to state.
+    const [, , deliverable] = VISUAL_DELIVERABLES[2]!;
+    const asset = await materialize("tiktok-agent", { ...deliverable, whyNow: GOAL_LINE.whyNow });
+    expect(asset.meta).toMatchObject({ whyNow: GOAL_LINE.whyNow });
+    expect(asset.meta).not.toHaveProperty("goal");
+    expect(asset.meta).not.toHaveProperty("audience");
   });
 });
