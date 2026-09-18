@@ -40,9 +40,8 @@ import {
   isLaunchDeliverable,
   isTestRunAsset,
 } from "@/lib/asset-visibility";
-import { syncSlotPostedForAsset } from "@/lib/client-agent-slots";
-import { addXDraftFeedbackAction } from "@/lib/actions/x-agent-actions";
-import { learningTargetForAsset, recordLearningFeedback } from "@/lib/agent-engine/learning-feedback";
+import { learningTargetForAsset } from "@/lib/agent-engine/learning-feedback";
+import { afterAssetPosted } from "@/lib/asset-posted";
 import type { Asset, PublishMode } from "@/lib/types";
 
 /** Load the asset and verify the caller may act on it. Shared guard for the actions below. */
@@ -510,49 +509,11 @@ export async function markAssetPostedAction(
   const { changed } = await reconcileAssetPublished(id, Date.now(), null, { force: true });
   if (!changed) return { ok: false, error: "Already marked as posted" };
 
-  // The slot this asset fulfils records that its day happened (§3). Derived,
-  // out-of-band and best-effort: the asset is live either way, and a slot that
-  // misses the stamp is re-derived on the next pass.
-  await syncSlotPostedForAsset({ clientId: asset.clientId, assetId: id }).catch((e) =>
-    console.error("[assets] slot posted sync failed:", e),
-  );
-
-  // §4.5c — the chosen option's own learning-log row. "Picked" and "actually
-  // posted" are different facts: the pick wrote the losers' rows immediately,
-  // but the winner only earns a `posted` row when the client says they posted
-  // it. Recording the pick as posted would teach the agent that everything it
-  // drafts goes out. Best-effort for the same reason as above.
-  await recordPostedOptionFeedback(asset).catch((e) =>
-    console.error("[assets] option feedback failed:", e),
-  );
-
-  // C7 §2.3 — and this is the call that makes review mean something to the
-  // agent. Until it existed, a client could correct the same habit every week
-  // for a year: the correction landed in Firestore, the engine never saw it,
-  // and the next morning's draft opened with the habit again.
-  //
-  // `posted_with_edits` whenever the agent's own text was stashed by the first
-  // edit above, `posted` otherwise. Best-effort, after the asset is already
-  // live, for the same reason as the slot sync: the post went out either way.
-  if (learningTargetForAsset(asset)) {
-    const user = await getCurrentUser();
-    const client = await getClient(asset.clientId);
-    const original = asset.meta?.engineOriginalContent;
-    if (client) {
-      await recordLearningFeedback(
-        client,
-        asset,
-        typeof original === "string" && original !== asset.content
-          ? {
-              action: "posted_with_edits",
-              originalText: original,
-              finalText: asset.content,
-              ...(user?.email ? { actor: user.email } : {}),
-            }
-          : { action: "posted", ...(user?.email ? { actor: user.email } : {}) },
-      ).catch((e) => console.error("[assets] learning feedback failed:", e));
-    }
-  }
+  // Everything that follows a post — the slot stamp, the X option row and the
+  // learning-loop event — in the one place all four publish doors now call.
+  // This door used to be the only one doing any of it; see `asset-posted.ts`.
+  const postedBy = await getCurrentUser();
+  await afterAssetPosted(asset, { ...(postedBy?.email ? { actor: postedBy.email } : {}) });
 
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
@@ -717,41 +678,13 @@ export async function publishAssetNowAction(
     publishMode: asset.publishMode ?? "manual",
     updatedAt: Date.now(),
   });
+  // The post is out, and it counts exactly as much as one the client posted by
+  // hand. Until this call it counted for nothing at all.
+  const pusher = await getCurrentUser();
+  await afterAssetPosted(asset, { ...(pusher?.email ? { actor: pusher.email } : {}) });
 
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
   return { ok: true, platform: target };
 }
 
-/**
- * Record that a picked X option was actually posted (§4.5c).
- *
- * Only applies to assets materialized by `pickAgentSlotOptionAction` — they
- * carry the option ref, the account and the batch they came from in `meta`.
- * Anything else returns silently.
- *
- * `posted_with_edits` carries the final text, which is the most valuable row in
- * the whole log: it is the client showing, not telling, exactly how the agent's
- * draft fell short. Edit detection is the flag stamped at pick time rather than
- * a re-comparison here. `originalText` (also stamped at pick time, into
- * `meta.originalText` — see pickAgentSlotOptionAction) rides along so the row
- * carries a real before/after diff instead of depending on the batch asset,
- * which can go stale or be re-imported, to still hold the original later.
- */
-async function recordPostedOptionFeedback(asset: Asset): Promise<void> {
-  const meta = asset.meta ?? {};
-  const draftRef = typeof meta.optionRef === "string" ? meta.optionRef : null;
-  const accountTitle = typeof meta.xAccountTitle === "string" ? meta.xAccountTitle : null;
-  if (!draftRef || !accountTitle) return;
-
-  const edited = meta.edited === true;
-  const originalText = typeof meta.originalText === "string" ? meta.originalText : undefined;
-  await addXDraftFeedbackAction({
-    clientId: asset.clientId,
-    accountTitle,
-    ...(typeof meta.pickedFromAssetId === "string" ? { assetId: meta.pickedFromAssetId } : {}),
-    draftRef,
-    action: edited ? "posted_with_edits" : "posted",
-    ...(edited ? { finalText: asset.content, ...(originalText ? { originalText } : {}) } : {}),
-  });
-}

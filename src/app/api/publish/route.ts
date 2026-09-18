@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { afterAssetPosted } from "@/lib/asset-posted";
 import { listScheduledAssets, listAssets, listClientIntegrations, updateAsset, markAssetPublished, markIntegrationExpired, claimAssetForPublish, releaseAssetPublishClaim } from "@/lib/data";
 import { publishHoldMessage } from "@/lib/asset-status-copy";
 import { isInClientArchive } from "@/lib/asset-visibility";
@@ -172,6 +173,10 @@ export async function GET(req: NextRequest) {
           publishAssetToPlatform(platform, fresh, asset),
         );
         await markAssetPublished(asset.id, postId);
+        // The autopilot's post is a post. Before this call the slot was never
+        // stamped and the learning loop never heard that the draft went out as
+        // written — on the three platforms D35 actually offers autopilot for.
+        await afterAssetPosted(asset).catch((e) => console.error("[publish] after-posted failed:", e));
         return { assetId: asset.id, platform, status: "published" };
       } catch (e) {
         // Release the claim so a later attempt can retry this asset.
