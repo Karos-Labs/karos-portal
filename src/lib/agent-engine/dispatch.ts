@@ -78,6 +78,63 @@ export function isAgentEngineTransportConfigured(): boolean {
  * create-job/publish/record-runId/handle-failure sequence can't drift
  * between the three callers.
  */
+/**
+ * ── PROJECT THE CLIENT'S LIVE CONTEXT, IMMEDIATELY BEFORE THE RUN IS
+ *    PUBLISHED (04 A1, SCRUM-482). ──
+ *
+ * `projectClientToWorkspace` writes `clients/<slug>/context/<docType>.json`,
+ * `client/brand.json` and `client/profile.json` — the files agent-engine's own
+ * `client.getContextDoc` reads. Until this call it had exactly two callers, the
+ * end of a Regenerate and a branding refresh, and neither of them is a run.
+ *
+ * So the engine read whatever the last Regenerate happened to leave behind. A
+ * client who corrected their brand voice, rewrote their market strategy or
+ * fixed a colour and then pressed Run got an agent working from the previous
+ * projection — with nothing anywhere saying so, because the files were present
+ * and well-formed, just old. A1's whole requirement is one sentence: *"live
+ * data at run time, never an onboarding-time snapshot"*.
+ *
+ * BEFORE THE PUBLISH, NOT BESIDE IT. The engine reads these files as soon as
+ * the run starts, so projecting concurrently with the publish is a race the
+ * portal would lose about as often as it won. That costs one Firestore read and
+ * a handful of small object writes on the dispatch path, which is the price of
+ * the run being about the client as they are now.
+ *
+ * BEST-EFFORT, exactly like the projector itself: an unwritable bucket, a
+ * client that has no `agentsRepoSlug` or a Firestore hiccup all mean "the run
+ * goes out against the last projection", which is strictly what happened before
+ * this existed. Failing a dispatch because a side channel is down would trade a
+ * stale context for no run at all.
+ *
+ * The onboarding path projects and then dispatches, so it projects twice. The
+ * write is derived entirely from the client record, so the second one is the
+ * same bytes — not worth a cache that could itself go stale.
+ */
+async function projectLiveContextBeforeDispatch(clientId: string): Promise<string> {
+  try {
+    const [{ projectClientToWorkspace }, { getClient, listClientContextDocs }] = await Promise.all([
+      import("./context-doc-projection"),
+      import("@/lib/data"),
+    ]);
+    const client = await getClient(clientId);
+    if (!client) return "no client record";
+    const docs = await listClientContextDocs(clientId);
+    const result = await projectClientToWorkspace(client, docs);
+    if (!result.projected) {
+      const reason = result.reason ?? "nothing projected";
+      console.info(`[agent-engine] dispatch projection skipped for ${clientId}: ${reason}`);
+      return reason;
+    }
+    return [`${result.contextDocs} doc${result.contextDocs === 1 ? "" : "s"}`, result.brand ? "brand" : null, result.profile ? "profile" : null]
+      .filter((part): part is string => part !== null)
+      .join(", ");
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    console.error(`[agent-engine] projecting live context before dispatch failed (non-fatal): ${detail}`);
+    return `failed: ${detail}`;
+  }
+}
+
 export async function dispatchAgentEngineRun(input: DispatchAgentEngineRunInput): Promise<DispatchAgentEngineRunResult> {
   // Two transports, one downstream contract. Going through the control plane
   // means the run carries a resolved prompt/template version; publishing
@@ -114,6 +171,15 @@ export async function dispatchAgentEngineRun(input: DispatchAgentEngineRunInput)
       createdAt: now,
       updatedAt: now,
     }));
+
+  // A1: the run must be about the client as they are NOW. This is the last
+  // point at which the portal can say so, and until it existed no dispatch
+  // path said it at all.
+  // Recorded on the job, not just in the log: SCRUM-492's complaint about the
+  // read-back is that it "could not be verified from the portal", and a run
+  // that drafted from a stale context looked exactly like one that did not.
+  const contextProjection = await projectLiveContextBeforeDispatch(input.clientId);
+  const projectedAt = Date.now();
 
   const publishDirect = async (): Promise<string> =>
     (
@@ -186,6 +252,8 @@ export async function dispatchAgentEngineRun(input: DispatchAgentEngineRunInput)
     await updateJob(jobId, {
       agentEngineRunId,
       agentEngineProductId: input.productId,
+      contextProjectedAt: projectedAt,
+      contextProjection,
       // Recorded on the job, not just in logs: a run dispatched this way has
       // no resolved prompt/template version attached to it, and whoever
       // reviews the output later needs to be able to tell.
@@ -214,6 +282,12 @@ export async function dispatchAgentEngineRun(input: DispatchAgentEngineRunInput)
     await updateJob(jobId, {
       status: "failed",
       error: message,
+      // Recorded on a failed dispatch too: "the context was fresh and the
+      // publish broke" and "the projection failed and then so did the publish"
+      // are different problems and the second one is the one nobody would look
+      // for.
+      contextProjectedAt: projectedAt,
+      contextProjection,
       events: [
         { at: now, level: "info", message: "Dispatched to agent-engine" },
         { at: Date.now(), level: "error", message },

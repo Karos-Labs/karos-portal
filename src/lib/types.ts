@@ -1260,6 +1260,25 @@ export interface Job {
   learningCollectedAt?: number;
   learningCollectReason?: string | null;
   /**
+   * What the portal projected into the engine workspace immediately before this
+   * run was published (A1 / SCRUM-482), and when.
+   *
+   * THE POINT IS THAT IT IS ON THE JOB. SCRUM-492's complaint about the
+   * read-back is not that it does not happen, it is that it *"could not be
+   * verified from the portal"* — the projection wrote to a bucket, logged a
+   * line and left nothing behind that anyone reviewing a run could read. A run
+   * that drafted from a stale context and a run that drafted from a fresh one
+   * looked identical afterwards.
+   *
+   * `contextProjection` is the shape rather than the prose: `"9 docs, brand,
+   * profile"`, or the reason nothing was written (no `agentsRepoSlug`, no
+   * bucket configured, the bucket refused). Absent on every job dispatched
+   * before the projection existed, which is exactly the set of runs that read
+   * whatever the last Regenerate happened to leave behind.
+   */
+  contextProjectedAt?: number;
+  contextProjection?: string | null;
+  /**
    * When the unsettled-hold sweep last dealt with this job's credit hold
    * (credits rework, 2026-09) — settled it, or established there was nothing to
    * settle. Purely a bookmark so the sweep's candidate list shrinks; the real
