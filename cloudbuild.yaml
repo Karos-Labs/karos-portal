@@ -308,6 +308,49 @@ steps:
     args:
       - -c
       - |
+        # ── A HALF-CONFIGURED CONTROL PLANE FAILS THE BUILD, NOT THE RUNS. ──
+        #
+        # `isMiddlewareDispatchEnabled()` is `DISPATCH_ENABLED === "true" && a
+        # base URL exists`, so an enabled flag with an empty URL is not an
+        # error anywhere: every dispatch quietly takes the direct-publish
+        # fallback, every run loses its resolved prompt/template version, and
+        # the COLLECT leg — which only the middleware can do — simply never
+        # happens. Nothing logs, nothing 500s, and the loop is dead while the
+        # deploy is green (SCRUM-490).
+        #
+        # Prod cannot hit this: cloudbuild.promote.yaml carries both values
+        # literally. Prep takes both from repository variables, so one unset
+        # variable is all it takes — which is exactly the asymmetry that made
+        # this worth a guard rather than a comment.
+        if [ "${_AGENT_MIDDLEWARE_DISPATCH_ENABLED}" = "true" ] && [ -z "${_AGENT_MIDDLEWARE_URL}" ]; then
+          echo "AGENT_MIDDLEWARE_DISPATCH_ENABLED is true but AGENT_MIDDLEWARE_URL is empty." >&2
+          echo "Every dispatch would fall back to direct Pub/Sub and no run would ever be collected." >&2
+          echo "Set the deploy's _AGENT_MIDDLEWARE_URL (prep: the PREP_AGENT_MIDDLEWARE_URL repository variable), or turn the flag off." >&2
+          exit 1
+        fi
+        # The audience is what the receiving service checks the OIDC token
+        # against, and a mismatch is a 403 on every dispatch rather than a
+        # fallback — so an enabled control plane with no audience is the same
+        # class of half-configuration, caught in the same place.
+        if [ "${_AGENT_MIDDLEWARE_DISPATCH_ENABLED}" = "true" ] && [ -z "${_AGENT_MIDDLEWARE_AUDIENCE}" ]; then
+          echo "AGENT_MIDDLEWARE_DISPATCH_ENABLED is true but AGENT_MIDDLEWARE_AUDIENCE is empty." >&2
+          echo "The middleware would reject every dispatch's token. Set _AGENT_MIDDLEWARE_AUDIENCE to the middleware's own service URL." >&2
+          exit 1
+        fi
+
+        # AND THE STATE IS PRINTED EITHER WAY, because the dangerous case is not
+        # only the half-configured one. A deploy with the flag OFF is not an
+        # error — direct Pub/Sub is a supported transport — but it means no run
+        # is ever collected, and nobody could tell without `gcloud run services
+        # describe` or repository-variable access. One line in the build log
+        # answers "does this environment have a control plane?" for anyone who
+        # can read the deploy.
+        if [ "${_AGENT_MIDDLEWARE_DISPATCH_ENABLED}" = "true" ]; then
+          echo "control plane: ON — dispatch and collect go through ${_AGENT_MIDDLEWARE_URL}"
+        else
+          echo "control plane: OFF — dispatch publishes straight to Pub/Sub, runs carry no resolved prompt version, and NOTHING IS COLLECTED"
+        fi
+
         AUTH_FLAG="--allow-unauthenticated"
         if [ "${_ALLOW_UNAUTHENTICATED}" != "true" ]; then
           AUTH_FLAG="--no-allow-unauthenticated"
