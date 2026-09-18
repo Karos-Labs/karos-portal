@@ -284,3 +284,64 @@ describe("nothing is invented when the run did not send it", () => {
     expect(asset.meta).not.toHaveProperty("audience");
   });
 });
+
+/**
+ * SCRUM-474 — the DRAFTING agents, which is the half SCRUM-483 did not cover.
+ *
+ * These three do not carry the line as deliverable fields and the C7 §3
+ * contract does not promise that they will: the engine resolves it once and
+ * writes it into the drafts string, which is the same string the asset stores
+ * as its `content` and the card already parses. Reading the deliverable's own
+ * optional fields meant the modal's block was populated by luck on X and
+ * LinkedIn and never on Reddit, while the card beside it was right.
+ */
+describe("the goal line reaches the drafting agents' cards (D11, SCRUM-474)", () => {
+  const X_DRAFTS = [
+    "## Post 1",
+    "- **Goal:** show expertise",
+    "- **For:** ops leads whose intake breaks in month two",
+    "- **Why now:** a benchmark report landed on Monday",
+    "",
+    "Most marketing calendars fail in the second month.",
+  ].join("\n");
+
+  it("X takes it from the drafts markdown, storing the funnel word the modal renders", async () => {
+    const asset = await materialize("x-agent", { draftsMarkdown: X_DRAFTS, hook: "Most calendars fail in month two" });
+    expect(asset.meta).toMatchObject({
+      goal: "expertise",
+      audience: "ops leads whose intake breaks in month two",
+      whyNow: "a benchmark report landed on Monday",
+    });
+    // The drafts string is untouched — the card parses the same bullets.
+    expect(asset.content).toBe(X_DRAFTS);
+  });
+
+  it("LinkedIn takes it from its own drafts markdown", async () => {
+    const asset = await materialize("linkedin-agent", { draftsMarkdown: X_DRAFTS, headline: "Month two" });
+    expect(asset.meta).toMatchObject({ goal: "expertise", whyNow: "a benchmark report landed on Monday" });
+  });
+
+  it("Reddit takes whyThread from the v2 envelope, which its deliverable calls something else entirely", async () => {
+    // The deliverable field is `whyThisThread`; `metaFields` asks for
+    // `whyThread`; nothing in this repo reads the former. The envelope has the
+    // name the portal uses, so that is where it comes from.
+    const envelope = JSON.stringify({
+      version: 2,
+      threads: [{ targetThreadUrl: "https://reddit.com/r/ops/1", whyThread: "the thread is asking our exact question" }],
+    });
+    const asset = await materialize("reddit-agent", { draftsEnvelope: envelope, whyThisThread: "ignored by everything" });
+    expect(asset.meta).toMatchObject({ whyThread: "the thread is asking our exact question" });
+  });
+
+  it("a deliverable that DID state its own line keeps it — this is a fallback, not an override", async () => {
+    // A model that stated its goal said something the resolver would only have
+    // defaulted. The bullet is the backstop for the fields it left empty.
+    const asset = await materialize("x-agent", { draftsMarkdown: X_DRAFTS, goal: "attention", hook: "h" });
+    expect(asset.meta).toMatchObject({ goal: "attention", whyNow: "a benchmark report landed on Monday" });
+  });
+
+  it("a drafts string with no line leaves the keys off entirely", async () => {
+    const asset = await materialize("x-agent", { draftsMarkdown: "## Post 1\n\nJust the post text.\n", hook: "h" });
+    for (const key of ["goal", "audience", "whyNow"]) expect(asset.meta, key).not.toHaveProperty(key);
+  });
+});
