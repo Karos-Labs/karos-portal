@@ -9,6 +9,7 @@ import {
   type RosterAttentionReason,
 } from "@/lib/client-agent-rows";
 import type { RosterStatus } from "@/lib/client-agents";
+import { AGENT_BAND_LABEL, type AgentBand } from "@/lib/agent-bands";
 
 /**
  * One agent on the roster, as a full-width ROW (round 6, decision 6).
@@ -43,6 +44,7 @@ export function ClientAgentRosterRow({
   attentionReason = null,
   note = null,
   notGranted = false,
+  band = null,
   now,
 }: {
   href: string;
@@ -79,6 +81,21 @@ export function ClientAgentRosterRow({
    * own - the agent's state is unchanged by who may see it.
    */
   notGranted?: boolean;
+  /**
+   * This agent's D09 band, already resolved server-side (`agentBand`).
+   *
+   * HOW FINISHED THE PRODUCT IS, which is not a status: a beta agent that is
+   * producing every day is Live, and saying otherwise would be the card
+   * disowning the work in the client's Workspace. So it rides BESIDE the status
+   * word, in the same slot and the same neutral tone `notGranted` uses.
+   *
+   * `coming_soon` never arrives here as a badge of its own — `rosterStatus`
+   * already turned it into the disabled "Coming Soon" word, which is also what
+   * takes this row's link and chevron away. One rendering, reached two ways; see
+   * `AGENT_BAND_LABEL`, whose `up_and_running` is null because the status word
+   * beside it already says Live or Runs on request.
+   */
+  band?: AgentBand | null;
   /**
    * The clock every other answer on this page was resolved against. Passed in
    * rather than read here so the row's stamps cannot disagree with the status
@@ -124,9 +141,20 @@ export function ClientAgentRosterRow({
     .filter(Boolean)
     .join(" · ");
 
+  // Null for `up_and_running` and for an unbanded agent, and null once
+  // `rosterStatus` has already spent `coming_soon` on the word: this only ever
+  // paints "Beta". Resolved as a value rather than inline in the JSX so the
+  // reason a band renders nothing stays readable.
+  const bandLabel = band && status.tone !== "disabled" ? AGENT_BAND_LABEL[band] : null;
+
   const badges = (
     <span className="flex shrink-0 items-center gap-1.5">
       <RosterStatusBadge status={status} />
+      {/* Neutral, like "Not granted" beside it and unlike the green `tone="neon"`
+          badge the hand-built Reputation card used to wear on the Reporting tab:
+          tones are the judgment scale (success / warning / info / neutral), and
+          how finished a product is is not a judgment about how it is going. */}
+      {bandLabel && <Badge tone="neutral">{bandLabel}</Badge>}
       {notGranted && <Badge tone="neutral">Not granted</Badge>}
     </span>
   );

@@ -8,6 +8,7 @@ import {
   VISIBILITY_WORK_STANDFIRST,
   citationDomainFor,
   sortVisibilityWorkRows,
+  visibilityFamiliesToOffer,
   visibilityLeverFamilies,
   visibilityLeverFor,
   visibilityLeverSentences,
@@ -255,6 +256,28 @@ describe("the catalogue half: one row per family, for what the account does not 
       expect(resolved?.family, entry.family).toBe(entry.family);
       expect(resolved?.sentence, entry.family).toBe(entry.lever.sentence);
     }
+  });
+
+  it("stops offering a family the catalog no longer sells as an agent", () => {
+    // D07 (15 September 2026): "SEO/GEO and Reputation are reporting systems,
+    // not agents. They must not be runnable agent cards in the client catalog."
+    //
+    // `karos-reputation-runner` is `isNotAClientProductKey` now, so it reaches
+    // no roster and this family has no roster row on any account. Left in the
+    // OFFER list it would have flipped every client to the catalogue row and
+    // offered them a product Karos no longer sells as an agent — the row and the
+    // Support subject behind it both false.
+    //
+    // The TABLE is unchanged, which is the other half of the rule: the family
+    // keeps its sentence, its lever and its matcher, so a reputation row that
+    // does reach the section still prints exactly what it printed before.
+    expect(visibilityLeverFamilies().map((e) => e.family)).toContain("reputation");
+    expect(visibilityFamiliesToOffer().map((e) => e.family)).not.toContain("reputation");
+    expect(visibilityLeverFor({ key: "karos-reputation-runner", name: "Reputation Agent" })?.family).toBe(
+      "reputation",
+    );
+    // Everything else is still offered: the containment is one family wide.
+    expect(visibilityFamiliesToOffer()).toHaveLength(visibilityLeverFamilies().length - 1);
   });
 
   it("never advertises the measurement agent or a step of another agent", () => {

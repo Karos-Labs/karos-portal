@@ -1,5 +1,6 @@
 import { agentKeyMatchesClientSlug, isUnlistedAgent } from "@/lib/custom-agent-launch";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
+import { agentBand } from "@/lib/agent-bands";
 import { isCreditDenialMessage } from "@/lib/credits";
 import {
   agentNeedsSetup,
@@ -459,6 +460,11 @@ export async function buildClientRosterEntries(args: {
       // "Not set up yet" beside a shelf of delivered work is the row
       // contradicting itself; an agent that has produced says so instead.
       hasDelivered,
+      // D09's band, resolved once here and read twice below (the word, and the
+      // row's own marker) so a card cannot paint "Beta" beside a status word
+      // that was computed without knowing about it. Only `coming_soon` moves
+      // this word; see `rosterStatus`.
+      band: agentBand(agent),
       // A8: the readiness pair, handed over WHOLE. `rosterStatus` owns the
       // conjunction now (`agentReadyToRun`) and the "does it still need setting
       // up" question with it (`agentNeedsSetup`), so no caller spells either
@@ -563,6 +569,7 @@ export async function buildClientRosterEntries(args: {
       agentKey: agent.key,
       agentName: agent.name,
       enabled: true,
+      band: agentBand(agent),
       ...(note ? { note } : {}),
       // A4. Not a status word — the agent's status is whatever it is — but a
       // fact about THIS client's view of it, which is why it is its own flag and
@@ -591,6 +598,11 @@ export async function buildClientRosterEntries(args: {
       agentKey: agent.key,
       agentName: agent.name,
       enabled: false,
+      // Carried even though the pause already produced the same "Coming Soon"
+      // word above: the row reads the band for its own marker, and an agent that
+      // is both paused AND banded must not start painting "Beta" the day someone
+      // un-pauses it while this field says nothing.
+      band: agentBand(agent),
       ...(staffScope && !granted ? { notGranted: true } : {}),
     };
   });

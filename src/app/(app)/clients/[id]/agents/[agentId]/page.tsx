@@ -36,6 +36,7 @@ import {
   latestBlockedIntake,
   rosterStatus,
 } from "@/lib/client-agents";
+import { agentBand } from "@/lib/agent-bands";
 import { sanitizeIntegrations } from "@/lib/integrations/sanitize";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { platformLabel } from "@/lib/integrations/platforms";
@@ -516,6 +517,12 @@ export default async function ClientAgentDetailPage({
     scheduleRefusalAt: schedule?.lastErrorAt ?? null,
     scheduleActive: schedule?.status === "active",
     hasDelivered: stripHasDelivered,
+    // D09's band, through the same resolver the roster reads. The card that
+    // opened this page and the strip on it must say one word, and `coming_soon`
+    // is a rung that moves it — so leaving it out here would reproduce exactly
+    // the roster/page divergence this call site's other arguments exist to
+    // prevent.
+    band: agentBand(agent),
     // The second proof of "this can be run", beside delivered work: the SAME
     // object `legacyGate` and `needsSetup` below read, handed over whole so the
     // conjunction is spelled once, inside `rosterStatus` (round 6 review, C2).
