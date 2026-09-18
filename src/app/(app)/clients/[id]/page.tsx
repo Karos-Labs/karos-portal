@@ -8,6 +8,7 @@ import {
   listClientIntegrations,
   listClientTasks,
   listClientActionStates,
+  listClientFollowerSnapshots,
   listCustomAgents,
   listPlannedScheduledRuns,
 } from "@/lib/data";
@@ -64,6 +65,12 @@ import {
   type CalendarPreviewRow,
 } from "@/components/home-calendar-preview";
 import { HomeKpisWidget } from "@/components/home-kpis";
+import {
+  combinedFollowerSeries,
+  followerGrowthPct,
+  resolveFollowerHistory,
+  totalFollowers,
+} from "@/lib/follower-tracking";
 import { HomeStandingWidget, hasStanding } from "@/components/home-standing";
 import { HomeOpsStrip, type OpsStat } from "@/components/home-ops-strip";
 import { contentThroughput } from "@/lib/content-throughput";
@@ -112,6 +119,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     allCustomAgents,
     scheduledRuns,
     contextDocs,
+    followerSnapshots,
   ] = await Promise.all([
     // TODO(bounded-reads): `listAssets`/`listJobs` read this client's ENTIRE
     // history to render a dashboard whose widest reader is a 30-day window —
@@ -176,6 +184,19 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     //    empty section (§2.4).
     listPlannedScheduledRuns({ clientId: id }),
     listClientContextDocs(id, "client"),
+    // ── AND THE FOLLOWER READ IS BACK, BECAUSE SOMETHING WRITES IT NOW. ──
+    //
+    // The block above records why it left: four reads for numbers nobody saw,
+    // this one among them because `clientFollowerSnapshots` was empty for every
+    // client — `recordClientFollowerSnapshot` had never had a caller.
+    // `/api/followers/sync` is that caller (SCRUM-495), so the collection has
+    // content and the cell it feeds has something to draw. Back in the parallel
+    // block rather than behind a gate on `integrations`: gating it would need
+    // the integration list first and turn a free read into a serial round trip
+    // on a dashboard that already does ten, to save one small single-field
+    // query on a client that has no followers yet. The cell still hides itself
+    // when the series is short, which is the real gate.
+    listClientFollowerSnapshots(id),
   ]);
 
   const firstName = user.name?.trim().split(/\s+/)[0];
@@ -315,14 +336,28 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   // something those two disagree with.
   const agentLabelByAssetId = contentLabelsByAsset(overviewAssets, jobs, umbrellas);
 
-  // KPIs, audience cell: REAL STORED SNAPSHOTS ONLY (D6), and this page no
-  // longer reads them (review wave, 2026-09). The rule is unchanged and so is
-  // the cell — `HomeKpisWidget` still draws followers when it is handed a series
-  // of two or more points — but nothing writes `clientFollowerSnapshots`, so the
-  // page was reading that collection, running `resolveFollowerHistory` per
-  // connected channel and threading four props into a cell that has never
-  // rendered for anybody. The read comes back with the ingestion cron that gives
-  // it something to say, in one place, beside a test.
+  /**
+   * KPIs, audience cell: REAL STORED SNAPSHOTS ONLY (D6) — and there are some
+   * now (SCRUM-495).
+   *
+   * The note this replaces said the read would come back "with the ingestion
+   * cron that gives it something to say, in one place, beside a test".
+   * `/api/followers/sync` is that cron and this is that one place.
+   *
+   * The histories are keyed off WHAT WAS WRITTEN rather than off the connected
+   * channel list, and the difference is not cosmetic: a client who disconnects
+   * X still has the followers X reported while it was connected, and dropping
+   * that series on disconnect would make a growth chart rewrite its own past.
+   * The channel list decides what the cron READS; the snapshots decide what the
+   * chart SHOWS.
+   */
+  const followerPlatforms = [...new Set(followerSnapshots.map((s) => s.platform))];
+  const followerHistories = Object.fromEntries(
+    followerPlatforms.map((platform) => [platform, resolveFollowerHistory(followerSnapshots, platform)]),
+  );
+  const audienceSeries = combinedFollowerSeries(followerHistories);
+  const audienceTotal = totalFollowers(followerHistories);
+  const audienceGrowthPct = followerGrowthPct(audienceSeries);
   /**
    * How many channels are dead (2026-09).
    *
@@ -808,12 +843,23 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
    *
    *  • PUBLISHED → `throughputHref`, the deliverables themselves, in a list that
    *    contains every row the cell counted.
-   *  • FOLLOWERS is not passed at all today; the cell hides itself. See the
-   *    follower note above.
+   *  • FOLLOWERS → `channelsHref`, the connected-channel list, which is the
+   *    only screen in the product that breaks this total back down per channel.
+   *    The cell still hides itself when there are fewer than two days of
+   *    history: one reading is not a trend.
    *
    * (Visibility moved to the SEO card in SCRUM-418, with its own link.)
    */
-  const kpis = <HomeKpisWidget throughput={throughput} contentHref={throughputHref} />;
+  const kpis = (
+    <HomeKpisWidget
+      throughput={throughput}
+      contentHref={throughputHref}
+      audienceTotal={audienceTotal}
+      audienceGrowthPct={audienceGrowthPct}
+      audienceSeries={audienceSeries}
+      audienceHref={channelsHref}
+    />
+  );
 
   /**
    * The retired five tiles, as one line (staff only — see HomeOpsStrip).

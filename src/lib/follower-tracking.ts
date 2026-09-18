@@ -23,11 +23,16 @@
  * audience size safe to put beside real ones, and the surface that reads these
  * helpers now simply renders nothing until a real snapshot exists.
  *
- * What is left is the REAL half, unchanged and ready: the moment an ingestion
- * cron writes to `clientFollowerSnapshots` (X/Twitter is the cheap one —
- * `fetchTwitterFollowerGrowth` in analytics-providers.ts already returns
- * `followers_count` and needs no extra scope), the audience cell lights up on
- * its own with no further change here.
+ * THE INGESTION CRON LANDED (SCRUM-495) and this module did not change, which
+ * was the claim: `/api/followers/sync` writes `clientFollowerSnapshots` daily —
+ * X/Twitter first, exactly as predicted here, because
+ * `fetchTwitterFollowerGrowth` needs no extra scope — and the audience cell
+ * lit up on its own.
+ *
+ * The empty-series contract above is unchanged and now matters more, not less:
+ * a client whose only channel the sweep cannot read still gets no cell, and a
+ * platform that failed on a given day leaves a GAP in the series rather than a
+ * point nobody measured.
  */
 import type { ClientFollowerSnapshot } from "@/lib/types";
 

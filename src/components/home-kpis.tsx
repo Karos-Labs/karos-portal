@@ -283,13 +283,16 @@ export function HomeKpisWidget({
    * Real stored follower snapshots only — an empty (or absent) series hides the
    * cell entirely.
    *
-   * OPTIONAL SINCE THE REVIEW WAVE, 2026-09, and the reason is the same rule
-   * that keeps the cell hidden: nothing writes `clientFollowerSnapshots` today,
-   * so every caller was reading a collection that is empty for every client and
-   * threading four props into a cell that never rendered. The page stopped
-   * reading it; this component did NOT lose the ability to draw it, so the
-   * ingestion cron that lands the data re-enables the cell by passing these
-   * again rather than by rebuilding it.
+   * OPTIONAL SINCE THE REVIEW WAVE, 2026-09, when nothing wrote
+   * `clientFollowerSnapshots` and every caller was threading four props into a
+   * cell that never rendered. The page stopped reading it; this component did
+   * NOT lose the ability to draw it, precisely so the ingestion cron could
+   * re-enable the cell by passing these again rather than by rebuilding it.
+   *
+   * That is what happened: `/api/followers/sync` writes the collection daily
+   * (SCRUM-495) and the client dashboard passes all four again. They stay
+   * optional because a surface with no follower data is still a legitimate
+   * caller — the cell hiding itself is the designed answer, not a gap.
    */
   audienceTotal?: number;
   audienceGrowthPct?: number | null;
