@@ -36,7 +36,7 @@ const S = vi.hoisted(() => {
       branding: [] as string[],
       condense: [] as Array<{ docTypes: string[]; internal: Record<string, string> }>,
       materialize: [] as string[],
-      project: [] as string[],
+      project: [] as Array<{ clientId: string; withDocs: boolean }>,
     },
     deliverables: {
       intel: {} as Record<string, unknown>,
@@ -139,9 +139,12 @@ vi.mock("@/lib/intel/condense", () => ({
 }));
 
 vi.mock("@/lib/agent-engine/context-doc-projection", () => ({
-  projectClientToWorkspace: async (client: { id: string }) => {
-    S.calls.project.push(client.id);
-    return { projected: true, contextDocs: 0, brand: true, profile: true };
+  // `docs` is what distinguishes the pipeline's two projections: the doc
+  // pipeline projects the rows it has just written, and the post-branding
+  // re-projection passes `undefined` to refresh brand + profile alone.
+  projectClientToWorkspace: async (client: { id: string }, docs: readonly unknown[] | undefined) => {
+    S.calls.project.push({ clientId: client.id, withDocs: docs !== undefined });
+    return { projected: true, contextDocs: docs?.length ?? 0, brand: true, profile: true };
   },
 }));
 
@@ -361,7 +364,7 @@ describe("runIntelReportPipeline — a lab client (profileSource: \"lab\")", () 
   it("stores the Intel Report and projects the client, as every run does", async () => {
     await runIntelReportPipeline(LAB_ID);
     expect(S.reports.get(LAB_ID)).toMatchObject({ clientId: LAB_ID, overallScore: 58 });
-    expect(S.calls.project).toContain(LAB_ID);
+    expect(S.calls.project.map((c) => c.clientId)).toContain(LAB_ID);
   });
 
   it("keeps the client-tier copy it had when a condensation comes back empty", async () => {
@@ -434,7 +437,7 @@ describe("runIntelReportPipeline — a portal-owned client, exactly as before", 
   it("stores the Intel Report and projects the client", async () => {
     await runIntelReportPipeline(PORTAL_ID);
     expect(S.reports.get(PORTAL_ID)).toMatchObject({ clientId: PORTAL_ID, overallScore: 58 });
-    expect(S.calls.project).toContain(PORTAL_ID);
+    expect(S.calls.project.map((c) => c.clientId)).toContain(PORTAL_ID);
   });
 });
 
@@ -462,6 +465,47 @@ describe("runIntelReportPipeline — the SEO/GEO capture lands with the run", ()
     await expect(runIntelReportPipeline(PORTAL_ID)).resolves.toBeUndefined();
     expect(S.calls.materialize).toEqual([]);
     expect(S.reports.get(PORTAL_ID)).toBeDefined();
+  });
+});
+
+/* ── Both: the client is projected once, not twice ────────────────── */
+
+/**
+ * SCRUM-500. The pipeline projects a client into the engine workspace TWICE by
+ * design, and the two are not interchangeable:
+ *
+ *   1. inside the doc pipeline, carrying the rows it has just written
+ *      (`writeContextDocsFromResearch` / `writeLabContextDocsFromResearch`);
+ *   2. after branding, with no docs, because step 1 read the client BEFORE
+ *      `applyBrandingForClient` rewrote the palette.
+ *
+ * A third had crept in: the merge that brought #126 to main resolved its
+ * conflict in `report.ts` by keeping both sides of the same hunk, so the
+ * post-branding block stood in the file twice and every onboarding run wrote
+ * the identical `client/brand.json` and `client/profile.json` a second time,
+ * differing only in `projectedAt`. Harmless, and a write path nobody could
+ * read. `toEqual` on the whole log is the point of this block: an extra copy
+ * of either projection fails it, and so does losing one or reordering them.
+ */
+describe("runIntelReportPipeline — the client is projected once per write", () => {
+  for (const [label, clientId] of [["a lab client", LAB_ID], ["a portal-owned client", PORTAL_ID]] as const) {
+    it(`projects the client once per write for ${label}: the docs, then brand + profile`, async () => {
+      await runIntelReportPipeline(clientId);
+      expect(S.calls.project).toEqual([
+        { clientId, withDocs: true },
+        { clientId, withDocs: false },
+      ]);
+    });
+  }
+
+  it("re-projects brand and profile exactly once after branding", async () => {
+    await runIntelReportPipeline(PORTAL_ID);
+    expect(
+      S.calls.project.filter((c) => !c.withDocs),
+      "the post-branding brand/profile projection ran more than once",
+    ).toHaveLength(1);
+    // And it ran after branding, so it carries the palette branding just wrote.
+    expect(S.calls.branding).toEqual([PORTAL_ID]);
   });
 });
 
