@@ -47,11 +47,11 @@ Status: approved 2026-09-15 · Owner: Albert · Changes when: a decision is made
 | D39 | 2026-09-15 | Every published post is charged exactly what it cost us, in credits. No separate per-post price, and no surcharge for autopilot | CN7, CN9, 07 |
 | D40 | 2026-09-15 | Campaign is not an agent, because it only runs the other agents. It becomes a feature: a button the client presses when they have something to launch, which runs the relevant agents to produce a set of posts around that one event. It is never listed as an agent in the catalog. The engine's campaign-orchestrator stays, because it is what the button will call | F1, catalog, engine |
 | D41 | 2026-09-15 | The writing rules on each Craft page are the agent's instructions, not a checklist applied afterwards. A draft graded after the fact is written wrong first, which is slower and produces worse drafts. The pre-delivery checklist stays, as the last gate rather than the method | K5, Craft, engine |
+| D42 | 2026-09-18 | **O09 settled.** The learning tables live in Postgres, in the `config` schema, inside **agent-middleware** — and agent-middleware is the only thing that connects to them. The portal and the engine reach them through `project` and `collect`, never through a connection string. Firestore keeps what the portal renders to a person: assets, jobs, clients, credits, follower snapshots | 02, B1, B2, C1, N4, C7 contract |
+| D43 | 2026-09-18 | **O10 settled.** Connected platforms only. We read a number when the client has connected the account and the platform's own API will tell us; for everything else we record nothing and say so. No scraping provider, this quarter or next | N6, reporting |
 
 ## Open
 
 | Id | Question | Owner | Blocks | Proposed default until decided |
 |---|---|---|---|---|
-| O09 | Where the subject table and the logs live. Firestore is the database the portal already runs on. Postgres would be a second one to run and pay for | Tomer, Shlomi | B1, B2 | Firestore |
-| O10 | How we read the numbers for a platform a client has not connected. A connected account gives us its own numbers; for the rest we would pay a scraping provider, and we have not picked one | Tomer, Shlomi | N6 | Connect where we can; scrape only what we cannot |
 | O11 | Who takes each item in 04, and how long each one is. Without it we cannot say what fits in a week | Tomer, Shlomi | all items | Not estimated yet |
