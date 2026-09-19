@@ -8,6 +8,7 @@ import {
 } from "@/lib/agent-engine/product-mapping";
 import { effectiveForbiddenTopics } from "@/lib/agent-engine/never-topics";
 import { slotStageForCalendarRun } from "@/lib/agent-engine/learning-sequence";
+import { topicApprovalForRun } from "@/lib/agent-engine/topic-approval";
 import { normalizeDashes } from "@/lib/text-utils";
 
 import {
@@ -890,6 +891,12 @@ export async function submitCustomAgentJob(
         // `slotStageForCalendarRun`, and §1.1 on why a manual run must not
         // carry one.
         ...(await slotStageForCalendarRun(client, engineProductId, input.runType)),
+        // G3/D18's other side of the same fact. `slotStage` asks "what should
+        // this slot do"; this asks "is anyone here to be asked". Both are read
+        // off `runType`, both are absent rather than false when the answer is
+        // no, and neither may be shadowed by a dialog field — so they sit
+        // together, last.
+        ...topicApprovalForRun(client, engineProductId, input.runType),
       },
       createdBy: user.uid,
     });

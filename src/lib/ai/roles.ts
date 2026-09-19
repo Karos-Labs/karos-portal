@@ -164,8 +164,8 @@ export const AI_ROLES = {
   "intel.actions": {
     tier: "HAIKU",
     sites: [
-      "src/lib/actions/intel-actions.ts:130",
-      "src/lib/actions/intel-actions.ts:556",
+      "src/lib/actions/intel-actions.ts:131",
+      "src/lib/actions/intel-actions.ts:562",
     ],
   },
   "task.generation": {

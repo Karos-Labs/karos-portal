@@ -331,6 +331,34 @@ export interface Client {
    * `lib/dynamic-agent-guardrails.ts`.
    */
   forbiddenTopics?: string[];
+  /**
+   * Strings that must never appear in this client's copy — T-A11 / SCRUM-240.
+   *
+   * Projected onto `client/brand.json` as `forbiddenTerms` and read there by
+   * `gate.brandCompliance`, which every publishing workflow runs. Until this
+   * field existed the gate was handed `[]` on every run in the fleet, so it
+   * passed unconditionally; the engine's own `configStatus` now distinguishes
+   * that from a real clean pass, and this is the field that makes "configured"
+   * reachable at all.
+   *
+   * NOT `forbiddenTopics`. A term is matched as a case-insensitive SUBSTRING by
+   * a deterministic scan; a topic is a subject vetted by a model. The two rules
+   * need different enforcement and would each break under the other's — see the
+   * header of `lib/brand-compliance-terms.ts`, where the limits also live.
+   *
+   * On the client rather than on an agent for the same reason `forbiddenTopics`
+   * is: a brand's banned vocabulary is the company's property, and an agent
+   * authored tomorrow must inherit it with no further action.
+   */
+  forbiddenTerms?: string[];
+  /**
+   * G3 / D18 — whether a run pauses for the client to approve its topic before
+   * the visuals are made. Absent means `"default"`: ask on a manual run,
+   * autopilot on a calendar one, because on a calendar fire the client is not
+   * there to answer. Resolved by `topicApprovalForRun`, which also holds why
+   * this is three values rather than a boolean.
+   */
+  topicApproval?: "default" | "always" | "never";
   createdAt: number;
   createdBy: string;
 }
