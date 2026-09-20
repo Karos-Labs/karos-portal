@@ -2327,6 +2327,10 @@ const NOT_TEXT: readonly string[] = [
   "createJob.status",
   "createPlannedScheduledRun.status",
   "creditClientCredits.kind",
+  // An idempotency key, not prose: `rating-<jobId>`, chosen by the caller so a
+  // double-clicked approval settles to one credit rather than two. It is read
+  // inside the credit transaction and never rendered anywhere.
+  "creditClientCredits.entryId",
   "creditClientCredits.operation",
   "logActivity.actorRole",
   "logActivity.type", // drives the timeline's icon/label config, never printed raw
