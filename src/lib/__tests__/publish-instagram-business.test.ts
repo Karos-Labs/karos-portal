@@ -83,8 +83,13 @@ describe("publishToInstagramBusiness", () => {
     expect(calls[1]!.url).toContain("ig-biz-user-1/media");
     expect(calls[1]!.body.image_url).toBe("https://cdn.test/hero.png");
     expect(calls[1]!.body.caption).toBe("Caption");
-    expect(calls[2]!.url).toContain("ig-biz-user-1/media_publish");
-    expect(calls[2]!.body.creation_id).toBe("container-1");
+    // A photo container is polled for readiness too, same as a Reel — a
+    // `creation_id` existing is not the same as the media being publishable
+    // yet (a live "Media ID is not available" on a photo is what found this).
+    expect(calls[2]!.url).toContain("status_code");
+    const publishCall = calls.find((c) => c.url.includes("media_publish"));
+    expect(publishCall!.url).toContain("ig-biz-user-1/media_publish");
+    expect(publishCall!.body.creation_id).toBe("container-1");
   });
 
   it("throws TokenExpiredError('instagram_business', …) on a 401", async () => {
