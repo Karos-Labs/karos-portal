@@ -168,7 +168,10 @@ describe("registering an uploaded file", () => {
   it("files an image against a channel it can actually be published to", async () => {
     await complete("photo.png", "image/png");
     await complete("cut-3.mp4", "video/mp4");
-    expect(store[0].channels, "a still photo was filed as a TikTok post").toEqual(["instagram"]);
+    expect(store[0].channels, "a still photo was filed as a TikTok post").toEqual([
+      "instagram",
+      "instagram_business",
+    ]);
     expect(store[1].channels).toEqual(["tiktok"]);
   });
 
