@@ -183,40 +183,47 @@ function assertTextPostDeliverable(
 /* ── Instagram ───────────────────────────────────────────────────────── */
 
 /**
- * How long a freshly-created Reels container takes Meta to finish processing
- * before it can be published. Short-form clips (this product's whole output)
- * finish well under this in practice; a still-PROCESSING container 20 polls in
- * is refused rather than published early, which `media_publish` would reject
- * anyway — the timeout error says so and to retry, rather than pretending the
- * post went out.
+ * How long a freshly-created media container takes Meta to finish processing
+ * before it can be published. A Reels container (real video transcoding) is
+ * the slow case this budget is sized for; a photo container finishes in
+ * one or two polls in practice, but Meta's own Content Publishing API docs
+ * say to confirm `status_code: FINISHED` before `media_publish` for EITHER
+ * kind, and a live test against Karos Labs' own account is what found out
+ * why: the container-creation call returning a `creation_id` synchronously
+ * does not mean the underlying media object exists yet — `media_publish`
+ * called immediately after, for a plain photo, failed with Meta's own
+ * "Media ID is not available". A still-PROCESSING container 20 polls in is
+ * refused rather than published early, which `media_publish` would reject
+ * anyway — the timeout error says so and to retry, rather than pretending
+ * the post went out.
  */
-const REELS_POLL_INTERVAL_MS = 3000;
-const REELS_POLL_MAX_ATTEMPTS = 20; // ~60s
+const CONTAINER_POLL_INTERVAL_MS = 3000;
+const CONTAINER_POLL_MAX_ATTEMPTS = 20; // ~60s
 
 /**
- * Poll a Reels container's `status_code` until Meta reports FINISHED (ready
+ * Poll a media container's `status_code` until Meta reports FINISHED (ready
  * for `media_publish`) or ERROR. `statusUrl` carries the host difference
  * between the two Instagram products (graph.facebook.com vs
  * graph.instagram.com) — everything else about waiting for Meta to finish
- * transcoding a video is identical between them.
+ * processing a container, photo or video, is identical between them.
  */
-async function pollReelsContainerReady(statusUrl: string, platform: string): Promise<void> {
-  for (let attempt = 0; attempt < REELS_POLL_MAX_ATTEMPTS; attempt++) {
+async function pollMediaContainerReady(statusUrl: string, platform: string): Promise<void> {
+  for (let attempt = 0; attempt < CONTAINER_POLL_MAX_ATTEMPTS; attempt++) {
     const res = await fetch(statusUrl);
     if (res.status === 401 || res.status === 403) throw new TokenExpiredError(platform, res.status);
     if (res.ok) {
       const body = (await res.json()) as { status_code?: string; status?: string };
       if (body.status_code === "FINISHED") return;
       if (body.status_code === "ERROR") {
-        throw new Error(`Reels processing failed: ${body.status ?? "unknown error"}`);
+        throw new Error(`Instagram media processing failed: ${body.status ?? "unknown error"}`);
       }
       // EXPIRED / IN_PROGRESS / PUBLISHED (already, on a race) all fall through
       // to another wait — only FINISHED/ERROR are terminal for this loop.
     }
-    await new Promise((resolve) => setTimeout(resolve, REELS_POLL_INTERVAL_MS));
+    await new Promise((resolve) => setTimeout(resolve, CONTAINER_POLL_INTERVAL_MS));
   }
   throw new Error(
-    "Instagram is still processing this video after a minute - it may finish and publish on a retry shortly",
+    "Instagram is still processing this post after a minute - it may finish and publish on a retry shortly",
   );
 }
 
@@ -269,11 +276,14 @@ async function publishToInstagram(
 
   if (!igUserId || !pageToken) throw new Error("No Instagram Business Account linked to any page");
 
-  // Create media container — a photo container (image_url) publishes almost
-  // immediately; a Reels container (media_type=REELS, video_url) needs Meta to
-  // transcode the clip first, which pollReelsContainerReady waits out below.
-  // share_to_feed keeps a Reel's behavior matching a photo post's: it lands on
-  // the profile grid too, not only the Reels tab.
+  // Create media container. A photo container (image_url) usually finishes
+  // within a poll or two; a Reels container (media_type=REELS, video_url)
+  // needs Meta to transcode the clip first — either way, pollMediaContainerReady
+  // below waits for it, since a container's `creation_id` existing is not the
+  // same as its media being ready to publish (a live "Media ID is not
+  // available" on a photo is what found this). share_to_feed keeps a Reel's
+  // behavior matching a photo post's: it lands on the profile grid too, not
+  // only the Reels tab.
   const containerParams = new URLSearchParams({
     caption: asset.content,
     access_token: pageToken,
@@ -290,12 +300,10 @@ async function publishToInstagram(
   }
   const { id: creationId } = (await containerRes.json()) as { id: string };
 
-  if (clip) {
-    await pollReelsContainerReady(
-      metaGraphUrl(`${creationId}?fields=status_code&access_token=${encodeURIComponent(pageToken)}`),
-      "instagram",
-    );
-  }
+  await pollMediaContainerReady(
+    metaGraphUrl(`${creationId}?fields=status_code&access_token=${encodeURIComponent(pageToken)}`),
+    "instagram",
+  );
 
   // Publish
   const publishParams = new URLSearchParams({ creation_id: creationId, access_token: pageToken });
@@ -359,12 +367,10 @@ async function publishToInstagramBusiness(
   }
   const { id: creationId } = (await containerRes.json()) as { id: string };
 
-  if (clip) {
-    await pollReelsContainerReady(
-      metaInstagramGraphUrl(`${creationId}?fields=status_code&access_token=${encodeURIComponent(token)}`),
-      "instagram_business",
-    );
-  }
+  await pollMediaContainerReady(
+    metaInstagramGraphUrl(`${creationId}?fields=status_code&access_token=${encodeURIComponent(token)}`),
+    "instagram_business",
+  );
 
   const publishParams = new URLSearchParams({ creation_id: creationId, access_token: token });
   const publishRes = await fetch(
