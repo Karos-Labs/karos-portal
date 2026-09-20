@@ -8,8 +8,15 @@ import { cn } from "@/lib/utils";
 const FOCUSABLE_SELECTOR =
   'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
-/** Focusable descendants of `container`, in DOM order, skipping disabled ones. */
-function getFocusable(container: HTMLElement): HTMLElement[] {
+/**
+ * Focusable descendants of `container`, in DOM order, skipping disabled ones.
+ *
+ * Exported so the app has ONE definition of "what a dialog may move focus to":
+ * `ImageLightbox` is a second portalled dialog and traps focus with the same
+ * rule, and two selectors drifting apart is exactly how one overlay ends up
+ * letting Tab walk out onto the page behind it.
+ */
+export function getFocusable(container: HTMLElement): HTMLElement[] {
   return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
     (el) => !el.hasAttribute("disabled"),
   );

@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Spinner, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { ImageLightbox, type LightboxImage } from "@/components/image-lightbox";
 import { normalizeDashes } from "@/lib/text-utils";
 import { resolveAgentEngineGateAction } from "@/lib/actions";
 import type { AgentEngineStyleEdit } from "@/lib/agent-engine/types";
@@ -322,6 +323,15 @@ export function AgentEngineGateApproval({
    * blocks submission until it's fixed or cleared.
    */
   const [designDrafts, setDesignDrafts] = useState<Partial<Record<(typeof DESIGN_ROLES)[number]["key"], string>>>({});
+  /**
+   * Which slide the full-size viewer is showing, or `null` for closed.
+   *
+   * An index into `lightboxImages` below (the openable slides in slide order),
+   * NOT a slide number: the viewer pages with `(i + 1) % count` and a carousel
+   * whose middle slide failed to sign would page onto a picture that is not
+   * there if `n` were the index.
+   */
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   const fields = isRecord(payload) ? payload : {};
   const slideTemplates = readSlideTemplates(fields["slideTemplates"]);
@@ -330,6 +340,15 @@ export function AgentEngineGateApproval({
   const loadableImages = images.filter((img): img is SlideImage & { url: string } => Boolean(img.url?.startsWith("https://")));
   const editableCopy = readEditableCopy(fields["copy"]);
   const imageByN = new Map(images.map((img) => [img.n, img]));
+  /**
+   * The slides a reviewer can open full size, in slide order, and the lookup
+   * from a slide's number to its place in that list. Only the signed ones: a
+   * `gs://` placeholder has no picture to enlarge, so it stays a plain tile
+   * rather than a button that opens nothing.
+   */
+  const openableSlides = loadableImages.slice().sort((a, b) => a.n - b.n);
+  const lightboxImages: LightboxImage[] = openableSlides.map((img) => ({ url: img.url, caption: `Slide ${img.n}` }));
+  const lightboxIndexByN = new Map(openableSlides.map((img, i) => [img.n, i]));
   const renderTokens = readRenderTokens(fields["renderTokens"]);
   const styleDirectiveOutcome = readStyleDirectiveOutcome(fields["styleDirectiveOutcome"]);
   const styleVariation = readStyleVariation(fields["styleVariation"]);
@@ -476,6 +495,7 @@ export function AgentEngineGateApproval({
         <div className="space-y-1.5">
           <p className="text-xs text-muted-2">
             {loadableImages.length} of {images.length} slide{images.length > 1 ? "s" : ""} rendered
+            {openableSlides.length > 0 && " · click a slide to see it full size"}
           </p>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {images
@@ -483,14 +503,29 @@ export function AgentEngineGateApproval({
               .sort((a, b) => a.n - b.n)
               .map((image) =>
                 image.url?.startsWith("https://") ? (
-                  // A signed GCS URL, re-signed per run; not a Next/Image asset.
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
+                  // A BUTTON, not a bare tile: four slides two inches wide are
+                  // enough to see that a carousel exists and not enough to judge
+                  // one, and a reviewer who cannot open a slide approves the
+                  // thumbnail rather than the post. `object-cover` here crops —
+                  // the viewer is where the whole frame, uncropped, lives.
+                  <button
                     key={image.n}
-                    src={image.url}
-                    alt={`Slide ${image.n}`}
-                    className="aspect-square w-full rounded-md border border-border object-cover"
-                  />
+                    type="button"
+                    onClick={() => setLightboxIndex(lightboxIndexByN.get(image.n) ?? 0)}
+                    aria-label={`View slide ${image.n} full size`}
+                    className="focus-ring group relative aspect-square w-full overflow-hidden rounded-md border border-border"
+                  >
+                    {/* A signed GCS URL, re-signed per run; not a Next/Image asset. */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={image.url}
+                      alt={`Slide ${image.n}`}
+                      className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+                    />
+                    <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-opacity group-hover:bg-black/40 group-hover:opacity-100">
+                      <Icon name="Maximize2" className="h-5 w-5 text-white" />
+                    </span>
+                  </button>
                 ) : (
                   <div
                     key={image.n}
@@ -792,8 +827,18 @@ export function AgentEngineGateApproval({
                   <div key={slide.n} className="space-y-2 rounded-md border border-border/60 bg-surface-2/40 p-2.5">
                     <div className="flex items-center gap-2">
                       {image?.url?.startsWith("https://") ? (
-                        // eslint-disable-next-line @next/next/no-img-element -- signed GCS URL, not a Next/Image asset.
-                        <img src={image.url} alt={`Slide ${slide.n}`} className="h-12 w-12 shrink-0 rounded border border-border object-cover" />
+                        // The same trigger as the grid above: a reviewer
+                        // rewriting a slide's copy is exactly the reader who
+                        // needs to see the slide, and 48px shows nothing.
+                        <button
+                          type="button"
+                          onClick={() => setLightboxIndex(lightboxIndexByN.get(slide.n) ?? 0)}
+                          aria-label={`View slide ${slide.n} full size`}
+                          className="focus-ring h-12 w-12 shrink-0 overflow-hidden rounded border border-border transition-opacity hover:opacity-80"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element -- signed GCS URL, not a Next/Image asset. */}
+                          <img src={image.url} alt={`Slide ${slide.n}`} className="h-full w-full object-cover" />
+                        </button>
                       ) : (
                         <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded border border-dashed border-border/60 text-[10px] text-muted-2">
                           {slide.n}
@@ -1055,6 +1100,22 @@ export function AgentEngineGateApproval({
       )}
       {hasInvalidDesignInput && (
         <p className="text-xs text-danger">Fix or reset the invalid colour above before continuing.</p>
+      )}
+
+      {/* The shared viewer (`ImageLightbox`), not a second one: it already
+          portals over the whole page, pages with the arrow keys, counts
+          "3 / 8" and locks the body scroll. Mounted only while open so its
+          focus-restore cleanup fires on close and the reviewer lands back on
+          the slide they clicked. No `downloadUrl`: a gate is pre-asset, so
+          there is no `/api/assets/…` route to zip yet, and the viewer then
+          offers the signed slide URL itself. */}
+      {lightboxIndex !== null && lightboxImages.length > 0 && (
+        <ImageLightbox
+          images={lightboxImages}
+          index={Math.min(lightboxIndex, lightboxImages.length - 1)}
+          onIndexChange={setLightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+        />
       )}
     </div>
   );
