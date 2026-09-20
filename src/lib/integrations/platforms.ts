@@ -54,6 +54,18 @@ export interface PlatformConfig {
    * new platform and it lands in the right section automatically.
    */
   category: "publishing" | "analytics";
+  /**
+   * @notCopy Retired as a NEW connect option (superseded by another card, or
+   * withdrawn) but kept in this array — not deleted — because
+   * `sanitize.ts`/`integration-actions.ts` look up a still-connected client's
+   * OWN integration by this id to know which credential fields are public vs
+   * secret; deleting the entry outright silently blanks that lookup for anyone
+   * already connected. `integrations-tab.tsx` hides the card from the grid
+   * unless the client already has a stored integration for this id, so an
+   * existing connection stays visible and manageable while nobody NEW is
+   * offered it.
+   */
+  hidden?: boolean;
 }
 
 /**
@@ -71,7 +83,6 @@ export interface PlatformConfig {
 export const OAUTH_SUPPORTED_PLATFORM_IDS = new Set<string>([
   "linkedin",
   "linkedin_community",
-  "instagram",
   "instagram_business",
   "twitter",
   "youtube",
@@ -143,9 +154,16 @@ export const PENDING_VERIFICATION_PLATFORM_IDS = new Set<string>([]);
  * cron could pick it as the inferred platform for a post nobody meant to send
  * there. `publishToFacebook` still exists for anything already connected — it
  * is simply no longer inferable.
+ *
+ * `instagram_post` DROPPED "instagram" (classic Facebook-Login) the same way,
+ * 2026-09-20: it fails outright for any account with no linked Facebook Page —
+ * confirmed live against Karos Labs' own account — and "instagram_business"
+ * (Instagram Login, no Page required) supersedes it for every case that
+ * matters, so a target that only sometimes works has no reason to stay
+ * inferable. `publishToInstagram` stays for anything already connected.
  */
 export const PUBLISHABLE_PLATFORMS: Record<string, string[]> = {
-  instagram_post: ["instagram", "instagram_business", "tiktok"],
+  instagram_post: ["instagram_business", "tiktok"],
   social_post: ["twitter", "linkedin", "tiktok"],
   article: ["linkedin"],
   email: [],
@@ -206,6 +224,25 @@ export function platformLabel(id: string): string {
  * moving one of these into an ungated position brings it into scope.
  */
 export const PLATFORM_REGISTRY: PlatformConfig[] = [
+  /**
+   * HIDDEN 2026-09-20 (`hidden: true` below) — not deleted, because a still-
+   * connected client's `fields` are how `sanitize.ts`/`integration-actions.ts`
+   * know `pageId` is public and `accessToken` is secret; see `PlatformConfig.hidden`.
+   * `integrations-tab.tsx` only shows this card to a client who already has an
+   * "instagram" integration document; nobody new is offered it.
+   *
+   * Retired for the same reason Facebook was dropped as a sellable channel: it
+   * goes through Facebook Login and needs the client's Instagram professional
+   * account linked to a Facebook Page, which fails outright for any account
+   * that has none (confirmed live against Karos Labs' own account:
+   * `owned_pages` → `[]`) — and it was ALSO a second Connect button for the
+   * exact same platform "instagram_business" below already covers with no
+   * Page requirement, which is what actually prompted retiring it: a client
+   * should not have to connect Instagram twice to get one working channel.
+   * Removed from `OAUTH_SUPPORTED_PLATFORM_IDS` and `PUBLISHABLE_PLATFORMS`
+   * too. `publishToInstagram`/`PLATFORM_LABELS.instagram` stay — an account
+   * already connected through it keeps working — it just is not offered again.
+   */
   {
     id: "instagram",
     name: "Instagram",
@@ -230,24 +267,22 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
       },
     ],
     category: "publishing",
+    hidden: true,
   },
   /**
-   * A SECOND, independent connection to the same platform — not a variant of
-   * the card above. "instagram" above goes through Facebook Login and needs
-   * the client's Instagram professional account linked to a Facebook Page;
-   * this goes through Meta's newer Instagram Login directly, so it also works
-   * for a client whose Instagram account has no linked Page.
+   * THE INSTAGRAM PUBLISH CARD OFFERED TO NEW CONNECTIONS, since 2026-09-20 —
+   * see the "instagram" entry above for why its sibling is hidden rather than
+   * gone.
    *
    * PUBLISHING HERE SINCE 2026-09-20 (Albert): this card used to be read-only
    * (category "analytics") on the reasoning that the agents' publish path
-   * stayed on "instagram" above and this existed only for the extra account
-   * data ("instagram_business_basic", "instagram_business_manage_insights")
+   * stayed on the Facebook-Login card and this existed only for the extra
+   * account data ("instagram_business_basic", "instagram_business_manage_insights")
    * only the Instagram Login product grants. Albert asked for Karos Labs' own
-   * account specifically — connected via THIS product, not the Facebook-Login
-   * one — to be publishable through the same auto-publish flow, so
-   * `publishToInstagramBusiness` (publishers.ts) and "publishing" here replace
-   * that read-only stance. `instagram_business_content_publish` is the scope
-   * that backs it (oauth.ts).
+   * account specifically to be publishable through the same auto-publish flow,
+   * so `publishToInstagramBusiness` (publishers.ts) and "publishing" here
+   * replaced that read-only stance. `instagram_business_content_publish` is
+   * the scope that backs it (oauth.ts).
    */
   {
     id: "instagram_business",

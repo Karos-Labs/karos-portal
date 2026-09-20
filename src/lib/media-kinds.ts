@@ -180,11 +180,11 @@ export function mediaMimeFor(contentType?: string, filename?: string): string {
 export const MEDIA_REGISTRATION: Readonly<
   Record<MediaKind, { readonly type: AssetType; readonly channels: readonly string[] }>
 > = {
-  // Both Instagram integrations, same reasoning as the Instagram Agent's own
-  // materializer: "instagram" (Facebook Login) needs a linked Facebook Page and
-  // fails outright without one, so an uploaded photo needs "instagram_business"
-  // (direct login, no Page required) as a real fallback target, not just the
-  // one that fails for any account without a Page.
-  image: { type: "instagram_post", channels: ["instagram", "instagram_business"] },
+  // "instagram_business" only — "instagram" (Facebook Login) was retired as a
+  // publish target 2026-09-20 (see platforms.ts's PLATFORM_REGISTRY note): it
+  // fails outright without a linked Facebook Page, and is no longer in
+  // PUBLISHABLE_PLATFORMS, so pairing an upload with it would fail the very
+  // guard this table exists to satisfy.
+  image: { type: "instagram_post", channels: ["instagram_business"] },
   video: { type: "social_post", channels: ["tiktok"] },
 };
