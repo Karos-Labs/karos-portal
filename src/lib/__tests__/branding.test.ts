@@ -24,6 +24,8 @@ import {
   effectiveSecondaryAccent,
   effectiveNeutralDark,
   effectiveNeutralLight,
+  reconcileRoleWithHex,
+  isSubstrateColor,
 } from "../branding";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -482,5 +484,92 @@ describe("effective* accessors — role-based first, positional/legacy fallback 
     expect(effectiveSecondaryAccent(g)).toBe("#0000ff");
     expect(effectiveNeutralDark(g)).toBe("#09090b");
     expect(effectiveNeutralLight(g)).toBe("#fafafa");
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+   2026-09-20 — an entry that claimed two different colours at once.
+   ────────────────────────────────────────────────────────────────────────── */
+
+describe("reconcileRoleWithHex", () => {
+  it("rewrites a colour word the hex contradicts", () => {
+    // The stored record for "Pitch by Deel": one entry, two incompatible
+    // claims, nothing checking them against each other. The hex is the half
+    // that was verified against the live site, so the word gives way.
+    expect(reconcileRoleWithHex("Accent yellow, highlights and CTAs", "#ffffff")).toBe(
+      "Accent white, highlights and CTAs",
+    );
+  });
+
+  it("leaves a role the hex agrees with alone", () => {
+    expect(reconcileRoleWithHex("Signature orange — CTA background", "#ff6b2c")).toBe(
+      "Signature orange — CTA background",
+    );
+    expect(reconcileRoleWithHex("Brand purple, logo mark", "#5938b7")).toBe("Brand purple, logo mark");
+  });
+
+  it("leaves a role naming no colour at all alone", () => {
+    expect(reconcileRoleWithHex("Primary CTA background", "#ff6b2c")).toBe("Primary CTA background");
+    expect(reconcileRoleWithHex(undefined, "#ff6b2c")).toBeUndefined();
+  });
+
+  it("drops the word when nothing describes the hex cleanly", () => {
+    // A desaturated slate is none of the plain words — too colourful for
+    // "grey", too muted for "blue" — so the false claim goes and the judgment,
+    // what the colour is FOR, survives.
+    expect(reconcileRoleWithHex("Accent blue for buttons", "#778899")).toBe("Accent for buttons");
+  });
+});
+
+describe("isSubstrateColor", () => {
+  it("knows the page's substrate from the colour it acts with", () => {
+    expect(isSubstrateColor("#ffffff")).toBe(true);
+    expect(isSubstrateColor("#f2f1ec")).toBe(true);
+    expect(isSubstrateColor("#0b0b0d")).toBe(true);
+    expect(isSubstrateColor("#ff6b2c")).toBe(false);
+    expect(isSubstrateColor("#5938b7")).toBe(false);
+  });
+});
+
+describe("a substrate colour can never become an accent slot", () => {
+  it("files white under the light neutral however the role reads", () => {
+    // `#ffffff` with the role "Accent yellow, highlights and CTAs" made white
+    // this client's `secondaryAccent` — the colour every downstream agent then
+    // puts on a button.
+    const resolved = resolveDominantColorsByRole([
+      { hex: "#5938b7", dominanceRank: 1, role: "Brand purple, logo mark" },
+      { hex: "#1b1b1b", dominanceRank: 2, role: "Page ground" },
+      { hex: "#ffffff", dominanceRank: 3, role: "Accent yellow, highlights and CTAs" },
+    ]);
+    expect(resolved.primaryAccent).toBeUndefined();
+    expect(resolved.secondaryAccent).toBeUndefined();
+    expect(resolved.brandNeutralLight).toBe("#ffffff");
+    expect(resolved.brandNeutralDark).toBe("#1b1b1b");
+  });
+
+  it("is a veto, not a vote — an unclassified role stays unclassified", () => {
+    // Otherwise a legacy record of bare hexes would look role-resolved and the
+    // positional fallback every old client depends on would stop firing.
+    expect(resolveDominantColorsByRole([{ hex: "#111111", dominanceRank: 1 }])).toEqual({ resolvedByRole: false });
+  });
+
+  it("still lets a real accent be an accent", () => {
+    const resolved = resolveDominantColorsByRole([
+      { hex: "#1a1a1a", dominanceRank: 1, role: "Page background" },
+      { hex: "#ff6b2c", dominanceRank: 2, role: "Primary CTA accent" },
+    ]);
+    expect(resolved.primaryAccent).toBe("#ff6b2c");
+  });
+});
+
+describe("body text and content are neutrals", () => {
+  it("classifies the role text a fresh extraction actually writes", () => {
+    // "Primary text / content on dark" matched none of the original nine
+    // neutral words, so white classified as nothing and `brandNeutralLight`
+    // fell through to a deep purple.
+    expect(classifyColorRole("Primary text / content on dark")).toBe("neutral");
+    expect(classifyColorRole("Card and border surface")).toBe("neutral");
+    // An accent keyword still wins when both appear.
+    expect(classifyColorRole("CTA button text")).toBe("accent");
   });
 });

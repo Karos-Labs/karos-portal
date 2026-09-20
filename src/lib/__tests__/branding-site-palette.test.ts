@@ -3,7 +3,7 @@ import { vi, describe, expect, it } from "vitest";
 // Must be hoisted before any import that transitively pulls in server-only.
 vi.mock("server-only", () => ({}));
 
-const { observeSitePalette, describeObservedPalette, snapToObservedPalette, isUncorroboratedSlotColor, mergePaintedPalette, accentCandidates, isDisqualifiedByRender } = await import("../branding-site-palette");
+const { observeSitePalette, describeObservedPalette, snapToObservedPalette, isUncorroboratedSlotColor, mergePaintedPalette, accentCandidates, isDisqualifiedByRender, brandPageUrl, isThirdPartyVendorColor, isFrameworkDefaultColor } = await import("../branding-site-palette");
 
 /**
  * The defect this exists for, from prep on 2026-09-03.
@@ -333,5 +333,174 @@ describe("isDisqualifiedByRender", () => {
 
   it("keeps a slot-named colour the render actually paints", () => {
     expect(isDisqualifiedByRender(color({ cssVars: ["--primary"], paintedShare: 0.4 }))).toBe(false);
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+   2026-09-20 — the defects behind two clients' wrong palettes.
+   ────────────────────────────────────────────────────────────────────────── */
+
+describe("brandPageUrl", () => {
+  it("keeps the path a client recorded", () => {
+    // "Pitch by Deel" is a section of deel.com. Reducing its website to a
+    // hostname pointed the palette, the site intelligence and the screenshot at
+    // Deel's corporate homepage, whose third most frequent colour is a yellow
+    // the sub-brand's own page never paints. That yellow was then stored as the
+    // sub-brand's third dominant colour.
+    expect(brandPageUrl("https://www.deel.com/the-pitch-by-deel/")).toBe("https://www.deel.com/the-pitch-by-deel/");
+  });
+
+  it("still accepts a bare host, and drops query and hash", () => {
+    expect(brandPageUrl("karoslabs.com")).toBe("https://karoslabs.com/");
+    expect(brandPageUrl("https://xodigital.com.br/?utm_source=x#top")).toBe("https://xodigital.com.br/");
+  });
+});
+
+describe("isThirdPartyVendorColor", () => {
+  const color = (over: Partial<Parameters<typeof isThirdPartyVendorColor>[0]>) => ({
+    hex: "#25d366", count: 5, cssVars: [], themeVars: [], inLogo: false, inMarkup: false, ...over,
+  });
+
+  it("recognises a vendor palette a page borrowed", () => {
+    // xodigital.com.br renders a WhatsApp conversation mock-up in its hero.
+    expect(isThirdPartyVendorColor(color({ hex: "#25d366" }))).toBe(true);
+    expect(isThirdPartyVendorColor(color({ hex: "#06cf9c" }))).toBe(true);
+    expect(isThirdPartyVendorColor(color({ hex: "#0095f6" }))).toBe(true);
+  });
+
+  it("never demotes a colour the client's own mark or tokens vouch for", () => {
+    // A denylist that can delete a real brand colour is worse than no denylist.
+    expect(isThirdPartyVendorColor(color({ inLogo: true }))).toBe(false);
+    expect(isThirdPartyVendorColor(color({ cssVars: ["--brand-green"] }))).toBe(false);
+    expect(isThirdPartyVendorColor(color({ hex: "#ff6b2c" }))).toBe(false);
+  });
+});
+
+describe("mergePaintedPalette — one pixel, one vote", () => {
+  it("gives a painted colour to its NEAREST declaration only", () => {
+    // Adding a measured colour to every declaration within the window made the
+    // share column meaningless where it matters most. On a render that is 49%
+    // white, `#f0f2f5`, `#f3f4f6`, `#f9fafb` and `#ffffff` each reported ~53%
+    // of the page, and the extraction took the off-white that sorted first.
+    const declared = [
+      { hex: "#ffffff", count: 8, cssVars: ["--color-white"], themeVars: [], inLogo: false, inMarkup: true },
+      { hex: "#f9fafb", count: 2, cssVars: [], themeVars: [], inLogo: false, inMarkup: false },
+      { hex: "#f3f4f6", count: 2, cssVars: [], themeVars: [], inLogo: false, inMarkup: false },
+    ];
+    const merged = mergePaintedPalette(declared, [{ hex: "#ffffff", share: 0.49 }]);
+    const byHex = new Map(merged.map((c) => [c.hex, c.paintedShare]));
+
+    expect(byHex.get("#ffffff")).toBeCloseTo(0.49, 4);
+    expect(byHex.get("#f9fafb")).toBe(0);
+    expect(byHex.get("#f3f4f6")).toBe(0);
+  });
+
+  it("keeps a painted white the stylesheet never declared", () => {
+    // White is dropped from the FREQUENCY ranking because every reset mentions
+    // it. Dropping it from the PIXEL count too meant a page could be half white
+    // and have no white in its palette — while Source C simultaneously told the
+    // model every hex it returns must come from that list.
+    const declared = [
+      { hex: "#1b1b1b", count: 200, cssVars: ["--color-primary"], themeVars: [], inLogo: false, inMarkup: true },
+    ];
+    const merged = mergePaintedPalette(declared, [
+      { hex: "#1b1b1b", share: 0.886 },
+      { hex: "#ffffff", share: 0.031 },
+    ]);
+    expect(merged.find((c) => c.hex === "#ffffff")?.paintedShare).toBeCloseTo(0.031, 4);
+  });
+});
+
+describe("accentCandidates — measured before declared", () => {
+  const color = (over: Partial<Parameters<typeof isThirdPartyVendorColor>[0]>) => ({
+    hex: "#000000", count: 1, cssVars: [], themeVars: [], inLogo: false, inMarkup: true, ...over,
+  });
+
+  it("puts a painted candidate above a brand-named one the render never shows", () => {
+    // Deel's design system names half its tokens `--color-surface-brand-*`, so
+    // the brand-name test stopped separating anything and ranked a yellow the
+    // sub-brand's page paints nowhere above the purple it paints on its
+    // buttons. Measured beats declared; the name breaks ties inside each group.
+    const observed = [
+      color({ hex: "#ffcf25", cssVars: ["--color-core-cornbread", "--color-surface-brand-yellow-03"], paintedShare: 0 }),
+      color({ hex: "#c4b1f9", cssVars: ["--color-purple-400", "--color-surface-brand-purple-02"], paintedShare: 0.0003 }),
+    ];
+    expect(accentCandidates(observed).map((c) => c.hex)).toEqual(["#c4b1f9", "#ffcf25"]);
+  });
+
+  it("never offers somebody else's brand as this one's signature", () => {
+    // Every slot of this list was a WhatsApp green for a fintech whose accent
+    // is a peach: the mock-up's greens are more saturated, and saturation was
+    // the only tiebreak.
+    const observed = [
+      color({ hex: "#25d366", paintedShare: 0.004 }),
+      color({ hex: "#06cf9c", paintedShare: 0.002 }),
+      color({ hex: "#0095f6", paintedShare: 0.001 }),
+      color({ hex: "#e6a47c", cssVars: ["--brand-peach"], paintedShare: 0.003 }),
+    ];
+    expect(accentCandidates(observed).map((c) => c.hex)).toEqual(["#e6a47c"]);
+  });
+
+  it("orders by saturation, as before, when nothing was rendered", () => {
+    const observed = [
+      color({ hex: "#8a5a3c", paintedShare: undefined }),
+      color({ hex: "#ff6b2c", paintedShare: undefined }),
+    ];
+    expect(accentCandidates(observed).map((c) => c.hex)).toEqual(["#ff6b2c", "#8a5a3c"]);
+  });
+});
+
+describe("describeObservedPalette — naming a third party's colours", () => {
+  const observed = [
+    { hex: "#0b1220", count: 4, cssVars: [], themeVars: [], inLogo: false, inMarkup: true, paintedShare: 0.29 },
+    { hex: "#25d366", count: 5, cssVars: [], themeVars: [], inLogo: false, inMarkup: false, paintedShare: 0.004 },
+  ];
+
+  it("labels a vendor colour and says not to report it", () => {
+    const text = describeObservedPalette(observed);
+    expect(text).toContain("SOMEBODY ELSE");
+    expect(text).toContain("#25d366  (WhatsApp)");
+  });
+
+  it("keeps vendor hexes out of the anonymous frequency line", () => {
+    // That line is where the greens reached the model: forty colours with no
+    // names attached, from which it picked the most vivid.
+    const text = describeObservedPalette(observed.map((c) => ({ ...c, paintedShare: undefined })));
+    const frequency = text.split("\n").find((l) => l.includes("Other colours present"));
+    expect(text).toContain("SOMEBODY ELSE");
+    expect(frequency ?? "").not.toContain("#25d366");
+  });
+
+  it("tells the model a measured ground belongs in the palette", () => {
+    expect(describeObservedPalette(observed)).toContain("MOSTLY MADE OF");
+  });
+});
+
+describe("isFrameworkDefaultColor", () => {
+  const color = (over: Partial<Parameters<typeof isFrameworkDefaultColor>[0]>) => ({
+    hex: "#22c55e", count: 1, cssVars: [], themeVars: [], inLogo: false, inMarkup: false, ...over,
+  });
+
+  it("knows a framework's stock shade from a chosen one", () => {
+    // xodigital.com.br paints `#22c55e` on a badge via `.from-green-500` —
+    // Tailwind's default green, arrived at by typing a class name. It was
+    // returned as that client's primary accent on one run in two.
+    expect(isFrameworkDefaultColor(color({ hex: "#22c55e" }))).toBe(true);
+    // The hex this whole pipeline exists to stop: Tailwind indigo-500.
+    expect(isFrameworkDefaultColor(color({ hex: "#6366f1" }))).toBe(true);
+    expect(isFrameworkDefaultColor(color({ hex: "#ff6b2c" }))).toBe(false);
+  });
+
+  it("yields to the client's own mark and token names", () => {
+    expect(isFrameworkDefaultColor(color({ inLogo: true }))).toBe(false);
+    expect(isFrameworkDefaultColor(color({ cssVars: ["--brand-green"] }))).toBe(false);
+  });
+
+  it("keeps a framework default out of the accent candidates", () => {
+    const observed = [
+      color({ hex: "#22c55e", paintedShare: 0.006 }),
+      color({ hex: "#d89166", paintedShare: 0.003 }),
+    ];
+    expect(accentCandidates(observed).map((c) => c.hex)).toEqual(["#d89166"]);
   });
 });
