@@ -1095,12 +1095,17 @@ export async function listScheduledAssets(opts?: {
  * clear any stale error, and (when the platform returned one) store the
  * platform's post id so the analytics sync can fetch this post's metrics later.
  */
-export async function markAssetPublished(id: string, platformPostId?: string | null): Promise<void> {
+export async function markAssetPublished(
+  id: string,
+  platformPostId?: string | null,
+  platformResults?: Record<string, { postId?: string | null; error?: string }>,
+): Promise<void> {
   const { FieldValue } = await import("firebase-admin/firestore");
   await col.assets().doc(id).update({
     status: "published",
     publishedAt: Date.now(),
     ...(platformPostId ? { platformPostId } : {}),
+    ...(platformResults ? { platformResults } : {}),
     publishError: FieldValue.delete(),
     publishClaimedAt: FieldValue.delete(),
     updatedAt: Date.now(),
