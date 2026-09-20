@@ -23,6 +23,7 @@ import {
 } from "@/lib/asset-status-copy";
 import { looksLikeMarkdown, renderAssetBody } from "@/lib/doc-render";
 import { normalizeDashes } from "@/lib/text-utils";
+import { asDiscovery, asLicenseConfidence, describeDiscovery, describeLicenseConfidence } from "@/lib/agent-engine/clip-review";
 import { MarkPostedRow } from "@/components/mark-posted-row";
 import { canMarkAssetPosted } from "@/lib/mark-posted";
 import { PostManagementRow } from "@/components/post-management-row";
@@ -265,6 +266,42 @@ export function AssetDetailModal({
     const why = str(m.whyNow) ?? str(m.whyThread);
     if (why) rows.push({ label: "Why now", value: why });
     return rows;
+  })();
+  /**
+   * A clip's provenance and repair ledger, STAFF ONLY (agent-engine RFC-25).
+   *
+   * The engine has written these onto the clip deliverable since 2026-09, and
+   * nothing in this portal rendered them: once the approval gate was resolved,
+   * "whose recording is this clip of" and "did it come out clean or was it
+   * salvaged" became unanswerable without opening the run in Firestore. The
+   * gate is where the decision is made, but the deliverable is what outlives
+   * it, and both questions get asked again months later.
+   *
+   * Not shown to a client, and that is the CLAUDE.md rule rather than a
+   * judgement call: internal meta stays off the client's card. "We had to
+   * redact a sentence and swap a picture" is a note between the agent and the
+   * people running it. What the client is owed is the clip and the caption
+   * carrying its source credit, and both ship regardless.
+   */
+  const clipProvenance = (() => {
+    if (viewerIsClient) return null;
+    const m = asset.meta ?? {};
+    const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined);
+    const ctx = (typeof m.sourceContext === "object" && m.sourceContext !== null ? m.sourceContext : {}) as Record<string, unknown>;
+    const repairs = Array.isArray(m.contentRepairs)
+      ? m.contentRepairs.flatMap((r): Array<{ check: string; action: string; detail: string }> => {
+          if (typeof r !== "object" || r === null) return [];
+          const row = r as Record<string, unknown>;
+          if (str(row.check) === undefined || str(row.detail) === undefined) return [];
+          return [{ check: str(row.check)!, action: str(row.action) ?? "unresolved", detail: str(row.detail)! }];
+        })
+      : [];
+    const licence = asLicenseConfidence(m.licenseConfidence);
+    const url = str(ctx.url);
+    const channel = str(ctx.channel) ?? str(ctx.title);
+    const discovery = asDiscovery(ctx.discovery);
+    if (licence === undefined && url === undefined && channel === undefined && repairs.length === 0) return null;
+    return { licence, url, channel, discovery, repairs };
   })();
   // The engine's email-safe render of a newsletter edition (2026-09-05). Only an
   // email asset carries one; every other type keeps the plain content view.
@@ -516,6 +553,54 @@ export function AssetDetailModal({
             <span className="font-medium text-foreground">Visual: </span>
             {imageConcept}
           </p>
+        )}
+
+        {/* Staff only — see `clipProvenance` above for why. */}
+        {clipProvenance && (
+          <div className="rounded-lg bg-surface-2 p-2.5">
+            <p className="mb-1.5 text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">Where this clip came from</p>
+            {clipProvenance.licence !== undefined && (
+              <p className="text-xs">
+                <span className="font-medium text-foreground">{describeLicenseConfidence(clipProvenance.licence).label}</span>
+                <span className="text-muted"> · {describeLicenseConfidence(clipProvenance.licence).detail}</span>
+              </p>
+            )}
+            {(clipProvenance.channel !== undefined || clipProvenance.discovery !== undefined) && (
+              <p className="mt-1 text-xs text-muted">
+                {clipProvenance.channel ?? ""}
+                {clipProvenance.channel !== undefined && clipProvenance.discovery !== undefined ? " · " : ""}
+                {clipProvenance.discovery !== undefined ? describeDiscovery(clipProvenance.discovery) : ""}
+              </p>
+            )}
+            {clipProvenance.url !== undefined && (
+              <a
+                href={clipProvenance.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 inline-block break-all text-xs text-neon underline decoration-dotted underline-offset-2"
+              >
+                {clipProvenance.url}
+              </a>
+            )}
+            {clipProvenance.repairs.length > 0 && (
+              <div className="mt-2 border-t border-border/60 pt-2">
+                <p className="text-xs font-medium text-foreground">
+                  This run adapted around {clipProvenance.repairs.length} thing{clipProvenance.repairs.length === 1 ? "" : "s"}
+                </p>
+                <ul className="mt-1 space-y-1">
+                  {clipProvenance.repairs.map((r) => (
+                    <li key={`${r.check}-${r.detail}`} className="text-xs">
+                      <span className="text-muted-2">
+                        {r.check} · {r.action}
+                      </span>
+                      <br />
+                      <span className="text-muted">{normalizeDashes(r.detail)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         )}
 
         {/* Unconditional on eligibility - a viewer with no Publish Now button (a

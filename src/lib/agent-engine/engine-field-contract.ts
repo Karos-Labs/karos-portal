@@ -301,7 +301,16 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
     readBy: [
       { product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts:806 (filters role === source|reference)" },
       { product: "tiktok-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:237 (firstAsset(rich.mediaAssets, \"source\"))" },
-      { product: "tiktok-clipping-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:237 (firstAsset(rich.mediaAssets, \"source\")) via apps/agent-server/src/wiring/workflows.ts:213 — the uploaded recording IS the footage this product clips" },
+      // 2026-09-20, agent-engine RFC-25 phase 4: the attachment no longer has
+      // to be a FILE. `01b-resolve-source` routes on `isDirectMediaUri` — a
+      // `gs://` upload or an `https://` URL ending in a media extension is
+      // ingested as bytes, anything else is treated as a page and handed to
+      // `media.harvestVideo`'s `sourceUrl` mode to resolve. Which is why
+      // `RunAttachments`' `source-video` mode grows a paste-a-link field and
+      // sends it with no `contentType`: the engine reads the URI, not a
+      // declared type, and a page stamped `video/mp4` would be fetched as
+      // bytes and written to disk as HTML.
+      { product: "tiktok-clipping-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:237 (firstAsset(rich.mediaAssets, \"source\")) + :1435 (isDirectMediaUri → media.harvestVideo sourceUrl) via apps/agent-server/src/wiring/workflows.ts:213 — the uploaded recording, or the page a client pasted, IS the footage this product clips" },
       { product: "tiktok-editing-agent", evidence: "agents/branded-shorts-agent/src/workflow/create-branded-shorts-agent-workflow.ts (firstAsset(runDirection.mediaAssets, \"source\") in 01-load-intake) via apps/agent-server/src/wiring/workflows.ts:207" },
       // agent-engine RFC-12 (2026-09): both text-first channels ingest an
       // attached image, describe it with a vision model before drafting, and
