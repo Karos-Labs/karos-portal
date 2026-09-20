@@ -2812,6 +2812,14 @@ export type CreditOperation =
    * carries which tool it was.
    */
   | "ai_tool"
+  /**
+   * The one credit a client is given for rating a finished job 1 to 5 stars
+   * (RFC-22 §3.2). The only operation in this union that GRANTS rather than
+   * charges, which is why it is worth its own row in the client's breakdown
+   * instead of hiding inside `manual`: they should be able to see that rating
+   * their posts pays them back.
+   */
+  | "quality_rating"
   | "manual";
 
 /**

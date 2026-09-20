@@ -109,6 +109,19 @@ export interface AgentEngineGateResolution {
   feedback?: string;
   templateFeedback?: AgentEngineTemplateFeedback[];
   /**
+   * The reviewer's 1-to-5 stars on the finished post (RFC-22 §3.2), optional
+   * on every decision.
+   *
+   * This is the golden set's label, collected where a human already is rather
+   * than in a labelling session nobody makes time for. A 1-star `revise` is
+   * the most useful row it can hold: a post a person would not post, which is
+   * precisely the case the visual judge is calibrated to catch.
+   *
+   * Optional, and it stays optional. A required rating is answered by
+   * everybody and means nothing.
+   */
+  rating?: number;
+  /**
    * In-place edits. `caption`/`slides` are meaningful on `approve` only — a
    * redraft supersedes hand edits. `style` (IGSTYLE-6) is the exception:
    * meaningful on `approve` AND `revise` — see `AgentEngineStyleEdit`'s own

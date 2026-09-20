@@ -295,6 +295,15 @@ export function AgentEngineGateApproval({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
+  /**
+   * The reviewer's 1-to-5 stars (RFC-22 §3.2), or `undefined` for "they did
+   * not say".
+   *
+   * `undefined` rather than 0, and the distinction is the whole point: a post
+   * nobody rated and a post rated badly are different facts, and a calibration
+   * set that cannot tell them apart is worse than one with fewer rows.
+   */
+  const [rating, setRating] = useState<number | undefined>(undefined);
   /** Per-slide design notes, keyed by slide number. Only sent for slides the reviewer actually wrote about. */
   const [templateNotes, setTemplateNotes] = useState<Record<number, string>>({});
   /** Which experimental templates the reviewer wants kept for future runs. */
@@ -422,6 +431,10 @@ export function AgentEngineGateApproval({
       const edits = collectEdits();
       const result = await resolveAgentEngineGateAction(jobId, gateId, {
         decision,
+        // Sent on every decision. A one-star "Request changes" is the most
+        // useful row the calibration set can hold: a post a person would not
+        // post, which is exactly what the visual judge is tuned to catch.
+        ...(rating !== undefined ? { rating } : {}),
         ...(notes ? { notes } : {}),
         ...(templateFeedback.length > 0 ? { templateFeedback } : {}),
         ...(edits !== undefined ? { edits } : {}),
@@ -966,6 +979,50 @@ export function AgentEngineGateApproval({
             future runs. */}
         <p className="text-xs text-muted-2">
           Saved to this client&apos;s memory either way, so future runs learn from it.
+        </p>
+      </div>
+      {/* ── HOW GOOD WAS THIS? (RFC-22 §3.2) ──
+
+          Directly above the decision buttons, because that is the moment the
+          reviewer has just finished forming the opinion and has not yet
+          clicked away. Optional, and it says so: a required rating is answered
+          by everybody and means nothing, while an optional one that is
+          actually answered is a person's real judgement.
+
+          The credit is stated rather than quietly granted. "We will pay you
+          for this" is the honest version of the ask, and a reward nobody knows
+          about buys no labels. */}
+      <div className="space-y-1 rounded-md border border-border bg-surface p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium">How good is this post?</span>
+          <span className="text-xs text-muted-2">Optional &middot; earns 1 credit</span>
+        </div>
+        <div className="flex items-center gap-1">
+          {[1, 2, 3, 4, 5].map((star) => (
+            <button
+              key={star}
+              type="button"
+              aria-label={`${star} out of 5`}
+              aria-pressed={rating === star}
+              // Clicking the star you already picked clears it, so a misclick
+              // is recoverable without a separate "no rating" control.
+              onClick={() => setRating((current) => (current === star ? undefined : star))}
+              disabled={pending}
+              className="rounded p-0.5 disabled:opacity-50"
+            >
+              <Icon
+                name="Star"
+                // Filled up to the pick, outlined past it — the shape every
+                // star rating on the internet has, so nobody has to learn it.
+                fill={rating !== undefined && star <= rating ? "currentColor" : "none"}
+                className={`h-5 w-5 ${rating !== undefined && star <= rating ? "text-warning" : "text-muted-2"}`}
+              />
+            </button>
+          ))}
+          {rating !== undefined && <span className="ml-1 text-xs text-muted-2">{rating}/5</span>}
+        </div>
+        <p className="text-xs text-muted-2">
+          Rate it as a CMO would: would you post this as it is? This tunes the quality checks on future runs.
         </p>
       </div>
       {error && <span className="text-xs text-danger">{error}</span>}
