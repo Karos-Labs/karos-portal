@@ -122,8 +122,16 @@ export const GOOGLE_READ_ONLY_SUB_PLATFORM_IDS = ["google_search_console", "goog
  * client into a popup that can only fail, so the card says pending verification
  * instead of pretending. DELETE THE ENTRY the day verification lands — nothing
  * else needs changing, the OAuth config is already complete.
+ *
+ * TEMPORARY — DEMO RECORDING ONLY (2026-09-20): tiktok removed from this set
+ * so the real "Connect with TikTok" button shows up against prep (running
+ * with the TikTok app's Sandbox client key/secret, not the real one) to
+ * record the Login Kit + Content Posting API demo video TikTok's re-review
+ * requires. This must NOT reach production before TikTok actually approves
+ * the account — put "tiktok" back in this Set (or revert this commit) once
+ * the demo is recorded and before this branch is promoted to prod.
  */
-export const PENDING_VERIFICATION_PLATFORM_IDS = new Set<string>(["tiktok"]);
+export const PENDING_VERIFICATION_PLATFORM_IDS = new Set<string>([]);
 
 /**
  * Which platforms each asset type can be pushed to (auto cron or Publish Now).
