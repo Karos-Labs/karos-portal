@@ -826,7 +826,7 @@ describe("the three products that already worked keep working", () => {
     const asset = createdAsset();
     expect(asset.type).toBe("instagram_post");
     expect(asset.imageUrl).toBe("https://karos.example/rehosted.png");
-    expect(asset.channels).toEqual(["instagram"]);
+    expect(asset.channels).toEqual(["instagram", "instagram_business"]);
   });
 
   // A real prep run (rWb2EutSDjHzkPnsoeEY) shipped 8 slides and the reviewer

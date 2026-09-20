@@ -590,7 +590,13 @@ async function materializeInstagramCarousel(job: Job, deliverable: InstagramCaro
     // The cover thumbnail existing cards read directly — first slide with a
     // rehosted photo, same "best available" rule the single-photo path uses.
     imageUrl: withPhotos[0]?.imageUrl ?? null,
-    channels: ["instagram"],
+    // Both Instagram integrations are offered — the client's connected one is
+    // whichever `availablePlatforms` (approve-panel.tsx) actually keeps after
+    // intersecting with what's connected. "instagram" (Facebook Login) needs a
+    // linked Facebook Page and silently fails without one; "instagram_business"
+    // (direct login) needs neither, so an account with no Page still gets a
+    // working auto-publish target instead of only the one that always fails it.
+    channels: ["instagram", "instagram_business"],
     meta: {
       taskType: "social_post",
       // D11's line. First in the literal for the same reason it is first in the
