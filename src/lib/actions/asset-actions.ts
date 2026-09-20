@@ -316,7 +316,14 @@ export async function recommendAssetScheduleAction(
  */
 export async function approveAssetAction(
   id: string,
-  opts?: { scheduledAt?: number; platform?: string; publishMode?: PublishMode },
+  opts?: {
+    scheduledAt?: number;
+    /** Single-platform callers (the quick-approve paths) — kept for backward compat. */
+    platform?: string;
+    /** Every platform to publish this asset to. Takes priority over `platform` when both are given. */
+    platforms?: string[];
+    publishMode?: PublishMode;
+  },
 ): Promise<void> {
   // Approval is a staff-only gate: requireAssetAccess alone would let a client
   // approve their own asset (and via opts.platform arm auto-publish).
@@ -339,11 +346,15 @@ export async function approveAssetAction(
   const approvalPatch: Omit<Partial<Asset>, "type"> = { status: "approved", updatedAt: Date.now() };
 
   if (opts?.scheduledAt != null) {
-    const publishMode: PublishMode = opts.publishMode ?? (opts.platform ? "auto" : "placeholder");
+    // `platforms` (plural) wins when both are given — see the opts doc above.
+    const targetPlatforms = opts.platforms?.length ? opts.platforms : opts.platform ? [opts.platform] : undefined;
+    const publishMode: PublishMode = opts.publishMode ?? (targetPlatforms ? "auto" : "placeholder");
     if (publishMode === "auto") {
-      if (!opts.platform) throw new Error("Auto-publish requires a target platform");
+      if (!targetPlatforms?.length) throw new Error("Auto-publish requires a target platform");
       // Enforce: auto-publish only when the client opted-in and the required
-      // integration is connected and active.
+      // integration is connected and active — for EVERY platform picked, not
+      // just the first: promising to auto-post to a platform with no usable
+      // integration would just fail silently at cron time instead of here.
       const settings = await getClientSettings(asset.clientId);
       if (!settings?.autoScheduleEnabled) {
         throw new Error(
@@ -351,18 +362,21 @@ export async function approveAssetAction(
         );
       }
       const integrations = await listClientIntegrations(asset.clientId);
-      const active = integrations.find(
-        (i) => i.platform === opts.platform && integrationIsUsable(i),
+      const missing = targetPlatforms.filter(
+        (p) => !integrations.find((i) => i.platform === p && integrationIsUsable(i)),
       );
-      if (!active) {
+      if (missing.length) {
         throw new Error(
-          `Connect an active ${opts.platform} integration to auto-publish - or approve as manual/placeholder`,
+          `Connect an active ${missing.join(", ")} integration to auto-publish - or approve as manual/placeholder`,
         );
       }
     }
     approvalPatch.scheduledAt = opts.scheduledAt;
     approvalPatch.publishMode = publishMode;
-    if (opts.platform) approvalPatch.scheduledPlatform = opts.platform;
+    if (targetPlatforms?.length) {
+      approvalPatch.scheduledPlatform = targetPlatforms[0];
+      if (targetPlatforms.length > 1) approvalPatch.scheduledPlatforms = targetPlatforms;
+    }
   } else {
     // No explicit opts scheduledAt supplied — attempt to preserve any candidate
     // scheduling (imported scheduledAt or agent recommendedAt) and, if an
@@ -607,7 +621,7 @@ const PUBLISH_REFUSAL: Record<AssetPublishBlock, string> = {
 export async function publishAssetNowAction(
   id: string,
   platform?: string,
-): Promise<{ ok: true; platform: string } | { ok: false; error: string }> {
+): Promise<{ ok: true; platform: string; platforms: string[] } | { ok: false; error: string }> {
   await requireStaff();
   const asset = await getAsset(id);
   if (!asset) throw new Error("Asset not found");
@@ -619,36 +633,63 @@ export async function publishAssetNowAction(
   // forced exchange rather than a "re-connect it first" refusal: the flag came
   // from a 401 on the access token (integrationMayBeRevivable).
   const valid = integrations.filter((i) => integrationIsUsable(i) || integrationMayBeRevivable(i));
-  const target =
-    platform ??
-    asset.scheduledPlatform ??
-    inferPlatform(asset.type, valid.map((i) => i.platform));
+  // An explicit `platform` argument always means "just this one" (every
+  // existing caller passes it that way); otherwise publish to every platform
+  // the asset was approved for, falling back to the legacy single-platform
+  // inference for an asset that predates `scheduledPlatforms`.
+  const targets: string[] = platform
+    ? [platform]
+    : asset.scheduledPlatforms?.length
+      ? asset.scheduledPlatforms
+      : (() => {
+          const single = asset.scheduledPlatform ?? inferPlatform(asset.type, valid.map((i) => i.platform));
+          return single ? [single] : [];
+        })();
 
-  if (!target) {
+  if (targets.length === 0) {
     return { ok: false, error: "No compatible platform connected. Connect one in the Integrations tab" };
   }
-  const integration = valid.find((i) => i.platform === target);
-  if (!integration) {
-    return { ok: false, error: `No active ${target} integration. Connect or re-connect it first` };
+  if (targets.every((t) => !valid.find((i) => i.platform === t))) {
+    return { ok: false, error: `No active ${targets[0]} integration. Connect or re-connect it first` };
   }
 
   // Atomically claim so a concurrent auto-cron tick (or a double-clicked button)
-  // can't push this same asset in parallel and post it twice.
+  // can't push this same asset in parallel and post it twice. One claim covers
+  // every target below — they all belong to this one publish attempt.
   const claimed = await claimAssetForPublish(id);
   if (!claimed) {
     return { ok: false, error: "This asset is already being published. Give it a moment." };
   }
 
-  let publishResult: { postId: string | null };
-  try {
-    // Same freshness rule as the cron: refresh ahead of expiry, and force one
-    // refresh + retry if the platform 401s anyway. An operator clicking this
-    // hours after the channel was connected must not be told to reconnect a
-    // channel whose refresh token is sitting right there.
-    publishResult = await runWithFreshCredentials(integration, (fresh) =>
-      publishAssetToPlatform(target, fresh, asset),
-    );
-  } catch (e) {
+  const results: Record<string, { postId?: string | null; error?: string }> = {};
+  for (const target of targets) {
+    const integration = valid.find((i) => i.platform === target);
+    if (!integration) {
+      results[target] = { error: `No active ${target} integration. Connect or re-connect it first` };
+      continue;
+    }
+    try {
+      // Same freshness rule as the cron: refresh ahead of expiry, and force one
+      // refresh + retry if the platform 401s anyway. An operator clicking this
+      // hours after the channel was connected must not be told to reconnect a
+      // channel whose refresh token is sitting right there.
+      const publishResult = await runWithFreshCredentials(integration, (fresh) =>
+        publishAssetToPlatform(target, fresh, asset),
+      );
+      results[target] = { postId: publishResult.postId };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Unknown error";
+      results[target] = { error: message };
+      if (isIntegrationDeadError(e)) {
+        await markIntegrationExpired(asset.clientId, target).catch(() => {});
+      }
+    }
+  }
+
+  const succeeded = targets.filter((t) => !results[t]?.error);
+  const failed = targets.filter((t) => results[t]?.error);
+
+  if (succeeded.length === 0) {
     await releaseAssetPublishClaim(id).catch(() => {});
     // STORED RAW, ON PURPOSE, and this is the note that stops the next reader
     // sanitizing it here. `publishError` is the platform SDK's own exception and
@@ -658,24 +699,32 @@ export async function publishAssetNowAction(
     // before it can cross the RSC boundary, so the collapse happens where the
     // reader is known rather than where the string is written. Sanitizing at the
     // write would destroy the diagnostic for everyone and fix nothing.
-    //
-    // The returned copy is raw for the same reason and is safe for a different
-    // one: this action is `requireStaff()`, so only an operator ever reads it.
-    const message = e instanceof Error ? e.message : "Unknown error";
-    if (isIntegrationDeadError(e)) {
-      await markIntegrationExpired(asset.clientId, target).catch(() => {});
-    }
+    const message = failed.map((t) => `${t}: ${results[t]!.error}`).join("; ");
     await updateAsset(id, { publishError: message, updatedAt: Date.now() }).catch(() => {});
     return { ok: false, error: message };
   }
 
-  await markAssetPublished(id, publishResult.postId);
+  await markAssetPublished(id, results[succeeded[0]!]?.postId ?? null, targets.length > 1 ? results : undefined);
   // Keep the calendar truthful: a manual push without a prior schedule still
   // lands on today's date, and the platform is recorded for the event chip.
+  // A partial failure (some targets succeeded, others didn't) still counts as
+  // published — the post IS live somewhere — but the failed half is recorded
+  // so staff can see it needs a manual push on just that platform. Same
+  // STORED RAW note as the all-failed branch above: `partialFailureMessage`
+  // is the platform SDK's own exception text, hoisted to its own variable
+  // rather than built inline here (client-copy-boundary.test.ts's sweep reads
+  // a literal in the SAME expression as `publishError:`; hoisting past a plain
+  // identifier is how every other writer in this file already stays invisible
+  // to it, same as createAsset.mimeType's note in that file).
+  const partialFailureMessage = failed.length
+    ? failed.map((t) => `${t}: ${results[t]!.error}`).join("; ")
+    : null;
   await updateAsset(id, {
     ...(asset.scheduledAt ? {} : { scheduledAt: Date.now() }),
-    scheduledPlatform: target,
+    scheduledPlatform: succeeded[0]!,
+    ...(targets.length > 1 ? { scheduledPlatforms: targets } : {}),
     publishMode: asset.publishMode ?? "manual",
+    ...(partialFailureMessage ? { publishError: partialFailureMessage } : {}),
     updatedAt: Date.now(),
   });
   // The post is out, and it counts exactly as much as one the client posted by
@@ -685,6 +734,6 @@ export async function publishAssetNowAction(
 
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
-  return { ok: true, platform: target };
+  return { ok: true, platform: succeeded[0]!, platforms: succeeded };
 }
 

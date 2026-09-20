@@ -785,7 +785,12 @@ function ActionFooter({
   if (approving) {
     return (
       <div className="border-t border-border pt-1">
-        <ApprovePanel asset={asset} connectedPlatforms={connectedPlatforms} onDone={() => setApproving(false)} />
+        <ApprovePanel
+          asset={asset}
+          connectedPlatforms={connectedPlatforms}
+          agentChannels={asset.channels}
+          onDone={() => setApproving(false)}
+        />
       </div>
     );
   }
@@ -927,13 +932,18 @@ function PublishNowInline({
   const eligible = canPublish && compatibleConnected.length > 0 && isAssetPublishable(asset);
   if (!eligible) return null;
 
-  const target = asset.scheduledPlatform ?? compatibleConnected[0];
+  const targets = asset.scheduledPlatforms?.length
+    ? asset.scheduledPlatforms
+    : [asset.scheduledPlatform ?? compatibleConnected[0]];
+  const targetLabel = targets.map((t) => PLATFORM_LABELS[t] ?? t).join(" + ");
 
   async function publishNow() {
     setBusy(true);
     setError(null);
     try {
-      const res = await publishAssetNowAction(asset.id, asset.scheduledPlatform);
+      // No explicit platform: the action reads asset.scheduledPlatforms itself
+      // and publishes to every one of them.
+      const res = await publishAssetNowAction(asset.id);
       if (res.ok) router.refresh();
       else setError(res.error);
     } catch (e) {
@@ -945,11 +955,11 @@ function PublishNowInline({
 
   return (
     <div className="flex flex-col gap-1">
-      <Button size="sm" variant="outline" onClick={publishNow} loading={busy} title={`Pushes it live via ${PLATFORM_LABELS[target] ?? target} right now, whatever the schedule says`}>
+      <Button size="sm" variant="outline" onClick={publishNow} loading={busy} title={`Pushes it live via ${targetLabel} right now, whatever the schedule says`}>
         <Icon name="Send" className="h-3.5 w-3.5" />
         Publish now
       </Button>
-      <p className="text-[11px] text-muted-2">Live via {PLATFORM_LABELS[target] ?? target} now, whatever the schedule says.</p>
+      <p className="text-[11px] text-muted-2">Live via {targetLabel} now, whatever the schedule says.</p>
       {error && <p className="text-[11px] text-danger">{error}</p>}
     </div>
   );

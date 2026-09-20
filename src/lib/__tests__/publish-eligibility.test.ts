@@ -152,7 +152,7 @@ describe("publishAssetNowAction — the server refusals", () => {
 
     const res = await actions.publishAssetNowAction("a1");
 
-    expect(res).toEqual({ ok: true, platform: "twitter" });
+    expect(res).toEqual({ ok: true, platform: "twitter", platforms: ["twitter"] });
     expect(publishers.publishAssetToPlatform).toHaveBeenCalledTimes(1);
   });
 
@@ -178,6 +178,88 @@ describe("publishAssetNowAction — the server refusals", () => {
       ok: false,
       error: "No active twitter integration. Connect or re-connect it first",
     });
+  });
+});
+
+describe("publishAssetNowAction — several platforms at once", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.spyOn(shared, "requireStaff").mockImplementation(
+      async () => ({ id: "u-staff", role: "KAROS_EMPLOYEE", disabled: false, clientId: "c1" }) as any,
+    );
+    vi.spyOn(auth, "getCurrentUser").mockImplementation(
+      async () => ({ id: "u-staff", role: "KAROS_EMPLOYEE", disabled: false, clientId: "c1" }) as any,
+    );
+    (data.listClientIntegrations as any).mockResolvedValue([
+      { platform: "instagram", status: "active" },
+      { platform: "tiktok", status: "active" },
+    ]);
+    (data.claimAssetForPublish as any).mockResolvedValue(true);
+    (data.markAssetPublished as any).mockResolvedValue(undefined);
+    (data.updateAsset as any).mockResolvedValue(undefined);
+    (data.releaseAssetPublishClaim as any).mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("publishes to every platform on scheduledPlatforms and reports all of them", async () => {
+    (data.getAsset as any).mockResolvedValue(
+      makeAsset({ status: "approved", scheduledPlatform: "instagram", scheduledPlatforms: ["instagram", "tiktok"] }),
+    );
+    (publishers.publishAssetToPlatform as any).mockImplementation(async (platform: string) => ({
+      postId: `${platform}-post`,
+    }));
+
+    const res = await actions.publishAssetNowAction("a1");
+
+    expect(res).toEqual({ ok: true, platform: "instagram", platforms: ["instagram", "tiktok"] });
+    expect(publishers.publishAssetToPlatform).toHaveBeenCalledTimes(2);
+    // One claim covers the whole multi-platform attempt, not one per platform.
+    expect(data.claimAssetForPublish).toHaveBeenCalledTimes(1);
+    expect(data.markAssetPublished).toHaveBeenCalledWith(
+      "a1",
+      "instagram-post",
+      { instagram: { postId: "instagram-post" }, tiktok: { postId: "tiktok-post" } },
+    );
+  });
+
+  it("still counts as published when only some platforms succeed, and records which failed", async () => {
+    (data.getAsset as any).mockResolvedValue(
+      makeAsset({ status: "approved", scheduledPlatform: "instagram", scheduledPlatforms: ["instagram", "tiktok"] }),
+    );
+    (publishers.publishAssetToPlatform as any).mockImplementation(async (platform: string) => {
+      if (platform === "tiktok") throw new Error("tiktok token expired or revoked (HTTP 403)");
+      return { postId: "instagram-post" };
+    });
+
+    const res = await actions.publishAssetNowAction("a1");
+
+    expect(res).toEqual({ ok: true, platform: "instagram", platforms: ["instagram"] });
+    expect(data.markAssetPublished).toHaveBeenCalledTimes(1);
+    // The failure is recorded even though the asset is published overall.
+    const patch = (data.updateAsset as any).mock.calls.find(
+      ([, p]: [string, Record<string, any>]) => p.publishError,
+    )?.[1];
+    expect(patch?.publishError).toMatch(/tiktok: tiktok token expired/);
+  });
+
+  it("refuses (and releases the claim) only when every target fails", async () => {
+    (data.getAsset as any).mockResolvedValue(
+      makeAsset({ status: "approved", scheduledPlatform: "instagram", scheduledPlatforms: ["instagram", "tiktok"] }),
+    );
+    (publishers.publishAssetToPlatform as any).mockRejectedValue(new Error("boom"));
+
+    const res = await actions.publishAssetNowAction("a1");
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).toContain("instagram: boom");
+      expect(res.error).toContain("tiktok: boom");
+    }
+    expect(data.markAssetPublished).not.toHaveBeenCalled();
+    expect(data.releaseAssetPublishClaim).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -125,11 +125,17 @@ export async function GET(req: NextRequest) {
       );
       const connectedPlatforms = autoEligible.map((i) => i.platform);
 
-      const platform =
-        asset.scheduledPlatform ??
-        inferPlatform(asset.type, connectedPlatforms);
+      // Every platform this asset was approved for — plural when the approve
+      // panel had more than one box checked, singular (the legacy shape) for
+      // everything scheduled before this existed.
+      const targets: string[] = asset.scheduledPlatforms?.length
+        ? asset.scheduledPlatforms
+        : (() => {
+            const single = asset.scheduledPlatform ?? inferPlatform(asset.type, connectedPlatforms);
+            return single ? [single] : [];
+          })();
 
-      if (!platform) {
+      if (targets.length === 0) {
         return {
           assetId: asset.id,
           platform: "none",
@@ -138,12 +144,13 @@ export async function GET(req: NextRequest) {
         };
       }
 
-      const integration = autoEligible.find((i) => i.platform === platform);
-      if (!integration) {
+      const resolved = targets.map((p) => ({ platform: p, integration: autoEligible.find((i) => i.platform === p) }));
+      if (resolved.every((r) => !r.integration)) {
+        const platform = targets[0]!;
         const exists = integrations.some((i) => i.platform === platform);
         return {
           assetId: asset.id,
-          platform,
+          platform: targets.join(", "),
           status: "skipped",
           error: exists
             ? `Auto-publish is disabled or the token expired for ${platform} - use Publish Now or re-connect`
@@ -153,53 +160,57 @@ export async function GET(req: NextRequest) {
 
       // Atomically claim the asset so a manual "Publish Now" or an overlapping
       // cron tick can't publish the same asset in parallel (→ duplicate post).
+      // One claim covers every target below.
       const claimed = await claimAssetForPublish(asset.id);
       if (!claimed) {
         return {
           assetId: asset.id,
-          platform,
+          platform: targets.join(", "),
           status: "skipped",
           error: "Skipped - already claimed by a concurrent publish",
         };
       }
 
-      try {
-        // Fresh credentials before the call, and one forced refresh + retry if
-        // the platform 401s anyway (see runWithFreshCredentials). Short-lived
-        // tokens — X's two hours, Reddit's and Google's one — expire between
-        // ticks as a matter of course; a tick that hits one used to end the
-        // channel until someone reconnected it by hand.
-        const { postId } = await runWithFreshCredentials(integration, (fresh) =>
-          publishAssetToPlatform(platform, fresh, asset),
-        );
-        await markAssetPublished(asset.id, postId);
-        // The autopilot's post is a post. Before this call the slot was never
-        // stamped and the learning loop never heard that the draft went out as
-        // written — on the three platforms D35 actually offers autopilot for.
-        await afterAssetPosted(asset).catch((e) => console.error("[publish] after-posted failed:", e));
-        return { assetId: asset.id, platform, status: "published" };
-      } catch (e) {
+      const results: Record<string, { postId?: string | null; error?: string }> = {};
+      let anyDead = false;
+      for (const { platform, integration } of resolved) {
+        if (!integration) {
+          results[platform] = { error: `Integration for ${platform} not found` };
+          continue;
+        }
+        try {
+          // Fresh credentials before the call, and one forced refresh + retry if
+          // the platform 401s anyway (see runWithFreshCredentials). Short-lived
+          // tokens — X's two hours, Reddit's and Google's one — expire between
+          // ticks as a matter of course; a tick that hits one used to end the
+          // channel until someone reconnected it by hand.
+          const { postId } = await runWithFreshCredentials(integration, (fresh) =>
+            publishAssetToPlatform(platform, fresh, asset),
+          );
+          results[platform] = { postId };
+        } catch (e) {
+          const message = e instanceof Error ? e.message : "Unknown error";
+          results[platform] = { error: message };
+          // Dead = the platform 401'd through a refresh, or the provider itself
+          // refused the refresh token. A refresh that merely could not be
+          // ATTEMPTED (token endpoint down, app credentials unset) is not dead
+          // and falls through to the transient case, so an X outage does not
+          // ask every client to reconnect.
+          if (isIntegrationDeadError(e)) {
+            anyDead = true;
+            // Mark the integration expired so the UI surfaces it and the next
+            // cron tick skips the dead token rather than retrying indefinitely.
+            await markIntegrationExpired(asset.clientId, platform).catch(() => {});
+          }
+        }
+      }
+
+      const succeeded = targets.filter((p) => !results[p]?.error);
+      const failed = targets.filter((p) => results[p]?.error);
+
+      if (succeeded.length === 0) {
         // Release the claim so a later attempt can retry this asset.
         await releaseAssetPublishClaim(asset.id).catch(() => {});
-        // Dead = the platform 401'd through a refresh, or the provider itself
-        // refused the refresh token. A refresh that merely could not be
-        // ATTEMPTED (token endpoint down, app credentials unset) is not dead and
-        // falls through to the transient branch below, so an X outage does not
-        // ask every client to reconnect.
-        if (isIntegrationDeadError(e)) {
-          // Mark the integration expired so the UI surfaces it and the next
-          // cron tick skips the dead token rather than retrying indefinitely.
-          await markIntegrationExpired(asset.clientId, platform).catch(() => {});
-          return {
-            assetId: asset.id,
-            platform,
-            status: "expired",
-            error: e instanceof Error ? e.message : "Token expired",
-          };
-        }
-        // Transient error — leave as "scheduled" so the next cron tick retries,
-        // but record the failure so the asset card can surface it.
-        //
         // STORED RAW, ON PURPOSE — the same decision `publishAssetNowAction`
         // records at its own catch, and the reason is worth having at both
         // writers rather than at neither. This is the platform SDK's exception
@@ -209,15 +220,31 @@ export async function GET(req: NextRequest) {
         // (lib/asset-visibility) before it can cross the RSC boundary. The hold
         // above is the one publishError composed AS client copy, which is why
         // that branch builds a sentence and this one does not.
-        const message = e instanceof Error ? e.message : "Unknown error";
+        const message = failed.map((p) => `${p}: ${results[p]!.error}`).join("; ");
         await updateAsset(asset.id, { publishError: message, updatedAt: Date.now() }).catch(() => {});
+        // "expired" vs "failed" only distinguishes cleanly for a single target —
+        // with several, a mixed cause collapses to "failed" and the per-platform
+        // detail lives in the message.
         return {
           assetId: asset.id,
-          platform,
-          status: "failed",
+          platform: targets.join(", "),
+          status: targets.length === 1 && anyDead ? "expired" : "failed",
           error: message,
         };
       }
+
+      await markAssetPublished(asset.id, results[succeeded[0]!]?.postId ?? null, targets.length > 1 ? results : undefined);
+      if (failed.length) {
+        // Hoisted past a bare identifier for the same reason `message` above
+        // is — see that STORED RAW note.
+        const partialFailureMessage = failed.map((p) => `${p}: ${results[p]!.error}`).join("; ");
+        await updateAsset(asset.id, { publishError: partialFailureMessage, updatedAt: Date.now() }).catch(() => {});
+      }
+      // The autopilot's post is a post. Before this call the slot was never
+      // stamped and the learning loop never heard that the draft went out as
+      // written — on the three platforms D35 actually offers autopilot for.
+      await afterAssetPosted(asset).catch((e) => console.error("[publish] after-posted failed:", e));
+      return { assetId: asset.id, platform: succeeded.join(", "), status: "published" };
     }),
   );
 
