@@ -21,6 +21,10 @@ import { describe, expect, it } from "vitest";
 
 const SRC = path.resolve(process.cwd(), "src");
 
+/** `relative(…)`, normalized to forward slashes so offender paths read the same
+ * on Windows as on CI. */
+const relToSrc = (file: string): string => path.relative(SRC, file).split(path.sep).join("/");
+
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     const full = path.join(dir, entry);
@@ -76,7 +80,7 @@ describe("SEO/GEO surfaces stay mounted (QA F152)", () => {
   it("has no orphaned component in the SEO/GEO family", () => {
     const orphans = seoGeoModules()
       .filter((f) => importersOf(f).length === 0)
-      .map((f) => path.relative(SRC, f));
+      .map(relToSrc);
     // A zero-importer component here means a merge dropped a render — exactly the
     // regression that hid SeoGeoActionPlan for five weeks. Delete it or mount it.
     expect(orphans).toEqual([]);

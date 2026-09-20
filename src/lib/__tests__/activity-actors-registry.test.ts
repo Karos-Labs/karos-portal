@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -26,6 +26,10 @@ import {
 const ALLOWED_LITERALS = new Set([CLIENT_SAFE_ACTOR, "Staff"]);
 
 const SRC = join(process.cwd(), "src");
+
+/** `relative(…)`, normalized to forward slashes so offender paths read the same
+ * on Windows as on CI. */
+const relToSrc = (file: string): string => relative(SRC, file).split(sep).join("/");
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -55,13 +59,13 @@ describe("the internal-actor registry", () => {
     for (const file of FILES) {
       const src = code(readFileSync(file, "utf8"));
       for (const m of src.matchAll(/\bactor:\s*"([^"]+)"/g)) {
-        if (!ALLOWED_LITERALS.has(m[1])) offenders.push(`${relative(SRC, file)} → "${m[1]}"`);
+        if (!ALLOWED_LITERALS.has(m[1])) offenders.push(`${relToSrc(file)} → "${m[1]}"`);
       }
       // The synthetic users the crons dispatch as carry the name on `name:`
       // instead — that is how "Runway autopilot" reached a client's timeline in
       // the first place (submitManagedJob logs `actor: user.name`).
       for (const name of INTERNAL_ACTOR_NAMES) {
-        if (src.includes(`"${name}"`)) offenders.push(`${relative(SRC, file)} → "${name}"`);
+        if (src.includes(`"${name}"`)) offenders.push(`${relToSrc(file)} → "${name}"`);
       }
     }
     expect(offenders, "these bypass activity-actors.ts").toEqual([]);

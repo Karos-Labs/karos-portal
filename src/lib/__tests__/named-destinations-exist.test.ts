@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { jobStatusLabel } from "@/lib/job-status-copy";
@@ -36,6 +36,10 @@ import { jobStatusLabel } from "@/lib/job-status-copy";
  */
 
 const SRC = join(process.cwd(), "src");
+
+/** `relative(…)`, normalized to forward slashes so offender paths read the same
+ * on Windows as on CI. */
+const relToSrc = (file: string): string => relative(SRC, file).split(sep).join("/");
 const APP = join(SRC, "app");
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -105,7 +109,7 @@ describe("the destinations this app names", () => {
       const src = code(readFileSync(file, "utf8"));
       for (const match of src.matchAll(/href="(\/[A-Za-z0-9\-_/]*)"/g)) {
         checked += 1;
-        if (!routeExists(match[1]!)) dangling.push(`${relative(SRC, file)} → ${match[1]}`);
+        if (!routeExists(match[1]!)) dangling.push(`${relToSrc(file)} → ${match[1]}`);
       }
     }
     // The sweep is worthless if the extractor stopped matching; this floor fails
@@ -118,7 +122,7 @@ describe("the destinations this app names", () => {
     const offenders: string[] = [];
     for (const file of FILES) {
       const src = code(readFileSync(file, "utf8"));
-      if (/review queue/i.test(src)) offenders.push(relative(SRC, file));
+      if (/review queue/i.test(src)) offenders.push(relToSrc(file));
     }
     expect(offenders, "the staff Jobs list is the place; name that instead").toEqual([]);
   });

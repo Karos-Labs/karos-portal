@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { deliverableStamp } from "@/lib/asset-visibility";
@@ -29,6 +29,18 @@ import type { Asset } from "@/lib/types";
  */
 
 const SRC = join(process.cwd(), "src");
+
+/**
+ * `relative(SRC, …)`, normalized to forward slashes so the allowance literals
+ * below stay portable. Windows returns `lib\asset-visibility.ts`, which
+ * matches no entry in `MAY_DERIVE_IT` and made both sweeps fail off CI: the
+ * allowance looked unhonoured AND looked deleted, for a file sitting right
+ * there. A guard that only runs on Linux is a guard the next contributor
+ * learns to ignore.
+ */
+function relToSrc(file: string): string {
+  return relative(SRC, file).split(sep).join("/");
+}
 
 /**
  * Files allowed to write the ternary, each for a stated reason.
@@ -86,7 +98,7 @@ describe("which instant a deliverable row prints", () => {
     let scanned = 0;
     const offenders: string[] = [];
     for (const file of FILES) {
-      const rel = relative(SRC, file);
+      const rel = relToSrc(file);
       scanned += 1;
       if (MAY_DERIVE_IT.has(rel)) continue;
       if (DERIVES_IT.test(code(readFileSync(file, "utf8")))) offenders.push(rel);
@@ -97,7 +109,7 @@ describe("which instant a deliverable row prints", () => {
   });
 
   it("every allowance still exists, so the list cannot rot", () => {
-    const all = new Set(FILES.map((f) => relative(SRC, f)));
+    const all = new Set(FILES.map(relToSrc));
     for (const allowed of MAY_DERIVE_IT) {
       expect(all.has(allowed), `${allowed} is allowed but no longer exists`).toBe(true);
     }
