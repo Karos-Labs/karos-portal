@@ -86,7 +86,15 @@ import { hasMaterialized } from "./internal-data-products";
 const PRODUCT_DELIVERABLES = {
   "x-agent": { kind: "x-post", taskType: "social_post" },
   "linkedin-agent": { kind: "linkedin-post", taskType: "social_post" },
-  "instagram-agent": { kind: "instagram-carousel", taskType: "social_post" },
+  // `custom` + the `instagram_post` hint, not `social_post`: this agent's own
+  // asset type already exists and is what the lab-import path gives the same
+  // agent's folder (`guessAssetType("instagram-agent") === "instagram_post"`,
+  // lab-outputs.test.ts) — `social_post` was the live-run half disagreeing
+  // with itself. `PUBLISHABLE_PLATFORMS.social_post` is
+  // `["twitter","linkedin","tiktok"]`, no Instagram at all, so every carousel
+  // this agent produced landed on a card whose platform picker could offer
+  // LinkedIn and X but never the platform the content was written for.
+  "instagram-agent": { kind: "instagram-carousel", taskType: "custom", assetTypeHint: "instagram_post" },
   "branded-shorts-agent": { kind: "branded-shorts-video", taskType: "social_post" },
   "tiktok-agent": { kind: "tiktok-clip", taskType: "social_post" },
   // ── D08's three ──

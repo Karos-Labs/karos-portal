@@ -824,7 +824,7 @@ describe("the three products that already worked keep working", () => {
       rendered: [{ n: 1, path: "https://signed.example/slide-1.png", gcsUri: "gs://b/1.png" }],
     });
     const asset = createdAsset();
-    expect(asset.type).toBe("social_post");
+    expect(asset.type).toBe("instagram_post");
     expect(asset.imageUrl).toBe("https://karos.example/rehosted.png");
     expect(asset.channels).toEqual(["instagram"]);
   });
