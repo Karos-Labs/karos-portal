@@ -1237,7 +1237,13 @@ export function IntegrationsTab({
   // count as one slot here too - otherwise this stat would disagree with
   // what's visually on screen (e.g. "6/9" while only 7 cards are shown).
   const googleMergedIds = new Set<string>(GOOGLE_READ_ONLY_SUB_PLATFORM_IDS);
-  const standalonePlatforms = PLATFORM_REGISTRY.filter((p) => !googleMergedIds.has(p.id));
+  // A `hidden` platform (see PlatformConfig.hidden) stays off the grid unless
+  // this client already has an integration document for it — retired from new
+  // connections, but a client already connected through it can still see and
+  // manage that card.
+  const standalonePlatforms = PLATFORM_REGISTRY.filter(
+    (p) => !googleMergedIds.has(p.id) && (!p.hidden || integrations.some((i) => i.platform === p.id)),
+  );
   // Counts follow the same three-bucket rule as the grid. The badge used to
   // count any integration DOC as connected, with no status check, so an expired
   // channel was tallied as working - the count and the card contradicted each
