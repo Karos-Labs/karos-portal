@@ -381,6 +381,51 @@ describe("SCRUM-274 (T-B19) — gate-timeout: completes within the hour rather t
     expect(calls).toBeLessThanOrEqual(2);
   });
 
+  it("DOES keep polling through a credential failure the metadata server caused", async () => {
+    // 2026-09-20. Two metadata-server timeouts 13 seconds apart — the only two
+    // that day — ended a Regenerate whose two agents both finished and landed
+    // `approved`, and left "no ID token could be minted" on the client's page
+    // as the explanation for a run that had in fact succeeded. The rule above
+    // is right about a misconfiguration and wrong about a blip; `transient`
+    // is what tells them apart.
+    const blip = new Error(
+      "agent-engine is IAM-protected but no ID token could be minted: metadata server unreachable (The operation was aborted due to timeout)",
+    );
+    blip.name = "AgentEngineCredentialError";
+    Object.assign(blip, { transient: true });
+
+    let simulatedNowMs = 1_700_000_000_000;
+    let calls = 0;
+    const deps = {
+      getClient: async () => CLIENT,
+      dispatchResearchAgents: async () => ({
+        intelReport: { agentEngineRunId: "run-intel" },
+        seoGeo: { agentEngineRunId: "run-seo" },
+      }),
+      getDeliverable: async (_runId: string, kind: string) => {
+        calls += 1;
+        // The blip, then the deliverable the agents really did produce.
+        if (calls <= 2) throw blip;
+        return kind === INTEL_REPORT_DELIVERABLE_KIND ? FIXTURE_INTEL_REPORT : FIXTURE_SEO_GEO;
+      },
+      condense: async () => [],
+      replaceDocs: async () => {},
+      listDocs: async () => [],
+      now: () => simulatedNowMs,
+      sleep: async (ms: number) => {
+        simulatedNowMs += ms;
+      },
+    } as never;
+
+    await expect(
+      runAgentOnboarding(CLIENT_ID, deps, {
+        deliverableTimeoutMs: ONBOARDING_DELIVERABLE_TIMEOUT_MS,
+        pollIntervalMs: 15_000,
+      }),
+    ).resolves.toBeDefined();
+    expect(calls).toBeGreaterThan(2);
+  });
+
   it("the SAME scenario, on the pre-fix 15-minute default, times out instead of completing", async () => {
     // The exact bug this ticket fixes, pinned as a permanent regression test:
     // agent-onboarding.ts's own default (`deliverableTimeoutMs ?? 15 *

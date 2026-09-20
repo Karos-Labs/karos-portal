@@ -1540,7 +1540,25 @@ async function awaitDeliverable(
       // injected `deps` precisely so the run stays drivable in a test with no
       // Firestore and no engine client, and importing the error class to
       // narrow one branch would give that up for nothing.
-      if (e instanceof Error && e.name === "AgentEngineCredentialError") throw e;
+      //
+      // UNLESS THE CREDENTIAL FAILURE IS ITSELF WEATHER (2026-09-20). The
+      // metadata server this token comes from is on-host and answers in
+      // milliseconds; when it times out, that says nothing whatever about
+      // whether this deployment is allowed to mint tokens. Two such timeouts
+      // 13 seconds apart — the only two in that whole day — ended a Regenerate
+      // for a client whose two agents both went on to finish and land
+      // `approved`, and left "no ID token could be minted" on that client's
+      // page as the explanation. Which is the exact failure this comment block
+      // was written about in September, reproduced through the one hole the
+      // fix left open.
+      //
+      // `transient` is set by `mintIdToken` and means the transport failed, as
+      // opposed to the metadata server answering with a fact about identity
+      // (403, 404, an empty token) — those still abort immediately. Read off
+      // the error rather than parsed out of its message, and read through a
+      // duck-typed property for the same reason the name is matched above.
+      const transientCredential = (e as Error & { transient?: boolean } | undefined)?.transient === true;
+      if (e instanceof Error && e.name === "AgentEngineCredentialError" && !transientCredential) throw e;
       lastTransient = e;
     }
     if (deliverable !== undefined && deliverable !== null) return deliverable;

@@ -44,6 +44,45 @@ const CACHE_TTL_MS = 55 * 60 * 1000;
 const CACHE_SKEW_MS = 60_000;
 /** The metadata server is on-host; anything slower than this is a fault, not latency. */
 const MINT_TIMEOUT_MS = 5000;
+/**
+ * How many times a TRANSPORT failure is retried before it is called a failure.
+ *
+ * The metadata server is on-host and normally answers in single-digit
+ * milliseconds, so a 5s timeout is not "slow", it is a blip — a cold instance,
+ * a momentarily wedged socket. On 2026-09-20 two such blips 13 seconds apart
+ * (`the operation was aborted due to timeout`, the only two in 24 hours) ended
+ * a Regenerate for a client whose two agents both went on to finish and land
+ * `approved`. One attempt turned a blip into a run failure.
+ *
+ * Only the transport is retried. A metadata server that ANSWERS — 403, 404, an
+ * empty body — has stated a fact about this deployment's identity, and asking
+ * it three times will not change it.
+ */
+const MINT_ATTEMPTS = 3;
+/** Between attempts. Short: a caller is waiting, and this is an on-host hop. */
+const MINT_RETRY_DELAY_MS = 300;
+
+/**
+ * Marks a credential error whose cause was the transport, not the
+ * configuration.
+ *
+ * A caller that must distinguish "this deployment cannot mint tokens" from
+ * "the metadata server blinked" reads this rather than the message string.
+ * `intel/agent-onboarding.ts` is the one that has to: its 70-minute poll loop
+ * treats every other failure as weather and retries, and fast-failed here on
+ * the reasoning that a credential failure is a misconfiguration — which is
+ * true of every outcome except this one.
+ */
+export interface TransientCredentialFailure {
+  transient?: boolean;
+}
+
+/** True when this error is a credential failure the caller may retry. */
+export function isTransientCredentialError(e: unknown): boolean {
+  return e instanceof Error && (e as Error & TransientCredentialFailure).transient === true;
+}
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Keyed by AUDIENCE rather than one slot per module, which is also what makes
@@ -89,31 +128,57 @@ export async function mintIdToken({
   const hit = cache.get(audience);
   if (hit && hit.expiresAt > now + CACHE_SKEW_MS) return hit.token;
 
-  const fail = (reason: string): never => {
+  const fail = (reason: string, transient = false): never => {
     // The reason is logged HERE, once, for every caller - so a caller whose own
     // message has to stay client-safe still leaves an operator something to
     // read. This is the line to grep for when answering the question the
     // ticket asks: is this happening in prod right now.
     console.error(`[gcp-id-token] ${service}: could not mint an ID token: ${reason}`);
-    throw credentialError(reason);
+    const error = credentialError(reason);
+    if (transient) Object.assign(error, { transient: true } satisfies TransientCredentialFailure);
+    throw error;
   };
 
-  let res: Response;
-  try {
-    res = await fetch(`${METADATA_URL}?audience=${encodeURIComponent(audience)}`, {
-      headers: { "Metadata-Flavor": "Google" },
-      signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
-    });
-  } catch (e) {
-    // Includes the AbortSignal timeout. Off a metadata-server-bearing host this
-    // is simply always true, which is exactly when failing closed matters.
-    return fail(`metadata server unreachable (${e instanceof Error ? e.message : String(e)})`);
+  let lastTransport = "";
+  for (let attempt = 1; attempt <= MINT_ATTEMPTS; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(`${METADATA_URL}?audience=${encodeURIComponent(audience)}`, {
+        headers: { "Metadata-Flavor": "Google" },
+        signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
+      });
+    } catch (e) {
+      // Includes the AbortSignal timeout. Off a metadata-server-bearing host
+      // this is simply always true, which is exactly when failing closed
+      // matters — but failing closed is about the REQUEST going out without a
+      // token, not about giving up on the first blip.
+      lastTransport = `metadata server unreachable (${e instanceof Error ? e.message : String(e)})`;
+      if (attempt < MINT_ATTEMPTS) {
+        await delay(MINT_RETRY_DELAY_MS);
+        continue;
+      }
+      return fail(`${lastTransport} after ${MINT_ATTEMPTS} attempts`, true);
+    }
+
+    // 5xx is the server saying it is having a bad time, which is the same kind
+    // of fact as a timeout. Every other status is an answer about identity.
+    if (res.status >= 500) {
+      lastTransport = `metadata server returned ${res.status}`;
+      if (attempt < MINT_ATTEMPTS) {
+        await delay(MINT_RETRY_DELAY_MS);
+        continue;
+      }
+      return fail(`${lastTransport} after ${MINT_ATTEMPTS} attempts`, true);
+    }
+
+    if (!res.ok) return fail(`metadata server returned ${res.status}`);
+    const token = (await res.text().catch(() => "")).trim();
+    if (!token) return fail("metadata server returned an empty token");
+
+    cache.set(audience, { token, expiresAt: Date.now() + CACHE_TTL_MS });
+    return token;
   }
 
-  if (!res.ok) return fail(`metadata server returned ${res.status}`);
-  const token = (await res.text().catch(() => "")).trim();
-  if (!token) return fail("metadata server returned an empty token");
-
-  cache.set(audience, { token, expiresAt: now + CACHE_TTL_MS });
-  return token;
+  // Unreachable: every path through the loop returns or throws.
+  return fail(lastTransport || "metadata server unreachable", true);
 }

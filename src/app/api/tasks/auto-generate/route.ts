@@ -10,6 +10,7 @@ import {
   releaseAiProcessingLock,
 } from "@/lib/data";
 import { integrationIsUsable } from "@/lib/integration-status";
+import { isOnboardingInFlight } from "@/lib/constants";
 import { servedPlatformKeys } from "@/lib/served-platforms";
 import { computePlatformGaps, gapPlatformNames, CONTENT_GAP_HORIZON_DAYS } from "@/lib/calendar-gaps";
 import { buildSwarmContext, runSwarmToCompletion } from "@/lib/agent-swarm";
@@ -106,7 +107,9 @@ export async function GET(req: NextRequest) {
         results.push({ ...base, status: "skipped", gapPlatforms: [], detail: `client status: ${client.status}` });
         continue;
       }
-      if (client.onboardingStatus === "pending" || client.onboardingStatus === "running") {
+      // See `isOnboardingInFlight`: a stale "running" is a dead setup run, and
+      // this sweep used to defer to it forever.
+      if (isOnboardingInFlight(client)) {
         results.push({ ...base, status: "skipped", gapPlatforms: [], detail: `onboarding: ${client.onboardingStatus}` });
         continue;
       }

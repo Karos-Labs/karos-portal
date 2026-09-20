@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { mintIdToken, resetIdTokenCacheForTests } from "@/lib/gcp-id-token";
+import { mintIdToken, resetIdTokenCacheForTests, isTransientCredentialError } from "@/lib/gcp-id-token";
 import { matchingBrace, stripComments } from "./source-scan";
 
 /**
@@ -159,9 +159,10 @@ describe("mintIdToken", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("throws when the metadata server is unreachable", async () => {
+  it("throws when the metadata server is unreachable, after retrying", async () => {
     fetchMock.mockRejectedValue(new Error("ECONNREFUSED"));
     await expect(mintIdToken(opts(AUD))).rejects.toThrow(/metadata server unreachable/);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("throws on a non-ok response, naming the status", async () => {
@@ -205,11 +206,60 @@ describe("mintIdToken", () => {
   });
 
   it("does not cache a failure", async () => {
+    // 403, not 500: a server that ANSWERS about identity is a fact, and the
+    // only kind of failure that still ends the mint on its first attempt.
     fetchMock
-      .mockResolvedValueOnce({ ok: false, status: 500 })
+      .mockResolvedValueOnce({ ok: false, status: 403 })
       .mockResolvedValueOnce({ ok: true, status: 200, text: async () => "recovered" });
     await expect(mintIdToken(opts(AUD))).rejects.toThrow();
     await expect(mintIdToken(opts(AUD))).resolves.toBe("recovered");
+  });
+
+  /* ────────── 2026-09-20: a blip is not a misconfiguration ────────── */
+
+  it("retries a timeout and returns the token the next attempt gets", async () => {
+    // The incident: two metadata-server timeouts 13 seconds apart — the only
+    // two in that whole day — ended a Regenerate whose two agents both went on
+    // to finish. The server is on-host and answers in milliseconds; one 5s
+    // timeout says nothing about whether this deployment may mint tokens.
+    fetchMock
+      .mockRejectedValueOnce(new Error("The operation was aborted due to timeout"))
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => "second-attempt" });
+    await expect(mintIdToken(opts(AUD))).resolves.toBe("second-attempt");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a 5xx, which is the server saying it is having a bad time", async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => "after-503" });
+    await expect(mintIdToken(opts(AUD))).resolves.toBe("after-503");
+  });
+
+  it("does NOT retry an answer about identity", async () => {
+    // 403/404/an empty body are statements about this deployment. Asking three
+    // times does not change them, and retrying would only make a real
+    // misconfiguration slower to surface.
+    fetchMock.mockResolvedValue({ ok: false, status: 404 });
+    await expect(mintIdToken(opts(AUD))).rejects.toThrow(/returned 404/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => "" });
+    await expect(mintIdToken(opts(AUD))).rejects.toThrow(/empty token/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks a transport failure transient and an identity answer not", async () => {
+    // The flag `awaitDeliverable` reads to decide whether to keep polling. It
+    // is the whole difference between a run that finishes and a client page
+    // that says "no ID token could be minted" about agents that succeeded.
+    fetchMock.mockRejectedValue(new Error("timeout"));
+    await expect(mintIdToken(opts(AUD))).rejects.toSatisfy(isTransientCredentialError);
+
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue({ ok: false, status: 403 });
+    await expect(mintIdToken(opts(AUD))).rejects.toSatisfy((e: unknown) => !isTransientCredentialError(e));
   });
 });
 

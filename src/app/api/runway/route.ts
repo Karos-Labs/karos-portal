@@ -14,6 +14,7 @@ import {
   type RunwayProduct,
 } from "@/lib/runway";
 import { RUNWAY_ACTOR_NAME } from "@/lib/activity-actors";
+import { isOnboardingInFlight } from "@/lib/constants";
 import type { AppUser } from "@/lib/types";
 import type { ChainFamily } from "@/lib/post-chain";
 import { logger } from "@/services/logger";
@@ -129,7 +130,10 @@ export async function GET(req: NextRequest) {
       // content-generation readiness signal (agent-swarm / submitManagedJob
       // never check it), so it must not block the autopilot. Only "pending"/
       // "running" — genuinely still mid-setup — are skipped.
-      if (client.onboardingStatus === "pending" || client.onboardingStatus === "running") {
+      // `isOnboardingInFlight`, not the status alone: a "running" with no live
+      // AI-processing lock behind it is a setup run that died, and deferring to
+      // it excluded one client from every sweep for three days in silence.
+      if (isOnboardingInFlight(client)) {
         results.push({ ...base, status: "skipped", coveredThroughMs: null, deficit: {}, dispatched: [], detail: `onboarding: ${client.onboardingStatus}` });
         continue;
       }

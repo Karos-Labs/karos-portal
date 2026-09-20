@@ -80,6 +80,34 @@ export function isAiProcessingLockActive(client: {
 }
 
 /**
+ * True when a client is genuinely still mid-setup, as opposed to merely
+ * CLAIMING to be.
+ *
+ * `onboardingStatus` is written "running" by the client-creation pipeline and
+ * moved to "done"/"failed" by the same `after()` callback. Nothing else ever
+ * writes it and nothing reaps it, so a run killed before its finally — an
+ * instance recycled, a serverless timeout, an HMR restart — leaves the client
+ * at "running" permanently. "Pitch by Deel" sat there in BOTH environments
+ * from 2026-09-17, which meant the runway sweep and the auto-generate sweep
+ * skipped it on every pass with `detail: "onboarding: running"` and nobody was
+ * told: no banner reads this field, and a skip is not an error.
+ *
+ * The AI-processing lock is the same pipeline's OTHER marker, and it is the
+ * one that self-heals: `isAiProcessingLockActive` already treats a lock older
+ * than `AI_PROCESSING_LOCK_STALE_MS` as abandoned. So "running" with no live
+ * lock behind it is a run that died, not a run in progress, and a sweep must
+ * not keep deferring to it forever.
+ */
+export function isOnboardingInFlight(client: {
+  onboardingStatus?: "pending" | "running" | "done" | "failed";
+  isAiProcessing?: boolean;
+  aiProcessingStartedAt?: number;
+}): boolean {
+  if (client.onboardingStatus === "pending") return true;
+  return client.onboardingStatus === "running" && isAiProcessingLockActive(client);
+}
+
+/**
  * Height in px of the narrow-width (<md) bottom tab bar — the Dashboard · AI
  * Agents · Calendar · Workspace · Company strip both portal shells render
  * below md (CD-G9a; components/mobile-shell.tsx sets the bar to this).

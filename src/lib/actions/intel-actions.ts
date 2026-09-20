@@ -355,7 +355,18 @@ export async function generateIntelReportAction(
     try {
       const { runIntelReportPipeline } = await import("@/lib/intel");
       await runIntelReportPipeline(clientId, runSpecificContext);
-      await updateClient(clientId, { lastIntelReportAt: Date.now() });
+      // `onboardingStatus` too, and not only as housekeeping: this pipeline
+      // finishing IS what onboarding was waiting for — the research ran, the
+      // competitors were replaced, the report and the context documents were
+      // written. A client left at "running" by a setup run that died is
+      // skipped by the runway and auto-generate sweeps on every pass, in
+      // silence, and before this nothing in the product could ever move it off
+      // that value. See `isOnboardingInFlight`.
+      await updateClient(clientId, {
+        lastIntelReportAt: Date.now(),
+        onboardingStatus: "done",
+        onboardingError: "",
+      });
       const focus = runSpecificContext?.trim()
         ? `"${runSpecificContext.trim().slice(0, 100)}${runSpecificContext.trim().length > 100 ? "…" : ""}"`
         : undefined;
