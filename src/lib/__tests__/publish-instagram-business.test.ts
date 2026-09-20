@@ -50,6 +50,7 @@ beforeEach(() => {
       if (body instanceof URLSearchParams) body = Object.fromEntries(body.entries());
       calls.push({ url, body });
       if (url.includes("/media_publish")) return jsonResponse({ id: "ig-biz-post-1" });
+      if (url.includes("status_code")) return jsonResponse({ status_code: "FINISHED" });
       if (url.includes("/media")) return jsonResponse({ id: "container-1" });
       if (url.includes("/me")) return jsonResponse({ id: "ig-biz-user-1" });
       return jsonResponse({});
@@ -97,10 +98,25 @@ describe("publishToInstagramBusiness", () => {
     );
   });
 
-  it("refuses a clip-only asset with the Reels reason, same as the Facebook-login card", async () => {
-    const clipOnly = asset({ content: "", meta: {}, videoUrl: "https://cdn.test/clip.mp4" });
-    await expect(publishAssetToPlatform("instagram_business", integration, clipOnly)).rejects.toThrow(
-      /Reels\) publishing is not automated yet/,
+  it("publishes a clip-only asset as a Reel — media_type=REELS, video_url not image_url", async () => {
+    const clipOnly = asset({ content: "A caption", meta: {}, videoUrl: "https://cdn.test/clip.mp4" });
+
+    const result = await publishAssetToPlatform("instagram_business", integration, clipOnly);
+
+    expect(result.postId).toBe("ig-biz-post-1");
+    const containerCall = calls.find((c) => c.url.includes("ig-biz-user-1/media") && !c.url.includes("status_code"));
+    expect(containerCall!.body.media_type).toBe("REELS");
+    expect(containerCall!.body.video_url).toBe("https://cdn.test/clip.mp4");
+    expect(containerCall!.body.image_url).toBeUndefined();
+    expect(containerCall!.body.share_to_feed).toBe("true");
+    // Waited for Meta to finish processing the clip before publishing it.
+    expect(calls.some((c) => c.url.includes("status_code"))).toBe(true);
+  });
+
+  it("refuses an asset with neither an image nor a video", async () => {
+    const empty = asset({ content: "Just text", meta: {} });
+    await expect(publishAssetToPlatform("instagram_business", integration, empty)).rejects.toThrow(
+      /Instagram posts require an image or video/,
     );
     expect(calls).toHaveLength(0);
   });
