@@ -259,13 +259,22 @@ export const OAUTH_CONFIGS: Record<string, OAuthPlatformConfig> = {
    * product to fall back to while these two clear App Review — they ARE the
    * product this use case exists for. Works for Instagram Tester accounts
    * before review the same way the flows above do.
+   *
+   * `instagram_business_content_publish` added 2026-09-20 (Albert) alongside
+   * `publishToInstagramBusiness` (publishers.ts) — a client reconnecting after
+   * this change re-consents to the wider scope set; an existing token predates
+   * the grant and a publish attempt with it fails at Meta until they do.
    */
   instagram_business: {
     envClientId: "INSTAGRAM_BUSINESS_APP_ID",
     envClientSecret: "INSTAGRAM_BUSINESS_APP_SECRET",
     authUrl: INSTAGRAM_BUSINESS_LOGIN_AUTH_URL,
     tokenUrl: INSTAGRAM_BUSINESS_LOGIN_TOKEN_URL,
-    scopes: ["instagram_business_basic", "instagram_business_manage_insights"],
+    scopes: [
+      "instagram_business_basic",
+      "instagram_business_manage_insights",
+      "instagram_business_content_publish",
+    ],
     requiresLongLivedExchange: true,
     // Comma-separated, like TikTok — confirmed against this app's own
     // generated authorize link (`scope=a%2Cb%2Cc`, i.e. `a,b,c`), NOT the

@@ -7,7 +7,7 @@
 import type { Asset, ClientIntegration } from "@/lib/types";
 import { assetImages, assetVideos } from "@/lib/asset-images";
 import { PUBLISHABLE_PLATFORMS, platformLabel } from "@/lib/integrations/platforms";
-import { metaGraphUrl } from "@/lib/integrations/meta-graph";
+import { metaGraphUrl, metaInstagramGraphUrl } from "@/lib/integrations/meta-graph";
 
 /**
  * Thrown when a platform API returns HTTP 401 or 403.
@@ -258,6 +258,70 @@ async function publishToInstagram(
   return { postId: published.id ?? null };
 }
 
+/* ── Instagram (direct login) ───────────────────────────────────────── */
+
+/**
+ * "Instagram API with Instagram Login" publish — the `instagram_business`
+ * platform's own container→publish flow, against `graph.instagram.com`
+ * (`metaInstagramGraphUrl`, see meta-graph.ts) rather than `publishToInstagram`'s
+ * `graph.facebook.com`. No `me/accounts` page-discovery hop: this product logs
+ * the client's own Instagram professional account in directly, so `/me` already
+ * resolves the account id the same way `fetchInstagramBusinessProfile` reads it
+ * (instagram-business-graph.ts) — there is no separate page token to look up.
+ */
+async function publishToInstagramBusiness(
+  credentials: Record<string, string>,
+  asset: Asset,
+): Promise<PublishResult> {
+  const token = credentials.accessToken;
+  if (!token) throw new Error("No access token");
+  const photo = photoUrl(asset);
+  if (!photo) {
+    throw new Error(
+      clipUrl(asset)
+        ? "Instagram video (Reels) publishing is not automated yet - post this clip manually and mark it as published"
+        : "Instagram posts require an image",
+    );
+  }
+
+  const meRes = await fetch(
+    metaInstagramGraphUrl(`me?fields=id&access_token=${encodeURIComponent(token)}`),
+  );
+  if (meRes.status === 401 || meRes.status === 403) throw new TokenExpiredError("instagram_business", meRes.status);
+  if (!meRes.ok) throw new Error(`Failed to resolve Instagram account: ${meRes.status}`);
+  const { id: igUserId } = (await meRes.json()) as { id?: string };
+  if (!igUserId) throw new Error("Could not resolve Instagram account id");
+
+  const containerParams = new URLSearchParams({
+    image_url: photo,
+    caption: asset.content,
+    access_token: token,
+  });
+  const containerRes = await fetch(
+    metaInstagramGraphUrl(`${igUserId}/media`),
+    { method: "POST", body: containerParams },
+  );
+  if (containerRes.status === 401 || containerRes.status === 403) throw new TokenExpiredError("instagram_business", containerRes.status);
+  if (!containerRes.ok) {
+    const err = (await containerRes.json()) as { error?: { message?: string } };
+    throw new Error(`Media container failed: ${err.error?.message ?? containerRes.status}`);
+  }
+  const { id: creationId } = (await containerRes.json()) as { id: string };
+
+  const publishParams = new URLSearchParams({ creation_id: creationId, access_token: token });
+  const publishRes = await fetch(
+    metaInstagramGraphUrl(`${igUserId}/media_publish`),
+    { method: "POST", body: publishParams },
+  );
+  if (publishRes.status === 401 || publishRes.status === 403) throw new TokenExpiredError("instagram_business", publishRes.status);
+  if (!publishRes.ok) {
+    const err = (await publishRes.json()) as { error?: { message?: string } };
+    throw new Error(`Publish failed: ${err.error?.message ?? publishRes.status}`);
+  }
+  const published = (await publishRes.json().catch(() => ({}))) as { id?: string };
+  return { postId: published.id ?? null };
+}
+
 /* ── Facebook ────────────────────────────────────────────────────────── */
 
 async function publishToFacebook(
@@ -473,6 +537,8 @@ export async function publishAssetToPlatform(
   switch (platform) {
     case "instagram":
       return publishToInstagram(integration.credentials, asset);
+    case "instagram_business":
+      return publishToInstagramBusiness(integration.credentials, asset);
     case "facebook":
       return publishToFacebook(integration.credentials, asset);
     case "linkedin":
