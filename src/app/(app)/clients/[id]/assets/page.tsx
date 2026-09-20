@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/ui";
 import { AssetsView } from "@/components/assets-view";
 import { statusFilterFromParam } from "@/lib/content-status-links";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
+import { pushablePlatformsByClient } from "@/lib/publish-targets";
 
 /**
  * A single client's deliverables, for staff to review and approve. Approving a
@@ -42,6 +43,11 @@ export default async function ClientAssetsPage({
   const client = await requireVisibleClient(user, id);
 
   const assets = getClientLibraryAssets(await listAssets({ clientId: id }));
+  // Without this, "Publish now" can never render and the approve panel's
+  // auto/manual tiers name a platform picker that never appears — see the
+  // sibling `/assets?clientId=` branch's identical F107 note. Two routes for
+  // one question, and this one silently dropped the push targets.
+  const connectedPlatformsByClient = await pushablePlatformsByClient(assets);
 
   const pendingCount = assets.filter((a) => a.status === "draft").length;
   /* The SERVER's clock, read once here rather than in the client component:
@@ -71,6 +77,7 @@ export default async function ClientAssetsPage({
         canApprove
         initialStatus={statusFilterFromParam(statusParam)}
         now={now}
+        {...(connectedPlatformsByClient ? { connectedPlatformsByClient } : {})}
       />
     </>
   );
