@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -38,6 +38,10 @@ import { isStringDelimiter, skipStringLiteral } from "./source-scan";
  */
 
 const SRC = join(process.cwd(), "src");
+
+/** `relative(…)`, normalized to forward slashes so offender paths read the same
+ * on Windows as on CI. */
+const relToSrc = (file: string): string => relative(SRC, file).split(sep).join("/");
 const HOME = join(SRC, "lib", "asset-status-copy.ts");
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -390,7 +394,7 @@ describe("the asset-status registers", () => {
     for (const file of FILES) {
       for (const lit of objectLiterals(code(readFileSync(file, "utf8")))) {
         if (isStatusLabelMap(lit)) {
-          offenders.push(`${relative(SRC, file)} → { ${lit.keys.join(", ")} }`);
+          offenders.push(`${relToSrc(file)} → { ${lit.keys.join(", ")} }`);
         }
       }
     }
@@ -444,7 +448,7 @@ describe("the asset-status registers", () => {
     const offenders: string[] = [];
     for (const file of FILES) {
       if (isStatusLabelTernary(code(readFileSync(file, "utf8")))) {
-        offenders.push(relative(SRC, file));
+        offenders.push(relToSrc(file));
       }
     }
 

@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
+/** `relative(…)`, normalized to forward slashes so offender paths read the same
+ * on Windows as on CI. */
+const relToRepo = (file: string): string =>
+  path.relative(process.cwd(), file).split(path.sep).join("/");
+
 // provider.ts is `server-only`; the second describe block imports it directly.
 vi.mock("server-only", () => ({}));
 
@@ -59,7 +64,7 @@ describe("no call site constructs a model from a hardcoded tier constant", () =>
       const lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
       lines.forEach((text, i) => {
         if (banned.test(text)) {
-          offenders.push(`${path.relative(process.cwd(), file)}:${i + 1}`);
+          offenders.push(`${relToRepo(file)}:${i + 1}`);
         }
       });
     }
@@ -85,7 +90,7 @@ describe("no call site constructs a model from a hardcoded tier constant", () =>
       .flatMap((file) => {
         const lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
         return lines
-          .map((text, i) => (banned.test(text) ? `${path.relative(process.cwd(), file)}:${i + 1}` : null))
+          .map((text, i) => (banned.test(text) ? `${relToRepo(file)}:${i + 1}` : null))
           .filter((x): x is string => x !== null);
       });
     expect(offenders).toEqual([]);

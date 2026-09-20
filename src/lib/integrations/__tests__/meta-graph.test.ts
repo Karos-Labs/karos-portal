@@ -16,6 +16,11 @@ const SRC_ROOT = path.resolve(__dirname, "../../..");
 const MODULE_PATH = path.resolve(__dirname, "../meta-graph.ts");
 const THIS_TEST = path.resolve(__filename);
 
+/** `relative(…)`, normalized to forward slashes so offender paths read the same
+ * on Windows as on CI. */
+const relToSrcRoot = (file: string): string =>
+  path.relative(SRC_ROOT, file).split(path.sep).join("/");
+
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     const full = path.join(dir, entry);
@@ -73,14 +78,14 @@ describe("no Meta Graph call bypasses the pin", () => {
 
   it(`no literal ${OLD_PIN} remains anywhere in src/`, () => {
     const offenders = sourcesToSweep().filter((f) => readFileSync(f, "utf8").includes(OLD_PIN));
-    expect(offenders.map((f) => path.relative(SRC_ROOT, f))).toEqual([]);
+    expect(offenders.map(relToSrcRoot)).toEqual([]);
   });
 
   it("no source outside meta-graph.ts hard-codes a versioned facebook.com URL", () => {
     // Matches `graph.facebook.com/v12.3/…` and `www.facebook.com/v12.3/…` literals alike.
     const versioned = /facebook\.com\/v\d+\.\d+/;
     const offenders = sourcesToSweep().filter((f) => versioned.test(readFileSync(f, "utf8")));
-    expect(offenders.map((f) => path.relative(SRC_ROOT, f))).toEqual([]);
+    expect(offenders.map(relToSrcRoot)).toEqual([]);
   });
 
   it("no source outside meta-graph.ts builds an UNversioned graph.facebook.com URL either", () => {
@@ -88,7 +93,7 @@ describe("no Meta Graph call bypasses the pin", () => {
     // the callback route's profile lookup used to do exactly that.
     const unversioned = /graph\.facebook\.com\/(?!\$\{)/;
     const offenders = sourcesToSweep().filter((f) => unversioned.test(readFileSync(f, "utf8")));
-    expect(offenders.map((f) => path.relative(SRC_ROOT, f))).toEqual([]);
+    expect(offenders.map(relToSrcRoot)).toEqual([]);
   });
 
   // Same two guards, extended to the Instagram-login host added alongside it —
@@ -96,12 +101,12 @@ describe("no Meta Graph call bypasses the pin", () => {
   it("no source outside meta-graph.ts hard-codes a versioned instagram.com URL", () => {
     const versioned = /instagram\.com\/v\d+\.\d+/;
     const offenders = sourcesToSweep().filter((f) => versioned.test(readFileSync(f, "utf8")));
-    expect(offenders.map((f) => path.relative(SRC_ROOT, f))).toEqual([]);
+    expect(offenders.map(relToSrcRoot)).toEqual([]);
   });
 
   it("no source outside meta-graph.ts builds an UNversioned graph.instagram.com URL either", () => {
     const unversioned = /graph\.instagram\.com\/(?!\$\{)/;
     const offenders = sourcesToSweep().filter((f) => unversioned.test(readFileSync(f, "utf8")));
-    expect(offenders.map((f) => path.relative(SRC_ROOT, f))).toEqual([]);
+    expect(offenders.map(relToSrcRoot)).toEqual([]);
   });
 });

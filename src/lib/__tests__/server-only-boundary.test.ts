@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative, resolve as resolvePath, dirname } from "node:path";
+import { join, relative, resolve as resolvePath, dirname, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -33,6 +33,10 @@ import { describe, expect, it } from "vitest";
  */
 
 const SRC = join(process.cwd(), "src");
+
+/** `relative(…)`, normalized to forward slashes so offender paths read the same
+ * on Windows as on CI. */
+const relToSrc = (file: string): string => relative(SRC, file).split(sep).join("/");
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -115,7 +119,7 @@ describe("the client/server module boundary", () => {
           // The RSC boundary: everything behind a server action stays on the server.
           if (directive(target, "use server")) continue;
           if (isServerOnly(target)) {
-            found.push([...chain, target].map((f) => relative(SRC, f)).join(" -> "));
+            found.push([...chain, target].map(relToSrc).join(" -> "));
             continue;
           }
           stack.push({ file: target, chain: [...chain, target] });
