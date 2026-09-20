@@ -94,6 +94,7 @@ beforeEach(() => {
       }
 
       if (url.includes("media_publish")) return jsonResponse({ id: "ig-post-1" });
+      if (url.includes("status_code")) return jsonResponse({ status_code: "FINISHED" });
       if (url.includes("/media")) return jsonResponse({ id: "container-1" });
       if (url.includes("/feed")) return jsonResponse({ id: "fb-post-1" });
       if (url.includes("ugcPosts")) return jsonResponse({ id: "li-post-1" });
@@ -256,17 +257,25 @@ describe("#48 — Instagram sees the photos the rest of the product sees", () =>
     expect(calls[0]!.body.image_url).toBe("https://cdn.test/slide-1.png");
   });
 
-  it("names the real reason for a clip-only asset instead of 'requires an image'", async () => {
-    await expect(publishAssetToPlatform("instagram", integration, bulkClip())).rejects.toThrow(
-      /Reels\) publishing is not automated yet/,
+  it("publishes a clip-only asset as a Reel instead of refusing it", async () => {
+    const result = await publishAssetToPlatform("instagram", integration, bulkClip());
+
+    expect(result.postId).toBe("ig-post-1");
+    const containerCall = calls.find((c) => c.url.includes("/media") && !c.url.includes("status_code"))!;
+    expect(containerCall.body.media_type).toBe("REELS");
+    expect(containerCall.body.video_url).toBe(
+      "https://storage.googleapis.com/bucket/clip-3.mp4?X-Goog-Signature=abc",
     );
-    expect(calls).toHaveLength(0);
+    expect(containerCall.body.image_url).toBeUndefined();
+    // Waited for Meta to finish transcoding before calling media_publish.
+    expect(calls.some((c) => c.url.includes("status_code"))).toBe(true);
   });
 
-  it("never hands Instagram an .mp4 as its image_url", async () => {
+  it("never hands Instagram an .mp4 as its image_url — publishes it as a Reel instead", async () => {
     // assetImages returns `asset.imageUrl` unfiltered as its last resort, and a
-    // legacy payload can hold a video there — which Meta would reject with its own
-    // error instead of the reason.
+    // legacy payload can hold a video there — clipUrl recognizes the same
+    // pattern, so this now becomes a Reel rather than an image_url Meta would
+    // reject on its own terms.
     const asset = bulkClip({
       type: "instagram_post",
       videoUrl: null,
@@ -274,9 +283,22 @@ describe("#48 — Instagram sees the photos the rest of the product sees", () =>
       imageUrl: "https://cdn.test/legacy.mp4",
       content: "Caption",
     });
-    await expect(publishAssetToPlatform("instagram", integration, asset)).rejects.toThrow(
-      /Reels\) publishing is not automated yet/,
+
+    const result = await publishAssetToPlatform("instagram", integration, asset);
+
+    expect(result.postId).toBe("ig-post-1");
+    const containerCall = calls.find((c) => c.url.includes("/media") && !c.url.includes("status_code"))!;
+    expect(containerCall.body.media_type).toBe("REELS");
+    expect(containerCall.body.video_url).toBe("https://cdn.test/legacy.mp4");
+    expect(containerCall.body.image_url).toBeUndefined();
+  });
+
+  it("refuses an asset with neither an image nor a video", async () => {
+    const empty = bulkClip({ videoUrl: null, mimeType: null, imageUrl: null, content: "Just text" });
+    await expect(publishAssetToPlatform("instagram", integration, empty)).rejects.toThrow(
+      /Instagram posts require an image or video/,
     );
+    expect(calls).toHaveLength(0);
   });
 });
 

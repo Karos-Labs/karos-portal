@@ -182,23 +182,57 @@ function assertTextPostDeliverable(
 
 /* ── Instagram ───────────────────────────────────────────────────────── */
 
+/**
+ * How long a freshly-created Reels container takes Meta to finish processing
+ * before it can be published. Short-form clips (this product's whole output)
+ * finish well under this in practice; a still-PROCESSING container 20 polls in
+ * is refused rather than published early, which `media_publish` would reject
+ * anyway — the timeout error says so and to retry, rather than pretending the
+ * post went out.
+ */
+const REELS_POLL_INTERVAL_MS = 3000;
+const REELS_POLL_MAX_ATTEMPTS = 20; // ~60s
+
+/**
+ * Poll a Reels container's `status_code` until Meta reports FINISHED (ready
+ * for `media_publish`) or ERROR. `statusUrl` carries the host difference
+ * between the two Instagram products (graph.facebook.com vs
+ * graph.instagram.com) — everything else about waiting for Meta to finish
+ * transcoding a video is identical between them.
+ */
+async function pollReelsContainerReady(statusUrl: string, platform: string): Promise<void> {
+  for (let attempt = 0; attempt < REELS_POLL_MAX_ATTEMPTS; attempt++) {
+    const res = await fetch(statusUrl);
+    if (res.status === 401 || res.status === 403) throw new TokenExpiredError(platform, res.status);
+    if (res.ok) {
+      const body = (await res.json()) as { status_code?: string; status?: string };
+      if (body.status_code === "FINISHED") return;
+      if (body.status_code === "ERROR") {
+        throw new Error(`Reels processing failed: ${body.status ?? "unknown error"}`);
+      }
+      // EXPIRED / IN_PROGRESS / PUBLISHED (already, on a race) all fall through
+      // to another wait — only FINISHED/ERROR are terminal for this loop.
+    }
+    await new Promise((resolve) => setTimeout(resolve, REELS_POLL_INTERVAL_MS));
+  }
+  throw new Error(
+    "Instagram is still processing this video after a minute - it may finish and publish on a retry shortly",
+  );
+}
+
 async function publishToInstagram(
   credentials: Record<string, string>,
   asset: Asset,
 ): Promise<PublishResult> {
   const token = credentials.accessToken;
   if (!token) throw new Error("No access token");
-  // The photo, from wherever this asset's ingest path put it (see photoUrl). A
-  // clip-only asset is refused by its own reason rather than by "requires an
-  // image", which describes the wrong problem: the asset HAS media, and Reels
-  // upload is a different Graph call this module does not make.
+  // The photo, from wherever this asset's ingest path put it (see photoUrl).
+  // No photo but a clip ⇒ Reels: a real video-processing container, not the
+  // image_url path below.
   const photo = photoUrl(asset);
-  if (!photo) {
-    throw new Error(
-      clipUrl(asset)
-        ? "Instagram video (Reels) publishing is not automated yet - post this clip manually and mark it as published"
-        : "Instagram posts require an image",
-    );
+  const clip = photo ? null : clipUrl(asset);
+  if (!photo && !clip) {
+    throw new Error("Instagram posts require an image or video");
   }
 
   let igUserId: string | null = null;
@@ -235,11 +269,15 @@ async function publishToInstagram(
 
   if (!igUserId || !pageToken) throw new Error("No Instagram Business Account linked to any page");
 
-  // Create media container
+  // Create media container — a photo container (image_url) publishes almost
+  // immediately; a Reels container (media_type=REELS, video_url) needs Meta to
+  // transcode the clip first, which pollReelsContainerReady waits out below.
+  // share_to_feed keeps a Reel's behavior matching a photo post's: it lands on
+  // the profile grid too, not only the Reels tab.
   const containerParams = new URLSearchParams({
-    image_url: photo,
     caption: asset.content,
     access_token: pageToken,
+    ...(photo ? { image_url: photo } : { media_type: "REELS", video_url: clip!, share_to_feed: "true" }),
   });
   const containerRes = await fetch(
     metaGraphUrl(`${igUserId}/media`),
@@ -251,6 +289,13 @@ async function publishToInstagram(
     throw new Error(`Media container failed: ${err.error?.message ?? containerRes.status}`);
   }
   const { id: creationId } = (await containerRes.json()) as { id: string };
+
+  if (clip) {
+    await pollReelsContainerReady(
+      metaGraphUrl(`${creationId}?fields=status_code&access_token=${encodeURIComponent(pageToken)}`),
+      "instagram",
+    );
+  }
 
   // Publish
   const publishParams = new URLSearchParams({ creation_id: creationId, access_token: pageToken });
@@ -285,12 +330,9 @@ async function publishToInstagramBusiness(
   const token = credentials.accessToken;
   if (!token) throw new Error("No access token");
   const photo = photoUrl(asset);
-  if (!photo) {
-    throw new Error(
-      clipUrl(asset)
-        ? "Instagram video (Reels) publishing is not automated yet - post this clip manually and mark it as published"
-        : "Instagram posts require an image",
-    );
+  const clip = photo ? null : clipUrl(asset);
+  if (!photo && !clip) {
+    throw new Error("Instagram posts require an image or video");
   }
 
   const meRes = await fetch(
@@ -302,9 +344,9 @@ async function publishToInstagramBusiness(
   if (!igUserId) throw new Error("Could not resolve Instagram account id");
 
   const containerParams = new URLSearchParams({
-    image_url: photo,
     caption: asset.content,
     access_token: token,
+    ...(photo ? { image_url: photo } : { media_type: "REELS", video_url: clip!, share_to_feed: "true" }),
   });
   const containerRes = await fetch(
     metaInstagramGraphUrl(`${igUserId}/media`),
@@ -316,6 +358,13 @@ async function publishToInstagramBusiness(
     throw new Error(`Media container failed: ${err.error?.message ?? containerRes.status}`);
   }
   const { id: creationId } = (await containerRes.json()) as { id: string };
+
+  if (clip) {
+    await pollReelsContainerReady(
+      metaInstagramGraphUrl(`${creationId}?fields=status_code&access_token=${encodeURIComponent(token)}`),
+      "instagram_business",
+    );
+  }
 
   const publishParams = new URLSearchParams({ creation_id: creationId, access_token: token });
   const publishRes = await fetch(
