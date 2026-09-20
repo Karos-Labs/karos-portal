@@ -34,6 +34,7 @@ import { isStringDelimiter, matchingBrace, skipStringLiteral, stripComments } fr
  */
 
 const ASSETS_PAGE = "src/app/(app)/assets/page.tsx";
+const CLIENT_ASSETS_PAGE = "src/app/(app)/clients/[id]/assets/page.tsx";
 
 function read(rel: string): string {
   return readFileSync(join(process.cwd(), rel), "utf8");
@@ -178,6 +179,37 @@ describe("the /assets grid carries the same controls at every mount", () => {
         expect(targets, `an <AssetsView on ${ASSETS_PAGE} passes empty push targets`).not.toMatch(
           /^\{\s*(undefined|null)\s*\}$/,
         );
+      }
+    }
+  });
+
+  /**
+   * `/clients/[id]/assets` — this suite's own docstring named it as "not this
+   * suite's to rule on" when written, because it rendered read-only cards under
+   * a comment that never promised more. It has since grown the exact controls
+   * the sibling route offers (Approve, Unschedule, Publish Now) without the
+   * push targets those controls need — the sibling route's #112 bug, uncaught
+   * here because this route was out of scope. It is in scope now.
+   */
+  it("the single-client staff review page carries the same push targets", () => {
+    const mounts = jsxElements(CLIENT_ASSETS_PAGE, "AssetsView");
+    expect(mounts.length, `no <AssetsView found on ${CLIENT_ASSETS_PAGE}`).toBeGreaterThan(0);
+    for (const mount of mounts) {
+      const approve = jsxAttr(mount, "canApprove");
+      expect(approve, `an <AssetsView on ${CLIENT_ASSETS_PAGE} does not pass canApprove`).not.toBeNull();
+      expect(approve, `an <AssetsView on ${CLIENT_ASSETS_PAGE} cannot approve`).not.toMatch(
+        /^\{\s*(false|undefined|null)\s*\}$/,
+      );
+      const targets = jsxAttr(mount, "connectedPlatformsByClient");
+      expect(
+        mount.includes("connectedPlatformsByClient"),
+        `an <AssetsView on ${CLIENT_ASSETS_PAGE} has no push targets`,
+      ).toBe(true);
+      if (targets !== null) {
+        expect(
+          targets,
+          `an <AssetsView on ${CLIENT_ASSETS_PAGE} passes empty push targets`,
+        ).not.toMatch(/^\{\s*(undefined|null)\s*\}$/);
       }
     }
   });
