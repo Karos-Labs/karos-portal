@@ -656,6 +656,19 @@ interface TiktokClipDeliverable extends GoalLineFields {
   durationSeconds?: number;
   gcsUri?: string;
   signedUrl?: string;
+  /**
+   * Whose recording this clip is of (agent-engine RFC-25, 2026-09-20).
+   *
+   * `sourceTier` alone does not answer it: `web-harvest` is the same tier
+   * whether the show is one the client clears every week or one an open search
+   * turned up ninety seconds earlier. The question is asked again every time
+   * somebody reopens the deliverable, months after the gate that decided it,
+   * so it is persisted with what shipped rather than left at the gate.
+   */
+  licenseConfidence?: string;
+  sourceContext?: { url?: string; channel?: string; title?: string; discovery?: string; harvestQuery?: string };
+  /** What the approved round had to adapt around, plus the reviewer's own verdict when it was not an approval. Absent — never empty — on a clean run. */
+  contentRepairs?: Array<{ check: string; action: string; detail: string }>;
 }
 
 async function materializeTiktokClip(job: Job, deliverable: TiktokClipDeliverable): Promise<AssetMaterialization> {
@@ -676,6 +689,14 @@ async function materializeTiktokClip(job: Job, deliverable: TiktokClipDeliverabl
       ...(deliverable.hookType !== undefined ? { hookType: deliverable.hookType } : {}),
       ...(deliverable.sourceTier !== undefined ? { sourceTier: deliverable.sourceTier } : {}),
       ...(deliverable.durationSeconds !== undefined ? { durationSeconds: deliverable.durationSeconds } : {}),
+      // STAFF-FACING (the detail modal renders these only for a staff viewer).
+      // Provenance and the repair ledger answer "whose footage is this" and
+      // "did this clip come out clean or was it salvaged" — both questions a
+      // client's own card has no business raising, and both of which staff
+      // currently cannot answer at all once the gate is resolved.
+      ...(deliverable.licenseConfidence !== undefined ? { licenseConfidence: deliverable.licenseConfidence } : {}),
+      ...(deliverable.sourceContext !== undefined ? { sourceContext: deliverable.sourceContext } : {}),
+      ...(deliverable.contentRepairs !== undefined && deliverable.contentRepairs.length > 0 ? { contentRepairs: deliverable.contentRepairs } : {}),
       artifacts: deliverable.gcsUri ? [{ gcsUri: deliverable.gcsUri }] : [],
     },
   };

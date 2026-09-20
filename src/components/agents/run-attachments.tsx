@@ -26,9 +26,27 @@ export interface RunAttachment {
  */
 export type AttachmentMode = "slides" | "source-video" | "picture" | "chat";
 
+/**
+ * The second way in, for a mode that has one (RFC-25 phase 4).
+ *
+ * Only `source-video`. An episode is the one kind of source media that
+ * routinely already exists at a public address — a podcast is published, a
+ * keynote is on a channel — and making somebody download two hours of video in
+ * order to upload it again is asking them to do the machine's work. A carousel
+ * slide and a post's picture have no equivalent: there is no "the link to my
+ * slide 3".
+ */
+interface LinkSpec {
+  /** The button that reveals the field. */
+  label: string;
+  placeholder: string;
+  /** What happens to what they paste, in one line, under the field. */
+  hint: string;
+}
+
 const MODES: Record<
   AttachmentMode,
-  { accept: string; max: number; chip: (index: number) => string; hint: string; addLabel: string }
+  { accept: string; max: number; chip: (index: number, a: RunAttachment) => string; hint: string; addLabel: string; link?: LinkSpec }
 > = {
   slides: {
     accept: "image/jpeg,image/png,image/webp",
@@ -43,9 +61,18 @@ const MODES: Record<
     // The workflow reads the first source asset and ignores the rest, so
     // accepting more would be collecting files to throw away.
     max: 1,
-    chip: () => "source",
+    // An uploaded file and a pasted page are both "the source", but they are
+    // not the same thing to anyone debugging a run: one is already in our
+    // bucket, the other is a URL yt-dlp still has to resolve, and a resolve
+    // can fail where an upload cannot. So the list says which this is.
+    chip: (_index, a) => (/^gs:\/\//i.test(a.uri) ? "source" : "link"),
     hint: "The episode this run cuts its clip from.",
     addLabel: "Attach source video",
+    link: {
+      label: "Paste a link",
+      placeholder: "https://…",
+      hint: "A link to the episode: a podcast page, a video page. The agent resolves it and clips from there.",
+    },
   },
   picture: {
     accept: "image/jpeg,image/png,image/webp",
@@ -70,6 +97,40 @@ const MODES: Record<
     addLabel: "Attach a file",
   },
 };
+
+/**
+ * What a pasted link has to be before it becomes an attachment.
+ *
+ * DELIBERATELY SHALLOW, and the shallowness is the design. This cannot tell a
+ * live episode page from a dead one, a podcast from a product launch, or a
+ * page yt-dlp can resolve from one it cannot — only the resolve can, and the
+ * engine already treats a link that does not resolve as a source tier that did
+ * not serve rather than as a failed run (agent-engine RFC-25 §2, phase 4). A
+ * check here that tried to predict any of that would be guessing in a dialog
+ * and would reject working links.
+ *
+ * What it CAN settle before anything is dispatched is the pair of mistakes
+ * that are wrong no matter what is at the other end: a string that is not a
+ * URL, and a scheme nothing downstream can fetch. A `gs://` URI is rejected
+ * for the same reason — those come from the upload button, and one typed by
+ * hand points at a bucket object this client may not own.
+ */
+export function readPastedSourceLink(raw: string): { uri: string; label: string } | { error: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { error: "Paste a link first." };
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return { error: "That does not look like a link. It needs to start with https://" };
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    return { error: `A ${url.protocol}// address cannot be fetched. Paste the page's https:// link, or use Attach source video.` };
+  }
+  // The scheme back off again: it is the same on every row and the list is
+  // narrow, so it costs the part of the URL that tells them which link it is.
+  return { uri: url.toString(), label: `${url.host}${url.pathname}${url.search}`.replace(/\/$/, "") };
+}
 
 /**
  * WHERE THE CONTROL SITS.
@@ -137,8 +198,31 @@ export function RunAttachments({
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The link field is revealed, not permanent — most runs upload or attach nothing. */
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [link, setLink] = useState("");
   const spec = { ...MODES[mode], ...(hint !== undefined ? { hint } : {}) };
   const full = attachments.length >= spec.max;
+
+  function addLink() {
+    const parsed = readPastedSourceLink(link);
+    if ("error" in parsed) {
+      setError(parsed.error);
+      return;
+    }
+    if (attachments.some((a) => a.uri === parsed.uri)) {
+      setError("That link is already attached.");
+      return;
+    }
+    setError(null);
+    setLink("");
+    setLinkOpen(false);
+    // No `contentType`. A watch page is not a media type, and stamping one on
+    // is the exact lie the engine's `isDirectMediaUri` exists to catch — it
+    // routes on what the URI says it IS, and a page claiming `video/mp4` gets
+    // fetched as bytes and written to disk as HTML.
+    onChange([...attachments, { uri: parsed.uri, role: "source", label: parsed.label }]);
+  }
 
   async function uploadOne(file: File): Promise<RunAttachment> {
     const signed = await fetch("/api/agent-engine/run-media", {
@@ -279,16 +363,70 @@ export function RunAttachments({
           />
           {busy ? "Uploading…" : spec.addLabel}
         </button>
+        {/* The second way in, and a peer of the first rather than a fallback
+            under it: for an episode that is already published, pasting its
+            page is the NORMAL route and downloading two hours of video to
+            upload it again is the exception. Hidden at the cap, because one
+            source is one source however it arrived. */}
+        {spec.link && !full && (
+          <button
+            type="button"
+            disabled={disabled || busy}
+            onClick={() => {
+              setLinkOpen((open) => !open);
+              setError(null);
+            }}
+            aria-expanded={linkOpen}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-foreground transition-colors hover:border-border-strong hover:bg-surface-3 disabled:opacity-50"
+          >
+            <Icon name="Link" className="h-3 w-3 text-muted" />
+            {spec.link.label}
+          </button>
+        )}
         <span className="text-xs text-muted">{spec.hint}</span>
       </div>
 
       {picker}
 
+      {spec.link && linkOpen && !full && (
+        <div className="mt-2">
+          <div className="flex items-center gap-2">
+            <input
+              type="url"
+              value={link}
+              autoFocus
+              disabled={disabled || busy}
+              placeholder={spec.link.placeholder}
+              onChange={(e) => setLink(e.target.value)}
+              // Enter submits the field, not the dialog around it. Without
+              // this the paste lands in a form that dispatches the run with
+              // no attachment on it.
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                addLink();
+              }}
+              className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-2 focus-visible:border-border-strong focus-visible:outline-none"
+              aria-label={spec.link.label}
+            />
+            <button
+              type="button"
+              disabled={disabled || busy || link.trim().length === 0}
+              onClick={addLink}
+              className="shrink-0 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-foreground transition-colors hover:border-border-strong hover:bg-surface-3 disabled:opacity-50"
+            >
+              Add
+            </button>
+          </div>
+          <p className="mt-1 text-xs text-muted">{spec.link.hint}</p>
+        </div>
+      )}
+
       {attachments.length > 0 && (
         <ul className="mt-2 space-y-1">
           {attachments.map((a, index) => (
             <li key={a.uri} className="flex items-center gap-2 text-xs">
-              <span className="rounded bg-surface-3 px-1.5 py-0.5 text-muted">{spec.chip(index)}</span>
+              <span className="rounded bg-surface-3 px-1.5 py-0.5 text-muted">{spec.chip(index, a)}</span>
               <span className="truncate text-foreground">{a.label ?? a.uri}</span>
               <button
                 type="button"

@@ -57,9 +57,59 @@ export interface ClipReview {
   /** Why the footage is stock and not the client's own: what each higher source tier said (engine `sourceNotes`, 2026-09-10). */
   sourceNotes?: string[];
   visualQa?: ClipVisualQa;
-  /** The engine flagged the clip (the visual QA failed); the human decides. */
+  /**
+   * The engine wants a person to look: the visual QA failed, OR the run had to
+   * adapt around something on its way to a clip.
+   *
+   * The engine sets this on EITHER condition (`create-tiktok-agent-workflow`:
+   * `visualQa?.passed === false || repairs.length > 0`), so a badge reading
+   * "flagged by visual QA" is wrong for a clip the QA passed and the writer
+   * had to repair. `flagReason` below says which it was.
+   */
   flagged: boolean;
+  /** Which of the two conditions raised `flagged` — for the badge, so it cannot claim the wrong one. */
+  flagReason?: "visual-qa" | "repairs" | "both";
   script?: { hook?: string; format?: "footage" | "text-led"; beats: ClipScriptBeat[] };
+
+  // ── Provenance (agent-engine RFC-25, 2026-09-20) ──────────────────────────
+  //
+  // Whose recording this clip is of. RFC-25 §1 rests its case on THIS gate
+  // being "the real protection" for a clip of somebody else's podcast, and a
+  // gate is only a protection if the thing being protected against is on the
+  // screen. A source TIER is not that: `web-harvest` reads identically whether
+  // the show is one the client clears every week or one an open search turned
+  // up ninety seconds earlier.
+
+  /** How much the run knows about the right to publish this footage. */
+  licenseConfidence?: "client-provided" | "client-cleared" | "stock-licensed" | "unknown";
+  /** How the footage was found: the client's own source list, an open web search, or a link somebody pasted into the run. */
+  discovery?: "allowlist" | "open" | "pasted";
+  /** The search string that found it — the fastest way to see why something irrelevant came back. */
+  harvestQuery?: string;
+  sourceUrl?: string;
+  sourceChannel?: string;
+  sourceTitle?: string;
+  /**
+   * What the source-fit judge made of the RECORDING (engine `01g-source-fit`).
+   * It marks and never blocks; `concerns` is where a competitor's show or a
+   * clip farm is named, and the decision is the reviewer's.
+   */
+  sourceFit?: { score: number; reason: string; concerns?: string[] };
+
+  // ── What the run adapted around ───────────────────────────────────────────
+
+  /**
+   * Every check that fired on the way to this clip: a redacted sentence, an
+   * appended source credit, a beat wearing a neighbour's picture, a source the
+   * judge scored poorly. Absent — never empty — on a clean run.
+   */
+  contentRepairs?: Array<{ check: string; action: string; detail: string }>;
+  /** Set when the cut was chosen by code rather than by the moment picker. */
+  momentFallback?: string;
+  /** What the moment floor observed and did NOT act on — the call is the reviewer's. */
+  momentNotes?: string[];
+  /** Which language the short is in, and where that came from. `assumed` means nobody configured one. */
+  targetLanguage?: { tag: string; source: string; reason?: string; assumed: boolean };
 }
 
 /** The payload keys the clip block renders itself, so the generic fact grid does not repeat them. */
@@ -84,7 +134,41 @@ export const CLIP_REVIEW_KEYS: ReadonlySet<string> = new Set([
   "flagged",
   "script",
   "revision",
+  // RFC-25 provenance and the repair ledger. Before these were listed here
+  // they still reached the screen — the generic renderer below the clip block
+  // paints any key nobody anticipated — but as an unlabelled fact row and a
+  // collapsed JSON blob, under a clip block that said `flagged` with no reason
+  // beside it. Being rendered is not the same as being legible.
+  "licenseConfidence",
+  "discovery",
+  "harvestQuery",
+  "sourceUrl",
+  "sourceChannel",
+  "sourceTitle",
+  "sourceFit",
+  "contentRepairs",
+  "momentFallback",
+  "momentNotes",
+  "targetLanguage",
 ]);
+
+/**
+ * A stored `licenseConfidence` narrowed to the four values that mean
+ * something, or `undefined`.
+ *
+ * Shared by the gate reader and the asset detail modal: a value read off a
+ * persisted deliverable written by an older engine build is just as unknown a
+ * quantity as one off a gate payload, and two readers disagreeing about which
+ * strings count is how one surface shows a badge the other does not.
+ */
+export function asLicenseConfidence(value: unknown): NonNullable<ClipReview["licenseConfidence"]> | undefined {
+  return value === "client-provided" || value === "client-cleared" || value === "stock-licensed" || value === "unknown" ? value : undefined;
+}
+
+/** The same narrowing for `discovery`, and for the same reason. */
+export function asDiscovery(value: unknown): NonNullable<ClipReview["discovery"]> | undefined {
+  return value === "allowlist" || value === "open" || value === "pasted" ? value : undefined;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -147,6 +231,46 @@ export function readClipReview(payload: unknown): ClipReview | undefined {
       ? { beats: repickRaw["beats"].filter((b): b is number => typeof b === "number"), note: str(repickRaw["note"])! }
       : undefined;
 
+  const licenseConfidence = asLicenseConfidence(payload["licenseConfidence"]);
+
+  const discovery = asDiscovery(payload["discovery"]);
+
+  const fitRaw = payload["sourceFit"];
+  const sourceFit =
+    isRecord(fitRaw) && num(fitRaw["score"]) !== undefined && str(fitRaw["reason"]) !== undefined
+      ? {
+          score: num(fitRaw["score"])!,
+          reason: str(fitRaw["reason"])!,
+          ...(() => {
+            const concerns = Array.isArray(fitRaw["concerns"]) ? fitRaw["concerns"].filter((c): c is string => typeof c === "string" && c.trim().length > 0) : [];
+            return concerns.length > 0 ? { concerns } : {};
+          })(),
+        }
+      : undefined;
+
+  // Dropped rather than half-read: a repair missing its `detail` is the only
+  // part a reviewer can act on, and a row reading "redaction — (nothing)" is
+  // worse than one fewer row.
+  const contentRepairs = Array.isArray(payload["contentRepairs"])
+    ? payload["contentRepairs"].flatMap((r): Array<{ check: string; action: string; detail: string }> => {
+        if (!isRecord(r) || str(r["check"]) === undefined || str(r["detail"]) === undefined) return [];
+        return [{ check: str(r["check"])!, action: str(r["action"]) ?? "unresolved", detail: str(r["detail"])! }];
+      })
+    : undefined;
+
+  const momentNotes = Array.isArray(payload["momentNotes"]) ? payload["momentNotes"].filter((n): n is string => typeof n === "string" && n.length > 0) : undefined;
+
+  const langRaw = payload["targetLanguage"];
+  const targetLanguage =
+    isRecord(langRaw) && str(langRaw["tag"]) !== undefined && str(langRaw["source"]) !== undefined
+      ? {
+          tag: str(langRaw["tag"])!,
+          source: str(langRaw["source"])!,
+          ...(str(langRaw["reason"]) !== undefined ? { reason: str(langRaw["reason"])! } : {}),
+          assumed: langRaw["assumed"] === true,
+        }
+      : undefined;
+
   const scriptRaw = payload["script"];
   const script =
     isRecord(scriptRaw) && Array.isArray(scriptRaw["beats"])
@@ -184,7 +308,32 @@ export function readClipReview(payload: unknown): ClipReview | undefined {
     ...(sourceNotes !== undefined && sourceNotes.length > 0 ? { sourceNotes } : {}),
     ...(visualQa !== undefined ? { visualQa } : {}),
     flagged: payload["flagged"] === true || (visualQa !== undefined && !visualQa.passed),
+    ...(() => {
+      // Which condition raised the flag. The engine ORs the two, so a clip
+      // the QA passed can be flagged purely because the writer had to repair
+      // something — and a badge saying "flagged by visual QA" over a clean QA
+      // score is the kind of wrong that teaches a reviewer to stop reading
+      // badges. Derived here rather than sent, because the engine's `flagged`
+      // is one boolean and both inputs are already on the payload.
+      const qaFailed = visualQa !== undefined && !visualQa.passed;
+      const repaired = contentRepairs !== undefined && contentRepairs.length > 0;
+      if (qaFailed && repaired) return { flagReason: "both" as const };
+      if (qaFailed) return { flagReason: "visual-qa" as const };
+      if (repaired) return { flagReason: "repairs" as const };
+      return {};
+    })(),
     ...(script !== undefined && script.beats.length > 0 ? { script } : {}),
+    ...(licenseConfidence !== undefined ? { licenseConfidence } : {}),
+    ...(discovery !== undefined ? { discovery } : {}),
+    ...(str(payload["harvestQuery"]) !== undefined ? { harvestQuery: str(payload["harvestQuery"])! } : {}),
+    ...(str(payload["sourceUrl"]) !== undefined ? { sourceUrl: str(payload["sourceUrl"])! } : {}),
+    ...(str(payload["sourceChannel"]) !== undefined ? { sourceChannel: str(payload["sourceChannel"])! } : {}),
+    ...(str(payload["sourceTitle"]) !== undefined ? { sourceTitle: str(payload["sourceTitle"])! } : {}),
+    ...(sourceFit !== undefined ? { sourceFit } : {}),
+    ...(contentRepairs !== undefined && contentRepairs.length > 0 ? { contentRepairs } : {}),
+    ...(str(payload["momentFallback"]) !== undefined ? { momentFallback: str(payload["momentFallback"])! } : {}),
+    ...(momentNotes !== undefined && momentNotes.length > 0 ? { momentNotes } : {}),
+    ...(targetLanguage !== undefined ? { targetLanguage } : {}),
   };
 }
 
@@ -230,4 +379,41 @@ export function summarisePlateSources(plateSources: readonly string[]): string {
   const counts = new Map<string, number>();
   for (const source of plateSources) counts.set(source, (counts.get(source) ?? 0) + 1);
   return [...counts.entries()].map(([source, count]) => `${count} ${source}`).join(", ");
+}
+
+/**
+ * The provenance line, in the words a reviewer decides in.
+ *
+ * `tone` drives the badge: `warning` for footage nobody cleared, because that
+ * is the one value on which "approve" is a decision rather than a formality.
+ * The rest are neutral — a clip of the client's own recording should not wear
+ * a colour that makes the flagged case easier to skip past.
+ */
+export function describeLicenseConfidence(value: NonNullable<ClipReview["licenseConfidence"]>): { label: string; tone: "neutral" | "warning"; detail: string } {
+  switch (value) {
+    case "client-provided":
+      return { label: "Client's own footage", tone: "neutral", detail: "They uploaded this recording, or it came out of their own library." };
+    case "client-cleared":
+      return { label: "Cleared show", tone: "neutral", detail: "Somebody else's recording, from a show on this client's source list — they named it as one they clip." };
+    case "stock-licensed":
+      return { label: "Licensed footage", tone: "neutral", detail: "Stock library clips, licensed by the provider for this use." };
+    case "unknown":
+      return {
+        label: "Rights unknown",
+        tone: "warning",
+        detail: "Somebody else's recording that nobody cleared. Copyright stays with the original poster, and approving this clip is the decision that publishes it.",
+      };
+  }
+}
+
+/** How the footage was found, in one phrase. */
+export function describeDiscovery(value: NonNullable<ClipReview["discovery"]>): string {
+  switch (value) {
+    case "allowlist":
+      return "found on the client's own source list";
+    case "open":
+      return "found by an open web search";
+    case "pasted":
+      return "from a link pasted into this run";
+  }
 }

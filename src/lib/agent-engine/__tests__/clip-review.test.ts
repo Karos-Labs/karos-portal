@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CLIP_REVIEW_KEYS, describeBudgetPlan, formatClipDuration, formatUsd, readClipReview, summarisePlateSources } from "../clip-review";
+import { CLIP_REVIEW_KEYS, describeBudgetPlan, describeDiscovery, describeLicenseConfidence, formatClipDuration, formatUsd, readClipReview, summarisePlateSources } from "../clip-review";
 
 /** The gate payload agent-engine's tiktok-agent writes since 2026-09-09 (`11-clip-review`), verbatim shape. */
 const PAYLOAD = {
@@ -130,5 +130,110 @@ describe("formatting helpers", () => {
 
   it("summarises plate sources as counts", () => {
     expect(summarisePlateSources(["stock", "stock", "still", "stock"])).toBe("3 stock, 1 still");
+  });
+});
+
+/**
+ * RFC-25 provenance, and the repair ledger that was already on the wire.
+ *
+ * The gate payload has carried `contentRepairs` since 2026-09 and `sourceFit`
+ * / `discovery` / `licenseConfidence` since 2026-09-20. None of it was read
+ * here, so it reached the reviewer through the generic fallback renderer: an
+ * unlabelled fact row and a collapsed JSON blob, beside a badge that said
+ * "Flagged by visual QA" whether or not the visual QA had anything to do with
+ * it.
+ */
+const HARVESTED = {
+  format: "commentary-clip",
+  videoUrl: "https://signed/clip.mp4",
+  sourceTier: "web-harvest",
+  licenseConfidence: "unknown",
+  discovery: "open",
+  harvestQuery: "AI marketing budgets podcast",
+  sourceUrl: "https://www.youtube.com/watch?v=abc123",
+  sourceChannel: "Some Business Podcast",
+  sourceTitle: "Ep. 212 — why CFOs stopped believing the efficiency story",
+  sourceFit: { score: 3, reason: "A conference keynote where the format wants a conversation.", concerns: ["this is a direct competitor's own show", ""] },
+  contentRepairs: [
+    { check: "source-fit", action: "unresolved", detail: "the source-fit judge scored this recording 3/10 for this client" },
+    { check: "source-credit", action: "appended", detail: "the caption did not credit the source; a credit line was appended" },
+    { check: "nothing-actionable" },
+  ],
+  momentFallback: "the picker returned a window that is not clippable; the first coherent 30s was used",
+  momentNotes: ["no figure in the chosen window"],
+  targetLanguage: { tag: "en", source: "default", reason: "nothing configured a language", assumed: true },
+};
+
+describe("readClipReview — RFC-25 provenance", () => {
+  it("reads provenance, the fit verdict and the repair ledger off a harvested clip", () => {
+    const review = readClipReview(HARVESTED)!;
+    expect(review.licenseConfidence).toBe("unknown");
+    expect(review.discovery).toBe("open");
+    expect(review.harvestQuery).toBe("AI marketing budgets podcast");
+    expect(review.sourceUrl).toBe("https://www.youtube.com/watch?v=abc123");
+    expect(review.sourceChannel).toBe("Some Business Podcast");
+    expect(review.sourceTitle).toContain("Ep. 212");
+    expect(review.sourceFit?.score).toBe(3);
+    // The empty-string concern is dropped: a bullet with nothing in it is a
+    // row a reviewer reads and learns nothing from.
+    expect(review.sourceFit?.concerns).toEqual(["this is a direct competitor's own show"]);
+    expect(review.momentFallback).toContain("not clippable");
+    expect(review.momentNotes).toEqual(["no figure in the chosen window"]);
+    expect(review.targetLanguage).toEqual({ tag: "en", source: "default", reason: "nothing configured a language", assumed: true });
+  });
+
+  it("drops a repair with no detail — the detail is the only part a reviewer can act on", () => {
+    const review = readClipReview(HARVESTED)!;
+    expect(review.contentRepairs).toHaveLength(2);
+    expect(review.contentRepairs?.map((r) => r.check)).toEqual(["source-fit", "source-credit"]);
+  });
+
+  it("says WHICH condition raised the flag, because the engine ORs two of them", () => {
+    // Repairs only, QA clean: the old badge claimed the visual QA had failed.
+    const repaired = readClipReview({ ...HARVESTED, visualQa: { passed: true, evidence: [] }, flagged: true })!;
+    expect(repaired.flagged).toBe(true);
+    expect(repaired.flagReason).toBe("repairs");
+
+    // QA failed, nothing repaired.
+    const qaOnly = readClipReview({ format: "original-short", videoUrl: "https://s/c.mp4", visualQa: { passed: false, evidence: [] } })!;
+    expect(qaOnly.flagReason).toBe("visual-qa");
+
+    // Both.
+    const both = readClipReview({ ...HARVESTED, visualQa: { passed: false, evidence: [] } })!;
+    expect(both.flagReason).toBe("both");
+
+    // Neither — and `flagReason` is then ABSENT rather than a string saying
+    // "none", so a badge cannot be rendered off a truthy value that means the
+    // opposite.
+    const clean = readClipReview({ format: "original-short", videoUrl: "https://s/c.mp4", visualQa: { passed: true, evidence: [] } })!;
+    expect(clean.flagged).toBe(false);
+    expect(clean).not.toHaveProperty("flagReason");
+  });
+
+  it("ignores a licenseConfidence or discovery it does not recognise, rather than rendering it raw", () => {
+    const odd = readClipReview({ format: "original-short", videoUrl: "https://s/c.mp4", licenseConfidence: "probably fine", discovery: "vibes" })!;
+    expect(odd.licenseConfidence).toBeUndefined();
+    expect(odd.discovery).toBeUndefined();
+  });
+
+  it("keeps the new keys out of the generic fact grid", () => {
+    for (const key of ["licenseConfidence", "discovery", "harvestQuery", "sourceUrl", "sourceChannel", "sourceTitle", "sourceFit", "contentRepairs", "momentFallback", "momentNotes", "targetLanguage"]) {
+      expect(CLIP_REVIEW_KEYS.has(key), key).toBe(true);
+    }
+  });
+});
+
+describe("provenance wording", () => {
+  it("colours only the case where Approve is a real decision", () => {
+    expect(describeLicenseConfidence("unknown").tone).toBe("warning");
+    for (const v of ["client-provided", "client-cleared", "stock-licensed"] as const) {
+      expect(describeLicenseConfidence(v).tone, v).toBe("neutral");
+    }
+  });
+
+  it("names each discovery posture in a phrase that fits a sentence", () => {
+    expect(describeDiscovery("allowlist")).toContain("source list");
+    expect(describeDiscovery("open")).toContain("open web");
+    expect(describeDiscovery("pasted")).toContain("pasted");
   });
 });

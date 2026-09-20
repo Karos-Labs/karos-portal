@@ -154,10 +154,19 @@ describe("clientOnlyMediaIsRequired — who has a text fallback", () => {
     expect(mediaSourceHint("tiktok-editing-agent", "system")).toMatch(/^Required\./);
     expect(mediaSourceHint("tiktok-editing-agent", "system")).not.toMatch(/generates its own/);
 
-    // Clipping: the empty box IS a supported path — it searches the source
-    // list — but it never generates footage, and the hint must not imply it.
-    expect(mediaSourceHint("tiktok-clipping-agent", "system")).toMatch(/searches the shows on your source list/);
-    expect(mediaSourceHint("tiktok-clipping-agent", "system")).toMatch(/never generates footage/);
+    // Clipping: the empty box IS a supported path, and since agent-engine
+    // RFC-25 (2026-09-20) it has TWO shapes. A client with a `sourcePool`
+    // still gets a search of their own shows; a client without one used to
+    // get a refused run and now gets an open web search for a podcast on the
+    // run's topic. Both halves have to be said, because which one a given
+    // client gets is a fact about their own configuration and they are the
+    // ones who can change it. What stays true either way: it never generates
+    // footage, and pasting a link is now a way in beside uploading.
+    const clipping = mediaSourceHint("tiktok-clipping-agent", "system");
+    expect(clipping).toMatch(/shows on your source list/);
+    expect(clipping).toMatch(/open web if you have not set one/);
+    expect(clipping).toMatch(/paste a link/);
+    expect(clipping).toMatch(/never generates footage/);
 
     // The products the old sentence was true of keep it, byte for byte.
     expect(mediaSourceHint("tiktok-agent", "system")).toMatch(/finds or generates its own/);

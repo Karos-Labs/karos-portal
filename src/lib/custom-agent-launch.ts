@@ -1580,7 +1580,7 @@ export function mediaSourceHint(engineProductId: string | undefined, source: Med
   }
   if (source === "client") {
     if (mode === "slides") return "Only these images are used, in this order, first file on slide 1. Nothing is sourced or generated for the slides you leave uncovered.";
-    if (mode === "source-video") return "The footage this run works from. Nothing else is harvested or generated.";
+    if (mode === "source-video") return "The footage this run works from — upload it or paste a link to it. Nothing else is harvested or generated, so a link that will not resolve stops the run rather than being quietly replaced.";
     return "Optional. Attach a picture and the post is written to it; leave it empty and the post ships as text — no picture is sourced or generated.";
   }
   if (mode === "slides") return "Optional. Anything you attach goes on the first slides; the rest is sourced or generated as usual.";
@@ -1593,7 +1593,14 @@ export function mediaSourceHint(engineProductId: string | undefined, source: Med
     // workflow does not have is how somebody leaves the box empty and gets a
     // held run they were told would not happen.
     if (engineProductId === "tiktok-editing-agent") return "Required. This agent cuts the video you recorded — there is nothing to edit without it.";
-    if (engineProductId === "tiktok-clipping-agent") return "Optional. Attach the recording, or leave it empty and the agent searches the shows on your source list. It never generates footage.";
+    // 2026-09-20, agent-engine RFC-25: "searches the shows on your source
+    // list" stopped being the whole truth. A client WITH a source list still
+    // gets exactly that; a client without one used to get a refused run and
+    // now gets an open search for a podcast on the run's topic. Both halves
+    // are said here, because which one a given client gets is a fact about
+    // their own configuration and they are the ones who can change it.
+    if (engineProductId === "tiktok-clipping-agent")
+      return "Optional. Attach the recording or paste a link to it, or leave it empty and the agent finds a podcast on your topic — the shows on your source list first, the open web if you have not set one. It never generates footage.";
     return "Optional. Attach footage to work from, or leave it empty and the agent finds or generates its own.";
   }
   return "Optional. Attach a picture and the post is written to it; leave it empty and the agent sources one when the post wants a visual.";

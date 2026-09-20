@@ -8,7 +8,16 @@ import { ImageLightbox, type LightboxImage } from "@/components/image-lightbox";
 import { normalizeDashes } from "@/lib/text-utils";
 import { resolveAgentEngineGateAction } from "@/lib/actions";
 import type { AgentEngineStyleEdit } from "@/lib/agent-engine/types";
-import { CLIP_REVIEW_KEYS, describeBudgetPlan, formatClipDuration, formatUsd, readClipReview, summarisePlateSources } from "@/lib/agent-engine/clip-review";
+import {
+  CLIP_REVIEW_KEYS,
+  describeBudgetPlan,
+  describeDiscovery,
+  describeLicenseConfidence,
+  formatClipDuration,
+  formatUsd,
+  readClipReview,
+  summarisePlateSources,
+} from "@/lib/agent-engine/clip-review";
 
 /**
  * The human-approval action for an agent-engine run paused at
@@ -556,7 +565,26 @@ export function AgentEngineGateApproval({
             {clip.durationSeconds !== undefined && <Badge tone="neutral">{formatClipDuration(clip.durationSeconds)}</Badge>}
             {clip.voiceover !== undefined && <Badge tone="neutral">{clip.voiceover ? "Voiceover" : "Silent"}</Badge>}
             {clip.sourceTier && <Badge tone="neutral">{labelForKey(clip.sourceTier)}</Badge>}
-            {clip.flagged && <Badge tone="warning">Flagged by visual QA</Badge>}
+            {/* Whose recording this is, at the top, beside the format. RFC-25
+                §1 rests its case on this gate being "the real protection" for
+                a clip of somebody else's podcast; it can only be that if the
+                answer is visible before the reviewer reaches for Approve. */}
+            {clip.licenseConfidence !== undefined && (
+              <Badge tone={describeLicenseConfidence(clip.licenseConfidence).tone}>{describeLicenseConfidence(clip.licenseConfidence).label}</Badge>
+            )}
+            {/* The engine raises `flagged` on EITHER a failed visual QA or a
+                repaired run, so this badge used to claim the visual QA for a
+                clip the QA had passed cleanly. A badge that is wrong some of
+                the time teaches a reviewer to stop reading badges. */}
+            {clip.flagged && (
+              <Badge tone="warning">
+                {clip.flagReason === "repairs"
+                  ? "Flagged — the run adapted around something"
+                  : clip.flagReason === "both"
+                    ? "Flagged by visual QA, and repaired"
+                    : "Flagged by visual QA"}
+              </Badge>
+            )}
           </div>
           {clip.videoUrl ? (
             // A signed GCS URL, re-signed per run; played in place so the
@@ -566,6 +594,68 @@ export function AgentEngineGateApproval({
             <p className="text-xs text-muted-2">
               The clip could not be uploaded for preview on this deploy. Do not approve it unwatched: open the run&apos;s files first.
             </p>
+          )}
+          {/* WHOSE RECORDING THIS IS — directly under the player, above the
+              cost, because it is the only thing on this screen that makes
+              Approve a decision rather than a formality. Open discovery
+              (agent-engine RFC-25) lets the clipper search the whole web, and
+              the owner's ruling that it may do so rests explicitly on a human
+              seeing the source before anything ships. This block is that
+              human's half of the bargain.
+
+              Rendered for any clip that carries a provenance, not only the
+              unknown ones: "this came from a show the client clears" is worth
+              the same line, and a block that appears only when something is
+              wrong is a block reviewers learn to fear rather than read. */}
+          {(clip.licenseConfidence !== undefined || clip.sourceUrl !== undefined || clip.sourceChannel !== undefined || clip.discovery !== undefined) && (
+            <div
+              className={`rounded-md border px-2.5 py-2 text-xs ${
+                clip.licenseConfidence === "unknown" ? "border-warning/40 bg-warning/5" : "border-border bg-surface-2/50"
+              }`}
+            >
+              <p className="font-medium text-foreground">
+                {clip.sourceTitle ?? clip.sourceChannel ?? "Source"}
+                {clip.sourceTitle !== undefined && clip.sourceChannel !== undefined ? ` — ${clip.sourceChannel}` : ""}
+              </p>
+              {clip.licenseConfidence !== undefined && <p className="mt-0.5 text-muted">{describeLicenseConfidence(clip.licenseConfidence).detail}</p>}
+              {clip.discovery !== undefined && (
+                <p className="mt-0.5 text-muted">
+                  {describeDiscovery(clip.discovery)}
+                  {clip.harvestQuery !== undefined ? ` — searched for “${normalizeDashes(clip.harvestQuery)}”` : ""}
+                </p>
+              )}
+              {clip.sourceUrl !== undefined && (
+                // The actual recording, one click away. A reviewer asked to
+                // weigh "is this a competitor's show" cannot answer it from a
+                // channel name alone.
+                <a
+                  href={clip.sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 inline-block break-all text-neon underline decoration-dotted underline-offset-2"
+                >
+                  {clip.sourceUrl}
+                </a>
+              )}
+              {/* What the source-fit judge said, whatever it scored. It marks
+                  and never blocks, so its objection only means anything if it
+                  is read — and its approval is worth as much to a reviewer as
+                  its objection. */}
+              {clip.sourceFit !== undefined && (
+                <p className="mt-1 text-muted">
+                  Source fit {clip.sourceFit.score}/10 — {normalizeDashes(clip.sourceFit.reason)}
+                </p>
+              )}
+              {clip.sourceFit?.concerns !== undefined && (
+                <ul className="mt-1 space-y-0.5 pl-4 text-warning">
+                  {clip.sourceFit.concerns.map((c) => (
+                    <li key={c} className="list-disc">
+                      {normalizeDashes(c)}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
           {(clip.costSoFarUsd !== undefined || clip.maxCostUsd !== undefined) && (
             <p className="text-xs text-muted">
@@ -631,6 +721,71 @@ export function AgentEngineGateApproval({
                 ))}
               </ul>
             </details>
+          )}
+          {/* WHAT THIS RUN HAD TO ADAPT AROUND on its way to a clip: a
+              redacted sentence, an appended source credit, a beat wearing a
+              neighbour's picture, a writer that returned nothing, a source the
+              judge scored poorly.
+
+              This is the difference between a clip that came out clean and one
+              that was salvaged, and nothing else on this screen says which the
+              reviewer is watching. The engine has carried it on the gate
+              payload since 2026-09; until now it rendered as a collapsed JSON
+              blob under the clip block, beside a badge that said "flagged" and
+              did not say why. Open by default — the whole reason the
+              always-deliver rule is safe is that a person sees what was
+              adapted, and a detail element they have to think to open is not
+              that person seeing it. */}
+          {clip.contentRepairs !== undefined && (
+            <div className="rounded-md border border-warning/40 bg-warning/5 px-2.5 py-1.5 text-xs">
+              <p className="font-medium text-foreground">
+                This run adapted around {clip.contentRepairs.length} thing{clip.contentRepairs.length === 1 ? "" : "s"}
+              </p>
+              <ul className="mt-1 space-y-1">
+                {clip.contentRepairs.map((r) => (
+                  <li key={`${r.check}-${r.detail}`}>
+                    <span className="text-muted-2">
+                      {labelForKey(r.check)} · {labelForKey(r.action)}
+                    </span>
+                    <br />
+                    <span className="text-muted">{normalizeDashes(r.detail)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {/* The cut was chosen by code rather than by the moment picker — the
+              clip is a real clip, but nobody read the transcript and decided
+              this was the interesting part of it. */}
+          {clip.momentFallback !== undefined && <p className="text-xs text-muted">Moment picked by fallback: {normalizeDashes(clip.momentFallback)}</p>}
+          {/* What the moment floor OBSERVED and did not act on. Deliberately
+              quiet: a window with no figure in it may still be the best thirty
+              seconds in the episode, and that call is the reviewer's. */}
+          {clip.momentNotes !== undefined && (
+            <details className="text-xs text-muted">
+              <summary className="cursor-pointer">What the moment floor noticed but left alone</summary>
+              <ul className="mt-1 space-y-0.5 pl-4">
+                {clip.momentNotes.map((n) => (
+                  <li key={n}>{normalizeDashes(n)}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {/* Which language this short is in and where that came from. Shown
+              always, not only on a guess: "we assumed English because nobody
+              configured anything" is exactly what a reviewer of a Hebrew
+              client's short needs before they approve it — and by the time
+              they can hear it is wrong, they have watched the whole clip. */}
+          {clip.targetLanguage !== undefined && (
+            <p className="text-xs text-muted">
+              Language {clip.targetLanguage.tag}
+              {clip.targetLanguage.assumed ? (
+                <span className="text-warning"> — assumed, nobody configured one</span>
+              ) : (
+                <> — from {labelForKey(clip.targetLanguage.source)}</>
+              )}
+              {clip.targetLanguage.reason !== undefined ? ` (${normalizeDashes(clip.targetLanguage.reason)})` : ""}
+            </p>
           )}
           {clip.script && (
             <details className="rounded-md border border-border/60 bg-surface-2/40">
