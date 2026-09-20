@@ -56,6 +56,10 @@ function jsonResponse(body: unknown, status = 200) {
 
 let calls: Array<{ url: string; body: any }>;
 
+/** Fake clip size for every test — well under TikTok's 64MB single-chunk ceiling. */
+const FAKE_VIDEO_SIZE = 5_242_880;
+const TIKTOK_UPLOAD_URL = "https://tiktok-upload.test/upload";
+
 beforeEach(() => {
   calls = [];
   vi.stubGlobal(
@@ -72,7 +76,23 @@ beforeEach(() => {
         body = Object.fromEntries(body.entries());
       }
       calls.push({ url, body });
-      if (url.includes("tiktokapis")) return jsonResponse({ data: { publish_id: "pub-1" } });
+
+      // FILE_UPLOAD's chunk PUT — goes to the upload_url the init call handed back,
+      // not to tiktokapis, and carries no bearer token.
+      if (url === TIKTOK_UPLOAD_URL) return jsonResponse({});
+
+      if (url.includes("tiktokapis")) {
+        return jsonResponse({ data: { publish_id: "pub-1", upload_url: TIKTOK_UPLOAD_URL } });
+      }
+
+      // A ranged GET straight off the clip's own URL — probeVideoSize/fetchVideoChunk
+      // reading the bytes themselves, in place of the old PULL_FROM_URL handoff.
+      const range = (init?.headers as Record<string, string> | undefined)?.Range;
+      if (range) {
+        const headers = new Headers({ "content-range": `bytes 0-${FAKE_VIDEO_SIZE - 1}/${FAKE_VIDEO_SIZE}` });
+        return { ok: true, status: 206, headers, arrayBuffer: async () => new ArrayBuffer(8) };
+      }
+
       if (url.includes("media_publish")) return jsonResponse({ id: "ig-post-1" });
       if (url.includes("/media")) return jsonResponse({ id: "container-1" });
       if (url.includes("/feed")) return jsonResponse({ id: "fb-post-1" });
@@ -88,10 +108,17 @@ describe("#48 — TikTok publishes the clip the asset actually carries", () => {
     const result = await publishAssetToPlatform("tiktok", integration, bulkClip());
 
     expect(result.postId).toBe("pub-1");
-    expect(calls[0]!.body.source_info).toEqual({
-      source: "PULL_FROM_URL",
-      video_url: "https://storage.googleapis.com/bucket/clip-3.mp4?X-Goog-Signature=abc",
+    const initCall = calls.find((c) => c.url.includes("tiktokapis"))!;
+    expect(initCall.body.source_info).toEqual({
+      source: "FILE_UPLOAD",
+      video_size: FAKE_VIDEO_SIZE,
+      chunk_size: FAKE_VIDEO_SIZE,
+      total_chunk_count: 1,
     });
+    // still reads the clip's bytes off the exact URL the asset actually carries
+    expect(
+      calls.some((c) => c.url === "https://storage.googleapis.com/bucket/clip-3.mp4?X-Goog-Signature=abc"),
+    ).toBe(true);
   });
 
   it("finds a clip that arrived through the webhook's artifact list", async () => {
@@ -111,7 +138,7 @@ describe("#48 — TikTok publishes the clip the asset actually carries", () => {
 
     await publishAssetToPlatform("tiktok", integration, asset);
 
-    expect(calls[0]!.body.source_info.video_url).toBe("https://cdn.test/cut-1.mp4");
+    expect(calls.some((c) => c.url === "https://cdn.test/cut-1.mp4")).toBe(true);
   });
 
   it("still accepts a legacy payload whose clip rides on imageUrl", async () => {
@@ -125,7 +152,7 @@ describe("#48 — TikTok publishes the clip the asset actually carries", () => {
 
     await publishAssetToPlatform("tiktok", integration, asset);
 
-    expect(calls[0]!.body.source_info.video_url).toBe("https://cdn.test/legacy.mp4");
+    expect(calls.some((c) => c.url === "https://cdn.test/legacy.mp4")).toBe(true);
   });
 
   it("refuses a photo post rather than posting it as a video", async () => {
