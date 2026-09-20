@@ -1,5 +1,7 @@
 import "server-only";
 
+import { brandPageUrl } from "@/lib/branding-site-palette";
+
 /**
  * Live brand evidence that a plain `fetch` cannot reach: a RENDERED screenshot
  * of the site, and the client's Instagram mark and grid.
@@ -151,8 +153,11 @@ function decodePayload(payload: unknown, label: string): BrandImage | null {
  * This is the only source in the branding pipeline that reports what a visitor
  * actually SEES rather than what the source code claims.
  */
-export async function fetchSiteScreenshot(domain: string, fullPage = true): Promise<BrandImage | null> {
-  const url = `https://${domain.replace(/^https?:\/\//, "").replace(/\/+$/, "")}`;
+export async function fetchSiteScreenshot(site: string, fullPage = true): Promise<BrandImage | null> {
+  // `brandPageUrl` keeps the path: a client whose site is a section of a larger
+  // one (deel.com/the-pitch-by-deel) must be rendered at THAT page. Stripping
+  // it here screenshotted the parent brand's homepage and measured its colours.
+  const url = brandPageUrl(site);
   // `full_page`, not the viewport. A viewport render answers "is this colour
   // above the fold", which is a different and much weaker question than "does
   // this site use this colour" — deel.com/the-pitch-by-deel paints its yellow

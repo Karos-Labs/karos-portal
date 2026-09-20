@@ -6,6 +6,7 @@ import {
   describeObservedPalette,
   snapToObservedPalette,
   mergePaintedPalette,
+  brandPageUrl,
   type ObservedColor,
 } from "@/lib/branding-site-palette";
 import { paletteFromPng, pngDimensions } from "@/lib/branding-image-palette";
@@ -103,8 +104,20 @@ export type ColorRoleClassification = "accent" | "neutral" | "unclassified";
 
 /** Checked first: role text naming what the brand ACTS with. */
 const ACCENT_ROLE_KEYWORDS = ["accent", "cta", "highlight", "badge", "signature"];
-/** Checked second: role text naming the page/text substrate. */
-const NEUTRAL_ROLE_KEYWORDS = ["ground", "surface", "canvas", "background", "ink", "type", "body", "wordmark", "heading"];
+/**
+ * Checked second: role text naming the page/text substrate.
+ *
+ * "text", "copy", "content", "card" and "border" were added 2026-09-20. A
+ * freshly extracted palette described white as "Primary text / content on
+ * dark" — a plainly neutral role that matched none of the original nine words,
+ * so it classified as nothing and the client's `brandNeutralLight` fell to the
+ * next candidate, a deep purple. An accent keyword still wins when both appear
+ * ("CTA button text" is a CTA), which is why the accent list is tested first.
+ */
+const NEUTRAL_ROLE_KEYWORDS = [
+  "ground", "surface", "canvas", "background", "ink", "type", "body", "wordmark", "heading",
+  "text", "copy", "content", "card", "border",
+];
 
 /**
  * Classifies one `BrandColor.role` string. Case-insensitive substring match
@@ -124,6 +137,104 @@ export function classifyColorRole(role: string | undefined): ColorRoleClassifica
   if (ACCENT_ROLE_KEYWORDS.some((kw) => lower.includes(kw))) return "accent";
   if (NEUTRAL_ROLE_KEYWORDS.some((kw) => lower.includes(kw))) return "neutral";
   return "unclassified";
+}
+
+/**
+ * The plain colour words a role string can claim, and what each one means in
+ * HSL. Ordered narrowest-first: `gold` before `yellow`, `navy` before `blue`,
+ * so a reported word is replaced by one at least as specific.
+ */
+const COLOR_WORDS: ReadonlyArray<{ word: string; holds: (h: number, s: number, l: number) => boolean }> = [
+  { word: "white", holds: (_h, _s, l) => l >= 0.9 },
+  { word: "black", holds: (_h, _s, l) => l <= 0.12 },
+  { word: "cream", holds: (h, s, l) => l >= 0.82 && s < 0.6 && h >= 20 && h < 70 },
+  { word: "grey", holds: (_h, s, l) => s < 0.12 && l > 0.12 && l < 0.9 },
+  { word: "gray", holds: (_h, s, l) => s < 0.12 && l > 0.12 && l < 0.9 },
+  { word: "brown", holds: (h, s, l) => h >= 10 && h < 45 && s >= 0.12 && l < 0.45 },
+  { word: "gold", holds: (h, s, l) => h >= 38 && h < 60 && s >= 0.3 && l >= 0.35 && l < 0.7 },
+  { word: "red", holds: (h, s) => (h >= 345 || h < 15) && s >= 0.2 },
+  { word: "orange", holds: (h, s) => h >= 15 && h < 45 && s >= 0.2 },
+  { word: "yellow", holds: (h, s) => h >= 45 && h < 70 && s >= 0.2 },
+  { word: "green", holds: (h, s) => h >= 70 && h < 165 && s >= 0.15 },
+  { word: "teal", holds: (h, s) => h >= 150 && h < 195 && s >= 0.15 },
+  { word: "cyan", holds: (h, s) => h >= 170 && h < 200 && s >= 0.2 },
+  { word: "navy", holds: (h, s, l) => h >= 195 && h < 260 && s >= 0.2 && l < 0.35 },
+  { word: "blue", holds: (h, s) => h >= 185 && h < 260 && s >= 0.15 },
+  { word: "purple", holds: (h, s) => h >= 255 && h < 300 && s >= 0.15 },
+  { word: "violet", holds: (h, s) => h >= 255 && h < 300 && s >= 0.15 },
+  { word: "magenta", holds: (h, s) => h >= 290 && h < 345 && s >= 0.2 },
+  { word: "pink", holds: (h, s, l) => h >= 290 && h < 355 && s >= 0.15 && l >= 0.55 },
+];
+
+/** Hue (0–360), saturation and lightness (0–1) for a normalized hex. */
+function hsl(hex: string): { h: number; s: number; l: number } | null {
+  const normalized = normalizeHex(hex);
+  if (!normalized) return null;
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(normalized.slice(i, i + 2), 16) / 255) as [number, number, number];
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+  if (d === 0) return { h: 0, s: 0, l };
+  const s = d / (1 - Math.abs(2 * l - 1) || 1);
+  const h =
+    max === r ? ((g - b) / d + (g < b ? 6 : 0)) * 60 : max === g ? ((b - r) / d + 2) * 60 : ((r - g) / d + 4) * 60;
+  return { h, s, l };
+}
+
+/**
+ * Rewrite a colour word in a role string that the hex contradicts.
+ *
+ * THE RECORD THIS EXISTS FOR. The extraction for "Pitch by Deel" wrote
+ * `{ hex: "#ffffff", role: "Accent yellow, highlights and CTAs" }` — a single
+ * entry making two incompatible claims, of which only one can be true. Nothing
+ * checked them against each other, so the contradiction was stored, shown to
+ * the client as their brand's third colour, and read downstream as an accent.
+ *
+ * The hex is the checkable half — it was snapped to a value the site really
+ * serves — so the word gives way: swapped for the one the hex actually is, or
+ * dropped when nothing describes it cleanly. The rest of the role, which is
+ * the model's real judgment about what the colour is FOR, is left alone.
+ */
+export function reconcileRoleWithHex(role: string | undefined, hex: string): string | undefined {
+  if (!role) return role;
+  const color = hsl(hex);
+  if (!color) return role;
+  const { h, s, l } = color;
+  const actual = COLOR_WORDS.find((w) => w.holds(h, s, l))?.word;
+
+  let out = role;
+  for (const { word, holds } of COLOR_WORDS) {
+    if (holds(h, s, l)) continue;
+    const claim = new RegExp(`\\b${word}\\b`, "gi");
+    if (!claim.test(out)) continue;
+    out = actual
+      ? out.replace(new RegExp(`\\b${word}\\b`, "gi"), actual)
+      : out.replace(new RegExp(`\\s*\\b${word}\\b`, "gi"), "");
+  }
+  // A substitution can leave "purple purple" when the role already named the
+  // right colour elsewhere in the sentence.
+  out = out.replace(/\b(\w+)(\s+\1\b)+/gi, "$1").replace(/\s{2,}/g, " ").trim();
+  return out.length > 0 ? out : undefined;
+}
+
+/** An accent that is really the page's substrate is a neutral; everything else is left alone. */
+function demoteSubstrateAccent(hex: string, classification: ColorRoleClassification): ColorRoleClassification {
+  return classification === "accent" && isSubstrateColor(hex) ? "neutral" : classification;
+}
+
+/**
+ * Effectively white or effectively black — the page's substrate, never the
+ * colour it acts WITH. Mirrors `ACCENT_LIGHTNESS_RANGE` in
+ * `branding-site-palette.ts`, which excludes the same band from the accent
+ * candidates it offers the model; this enforces it on the way back.
+ */
+export function isSubstrateColor(hex: string): boolean {
+  const normalized = normalizeHex(hex);
+  if (!normalized) return false;
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(normalized.slice(i, i + 2), 16) / 255) as [number, number, number];
+  const lightness = (Math.max(r, g, b) + Math.min(r, g, b)) / 2;
+  return lightness >= 0.92 || lightness <= 0.12;
 }
 
 /**
@@ -166,7 +277,22 @@ export interface RoleResolvedPalette {
  * module's own section header above for the full rationale.
  */
 export function resolveDominantColorsByRole(colors: readonly BrandColor[]): RoleResolvedPalette {
-  const classified = colors.map((color) => ({ color, classification: classifyColorRole(color.role) }));
+  const classified = colors.map((color) => ({
+    color,
+    // Role text classifies, and the hex gets a veto over ONE of its answers: a
+    // near-white or near-black called an accent is demoted to neutral. A brand
+    // does not act with #ffffff, it grounds with it. The extraction for "Pitch
+    // by Deel" returned `{ hex: "#ffffff", role: "Accent yellow, highlights and
+    // CTAs" }` — two colours confused into one entry — and the word "accent"
+    // then made white that client's `secondaryAccent`, which every downstream
+    // agent reads as the colour to put on a button.
+    //
+    // A veto, never a vote: a colour whose role text classifies as NOTHING
+    // stays unclassified however dark it is, so `resolvedByRole` keeps meaning
+    // "some role text was understood" and the positional fallback below still
+    // fires for a legacy record of bare hexes.
+    classification: demoteSubstrateAccent(color.hex, classifyColorRole(color.role)),
+  }));
   if (!classified.some((c) => c.classification !== "unclassified")) {
     return { resolvedByRole: false };
   }
@@ -491,6 +617,7 @@ const ANALYST_SYSTEM =
  *   • unknown    → returns null; caller falls back to training-data-only prompt
  */
 async function gatherSiteIntelligence(
+  siteUrl: string,
   domain: string,
   clientName: string,
   access: SiteAccessState,
@@ -509,7 +636,8 @@ async function gatherSiteIntelligence(
 
   try {
     if (access === "accessible") {
-      const siteUrl = `https://${domain}`;
+      // `siteUrl`, not the bare host: for a client whose site is a section of a
+      // larger one, the homepage is a different brand's page.
       const siteAi = aiFor(role, { budgets: { web_fetch: {} } });
       const { text, usage, providerMetadata } = await generateText({
         model: siteAi.model,
@@ -520,7 +648,9 @@ async function gatherSiteIntelligence(
         system: ANALYST_SYSTEM,
         prompt:
           `Extract the complete visual identity profile for ${siteUrl}. ` +
-          `Phase 1 — Fetch the homepage HTML. Look for: ` +
+          `Read THAT EXACT URL, not the site's homepage: when the two differ, the brand being ` +
+          `described is the one on that page, and the homepage belongs to somebody else. ` +
+          `Phase 1 — Fetch that page's HTML. Look for: ` +
           `(a) <link rel="stylesheet"> href values (save these URLs for Phase 2), ` +
           `(b) <link> tags pointing to fonts.googleapis.com — copy the full URL, font names are in ?family= params, ` +
           `(c) Inline style hex colors on <nav>, <header>, <button>, and prominent <a> elements. ` +
@@ -615,7 +745,9 @@ const BrandingAISchema = z.object({
         "CRITICAL RULES: " +
         "(1) Never pad the array to reach 4 — if the brand uses 2 colors, return exactly 2. " +
         "(2) No dark/light constraints — Colors 3 and 4 are simply the 3rd and 4th most dominant, whatever they are. " +
-        "(3) Never add generic #000000 or #ffffff unless they are the actual signature brand color. " +
+        "(3) White and black are real brand colors when the site is actually made of them — a palette " +
+        "for a page that is half white, with no white in it, is wrong. Include one when the evidence " +
+        "shows it as a major surface or ink; never as padding. " +
         "(4) Never substitute #2563eb (generic tech blue) for a brand with a known distinctive color. " +
         "Examples: XO Digital → ['#e91e8c', '#1a1a2e']; Cloudflare → ['#f6821f', '#404040', '#fbad41']; " +
         "Stripe → ['#6772e5', '#32325d', '#24b47e']; Twilio → ['#f22f46', '#0d122b', '#e1f2fd'].",
@@ -772,7 +904,8 @@ export function buildBrandingPrompt(
       "   → NO, it's just a tint/shade of a logo color: use the logo version; do not add it.",
       "3. Result: A 2-color brand that genuinely uses only 2 colors returns exactly 2 entries. " +
         "Only reach Color 3–4 when the website confirms a real third/fourth brand color.",
-      "Never pad to fill 4 slots. Never add #000000 or #ffffff unless they are a documented brand signature.",
+      "Never pad to fill 4 slots. White, off-white and near-black belong in the palette when the site is " +
+        "built on them — judge that from the evidence below, not from how ordinary the colour feels.",
     );
   } else if (!safeIntel) {
     lines.push(
@@ -821,6 +954,8 @@ export function buildBrandingPrompt(
     "- Order colors by visual dominance — Color 1 must be the most visually prominent.",
     "- No dark/light role constraints: Colors 3 and 4 are simply the 3rd/4th most dominant, regardless of lightness.",
     "- Never include a color just to fill a slot. A 2-color brand gets exactly 2 colors.",
+    "- A color that belongs to a third party — a chat widget, a share button, a screenshot mock-up of " +
+      "another product — is never this brand's, however prominent it is on the page.",
     "- Never use generic placeholder colors (#2563eb, #22c55e) for brands with known distinctive palettes.",
     "- fontHeading/fontBody: use actual brand fonts if known; archetype fallback only if unknown.",
     "- visualStyle, toneKeywords, and brandVoice must be internally consistent — High-Tech must pair with Disruptive/Innovative tone.",
@@ -896,12 +1031,21 @@ export async function applyBrandingForClient(
   const client = knownClient ?? (await getClient(clientId));
   if (!client) throw new Error(`Client not found: ${clientId}`);
 
-  // ── Resolve domain ───────────────────────────────────────────────
+  // ── Resolve the site ─────────────────────────────────────────────
+  // TWO values, because they answer different questions. `domain` is what this
+  // brand is CALLED, and goes in prompts and logs. `siteUrl` is the page to
+  // READ, and keeps the path the client recorded: "Pitch by Deel" is
+  // `https://www.deel.com/the-pitch-by-deel/`, and taking only its hostname
+  // pointed the palette, the site intelligence and the screenshot at Deel's
+  // corporate homepage — which is where a yellow that sub-brand never uses
+  // came from, ranked third by frequency on a page belonging to someone else.
   let domain: string | null = null;
+  let siteUrl: string | null = null;
   const rawUrl = client.website?.trim();
   if (rawUrl) {
     try {
       domain = new URL(rawUrl.startsWith("http") ? rawUrl : `https://${rawUrl}`).hostname;
+      siteUrl = brandPageUrl(rawUrl);
     } catch {
       // Invalid URL — proceed without domain
     }
@@ -912,12 +1056,12 @@ export async function applyBrandingForClient(
   // ── Tiers 1+2 (site intelligence), the verified palette, and the logo ─
   const [siteIntelligence, declaredPalette, logoContext, screenshot, instagram] = await Promise.all([
     (async (): Promise<string | null> => {
-      if (!domain) return null;
-      const access = await checkSiteAccess(`https://${domain}`);
-      console.info(`[branding] ${domain} — access: ${access}`);
-      const intel = await gatherSiteIntelligence(domain, client.name, access, clientId);
+      if (!siteUrl) return null;
+      const access = await checkSiteAccess(siteUrl);
+      console.info(`[branding] ${siteUrl} — access: ${access}`);
+      const intel = await gatherSiteIntelligence(siteUrl, domain ?? siteUrl, client.name, access, clientId);
       if (intel) {
-        console.info(`[branding] ${domain} — site intelligence gathered (${intel.length} chars)`);
+        console.info(`[branding] ${siteUrl} — site intelligence gathered (${intel.length} chars)`);
       }
       return intel;
     })(),
@@ -927,11 +1071,11 @@ export async function applyBrandingForClient(
     // This reads the same site with a regex. Costs one page fetch plus up to
     // four stylesheets, and gives the extraction below a list of hexes that
     // provably exist.
-    domain ? observeSitePalette(domain) : Promise.resolve<ObservedColor[]>([]),
+    siteUrl ? observeSitePalette(siteUrl) : Promise.resolve<ObservedColor[]>([]),
     logoUrl ? prepareLogoContext(logoUrl) : Promise.resolve<LogoContext>(null),
     // What the site PAINTS, as opposed to what it declares — the one question
     // the two sources above cannot answer. See `branding-scrappycoco.ts`.
-    domain && isScrappycocoConfigured() ? fetchSiteScreenshot(domain) : Promise.resolve(null),
+    siteUrl && isScrappycocoConfigured() ? fetchSiteScreenshot(siteUrl) : Promise.resolve(null),
     // The client's own Instagram mark and grid. Reachable only through a
     // scraper: logged out, instagram.com serves a JavaScript shell with no
     // profile data in it at all.
@@ -943,7 +1087,32 @@ export async function applyBrandingForClient(
   // The screenshot's measured colours are folded into the declared palette, so
   // every downstream reader sees one list in which each colour knows whether the
   // page actually paints it.
-  const paintedColors = screenshot ? paletteFromPng(Buffer.from(screenshot.bytes)) : [];
+  // Deep enough that a RATIONED colour still gets a share. The default twelve
+  // is the page's furniture — grounds, inks, the greys between them — and a
+  // brand's accent lives well below it: the purple deel.com/the-pitch-by-deel
+  // puts on its buttons is the 56th colour by area, and at twelve every real
+  // accent read "0.00% of the page", exactly like a colour that is not there.
+  const PAINTED_COLOR_DEPTH = 48;
+  /**
+   * Above this share for a single colour the render is not a page.
+   *
+   * kindlyyours.com returns a 5.8KB screenshot that is 1440x900 of pure white —
+   * a client-rendered site the renderer gave up on, or a wall it never got
+   * past. Now that a measured colour no longer has to be declared to count,
+   * that blank would enter the palette as "the page is 100% white", which is
+   * both false and the most confident evidence in the prompt. A real marketing
+   * page is never one colour; deel.com/the-pitch-by-deel, the darkest of these
+   * sites, is 88.65% its ground.
+   */
+  const BLANK_RENDER_SHARE = 0.98;
+  const measured = screenshot ? paletteFromPng(Buffer.from(screenshot.bytes), PAINTED_COLOR_DEPTH) : [];
+  const blankRender = (measured[0]?.share ?? 0) >= BLANK_RENDER_SHARE;
+  if (blankRender) {
+    console.warn(
+      `[branding] ${domain} — the render is ${(measured[0]!.share * 100).toFixed(1)}% ${measured[0]!.hex}: not a page. Ignoring its pixels.`,
+    );
+  }
+  const paintedColors = blankRender ? [] : measured;
   const observedPalette = mergePaintedPalette(declaredPalette, paintedColors);
 
   /**
@@ -961,7 +1130,7 @@ export async function applyBrandingForClient(
   const shotSize = screenshot ? pngDimensions(Buffer.from(screenshot.bytes)) : null;
   const shotFitsVision = shotSize !== null && shotSize.width <= MAX_VISION_PIXELS && shotSize.height <= MAX_VISION_PIXELS;
   const viewportShot =
-    screenshot && !shotFitsVision && domain && isScrappycocoConfigured() ? await fetchSiteScreenshot(domain, false) : null;
+    screenshot && !shotFitsVision && siteUrl && isScrappycocoConfigured() ? await fetchSiteScreenshot(siteUrl, false) : null;
   const screenshotForVision = shotFitsVision ? screenshot : viewportShot;
 
   if (observedPalette.length > 0) {
@@ -1077,7 +1246,16 @@ export async function applyBrandingForClient(
   // site does not contain cannot be the brand's, whatever the model believed —
   // this is what stops another `#6366f1` reaching a client's brand guidelines.
   // With no observations it is a no-op; see `snapToObservedPalette`.
-  const dominantColors = snapToObservedPalette(extracted, observedPalette);
+  const snapped = snapToObservedPalette(extracted, observedPalette);
+  // …and the last word on the role TEXT, for the same reason: a colour word the
+  // hex contradicts is a claim this run can check, and did not.
+  const dominantColors = snapped.map((c) => {
+    const role = reconcileRoleWithHex(c.role, c.hex);
+    if (role !== c.role) {
+      console.warn(`[branding] ${domain ?? client.name} — role text contradicted its own hex ${c.hex}: "${c.role}" -> "${role ?? ""}"`);
+    }
+    return role === undefined ? { hex: c.hex, dominanceRank: c.dominanceRank } : { ...c, role };
+  });
   const repairs = extracted
     .map((before, i) => ({ before: before.hex, after: dominantColors[i]!.hex }))
     .filter((r) => r.before !== r.after);

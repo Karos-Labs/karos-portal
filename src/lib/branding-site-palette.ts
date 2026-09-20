@@ -120,10 +120,133 @@ export function isUncorroboratedSlotColor(c: ObservedColor): boolean {
   return !c.inLogo && !c.inMarkup && c.cssVars.length > 0 && slotNamedOnly(c.cssVars);
 }
 
+/**
+ * Colours that belong to a THIRD PARTY whose widget, embed or mock-up happens
+ * to sit on the client's page.
+ *
+ * xodigital.com.br renders a WhatsApp conversation mock-up in its hero. The
+ * mock-up brings WhatsApp's whole palette with it — `#25d366`, `#075e54`,
+ * `#128c7e`, `#00a884`, `#06cf9c`, `#d9fdd3` — plus Instagram's `#0095f6` from
+ * the social row. Those hexes are really in that site's CSS, they really get
+ * painted, and they are more saturated than
+ * the brand's own peach, so `accentCandidates` ranked all six of its slots
+ * WhatsApp green and the extraction returned `#06cf9c` as XO Digital's primary
+ * accent and `#0095f6` as its secondary. Both are somebody else's brand.
+ *
+ * Only unmistakable, published vendor values are listed, and only ones no
+ * designer would land on by accident. Reds and pure primaries are deliberately
+ * absent: YouTube's `#ff0000` and Pinterest's `#e60023` are values a real brand
+ * picks on purpose, and a list that stole them would cost more than it saved.
+ */
+const THIRD_PARTY_BRAND_HEXES = new Map<string, string>([
+  ["#25d366", "WhatsApp"], ["#128c7e", "WhatsApp"], ["#075e54", "WhatsApp"], ["#00a884", "WhatsApp"],
+  ["#06cf9c", "WhatsApp"], ["#008f72", "WhatsApp"], ["#d9fdd3", "WhatsApp"], ["#dcf8c6", "WhatsApp"],
+  ["#e5ddd5", "WhatsApp"], ["#ece5dd", "WhatsApp"], ["#53bdeb", "WhatsApp"], ["#34b7f1", "WhatsApp"],
+  ["#1877f2", "Facebook"], ["#0866ff", "Facebook"], ["#4267b2", "Facebook"],
+  ["#0095f6", "Instagram"], ["#e1306c", "Instagram"], ["#c13584", "Instagram"], ["#833ab4", "Instagram"],
+  ["#1da1f2", "X/Twitter"], ["#1d9bf0", "X/Twitter"],
+  ["#0a66c2", "LinkedIn"], ["#0077b5", "LinkedIn"],
+  ["#fe2c55", "TikTok"], ["#69c9d0", "TikTok"], ["#ee1d52", "TikTok"],
+  ["#0088cc", "Telegram"], ["#229ed9", "Telegram"],
+  ["#4285f4", "Google"], ["#34a853", "Google"], ["#fbbc05", "Google"], ["#ea4335", "Google"],
+  ["#635bff", "Stripe"], ["#003087", "PayPal"], ["#009cde", "PayPal"], ["#0070ba", "PayPal"],
+  ["#5865f2", "Discord"], ["#ff4500", "Reddit"], ["#1db954", "Spotify"],
+]);
+
+/**
+ * A CSS framework's STOCK palette value, shipped with the tool rather than
+ * chosen by anybody.
+ *
+ * The same argument this module already makes about `--primary: #2f6bff`,
+ * generalised. xodigital.com.br paints `#22c55e` on a status badge, through
+ * `.from-green-500{--tw-gradient-from:#22c55e}` — Tailwind's default green,
+ * arrived at by typing a class name. It is chromatic, it is painted, and no
+ * rule about token names can tell it from a brand's own accent, so it was
+ * offered as a candidate signature colour and returned as that client's
+ * primary accent on one run in two. `#6366f1` — Tailwind `indigo-500`, the
+ * invented hex this whole pipeline was built to stop — is in this table too.
+ *
+ * Only the 400/500/600 shades are listed: the band a site reaches for when it
+ * wants a visible accent, and the only band that competes with a real one. A
+ * value absent here is not thereby a brand colour, and one present here still
+ * is one if the mark or a brand-meaning token name says so.
+ */
+const FRAMEWORK_DEFAULT_HEXES = new Map<string, string>([
+  ["#94a3b8", "Tailwind slate-400"], ["#64748b", "Tailwind slate-500"], ["#475569", "Tailwind slate-600"],
+  ["#9ca3af", "Tailwind gray-400"], ["#6b7280", "Tailwind gray-500"], ["#4b5563", "Tailwind gray-600"],
+  ["#a1a1aa", "Tailwind zinc-400"], ["#71717a", "Tailwind zinc-500"], ["#52525b", "Tailwind zinc-600"],
+  ["#a3a3a3", "Tailwind neutral-400"], ["#737373", "Tailwind neutral-500"], ["#525252", "Tailwind neutral-600"],
+  ["#a8a29e", "Tailwind stone-400"], ["#78716c", "Tailwind stone-500"], ["#57534e", "Tailwind stone-600"],
+  ["#f87171", "Tailwind red-400"], ["#ef4444", "Tailwind red-500"], ["#dc2626", "Tailwind red-600"],
+  ["#fb923c", "Tailwind orange-400"], ["#f97316", "Tailwind orange-500"], ["#ea580c", "Tailwind orange-600"],
+  ["#fbbf24", "Tailwind amber-400"], ["#f59e0b", "Tailwind amber-500"], ["#d97706", "Tailwind amber-600"],
+  ["#facc15", "Tailwind yellow-400"], ["#eab308", "Tailwind yellow-500"], ["#ca8a04", "Tailwind yellow-600"],
+  ["#a3e635", "Tailwind lime-400"], ["#84cc16", "Tailwind lime-500"], ["#65a30d", "Tailwind lime-600"],
+  ["#4ade80", "Tailwind green-400"], ["#22c55e", "Tailwind green-500"], ["#16a34a", "Tailwind green-600"],
+  ["#34d399", "Tailwind emerald-400"], ["#10b981", "Tailwind emerald-500"], ["#059669", "Tailwind emerald-600"],
+  ["#2dd4bf", "Tailwind teal-400"], ["#14b8a6", "Tailwind teal-500"], ["#0d9488", "Tailwind teal-600"],
+  ["#22d3ee", "Tailwind cyan-400"], ["#06b6d4", "Tailwind cyan-500"], ["#0891b2", "Tailwind cyan-600"],
+  ["#38bdf8", "Tailwind sky-400"], ["#0ea5e9", "Tailwind sky-500"], ["#0284c7", "Tailwind sky-600"],
+  ["#60a5fa", "Tailwind blue-400"], ["#3b82f6", "Tailwind blue-500"], ["#2563eb", "Tailwind blue-600"],
+  ["#818cf8", "Tailwind indigo-400"], ["#6366f1", "Tailwind indigo-500"], ["#4f46e5", "Tailwind indigo-600"],
+  ["#a78bfa", "Tailwind violet-400"], ["#8b5cf6", "Tailwind violet-500"], ["#7c3aed", "Tailwind violet-600"],
+  ["#c084fc", "Tailwind purple-400"], ["#a855f7", "Tailwind purple-500"], ["#9333ea", "Tailwind purple-600"],
+  ["#e879f9", "Tailwind fuchsia-400"], ["#d946ef", "Tailwind fuchsia-500"], ["#c026d3", "Tailwind fuchsia-600"],
+  ["#f472b6", "Tailwind pink-400"], ["#ec4899", "Tailwind pink-500"], ["#db2777", "Tailwind pink-600"],
+  ["#fb7185", "Tailwind rose-400"], ["#f43f5e", "Tailwind rose-500"], ["#e11d48", "Tailwind rose-600"],
+]);
+
+/** A brand-meaning custom-property name — somebody naming a colour their own. */
+const BRAND_MEANING_NAME_RE = /accent|brand|cta|highlight/i;
+
+/**
+ * True when this colour is a third party's, borrowed by an embed on the page.
+ *
+ * The client's OWN evidence always wins: a colour in the site's icon/logo mark,
+ * or one the site names `--accent`/`--brand-*`/`--cta-*`, is this brand's even
+ * if a vendor also uses that value. A denylist must never be able to delete a
+ * brand's real colour, only to demote one nothing else vouches for.
+ */
+export function isThirdPartyVendorColor(c: ObservedColor): boolean {
+  return THIRD_PARTY_BRAND_HEXES.has(c.hex) && !vouchedForByTheBrand(c);
+}
+
+/** True when this colour is a framework's stock palette value and nothing else. */
+export function isFrameworkDefaultColor(c: ObservedColor): boolean {
+  return FRAMEWORK_DEFAULT_HEXES.has(c.hex) && !vouchedForByTheBrand(c);
+}
+
+/** Either kind of borrowed colour: somebody else's brand, or a framework default. */
+export function isBorrowedColor(c: ObservedColor): boolean {
+  return isThirdPartyVendorColor(c) || isFrameworkDefaultColor(c);
+}
+
+/** Where a borrowed colour came from, for the prompt to name. */
+export function borrowedColorSource(hex: string): string | undefined {
+  return THIRD_PARTY_BRAND_HEXES.get(hex) ?? FRAMEWORK_DEFAULT_HEXES.get(hex);
+}
+
+/**
+ * The client's own evidence, which always overrides a lookup table: a colour in
+ * the site's icon/logo mark, or one the site names `--accent`/`--brand-*`,
+ * belongs to this brand even when a vendor or a framework also ships that
+ * value. A table must never be able to delete a brand's real colour.
+ */
+function vouchedForByTheBrand(c: ObservedColor): boolean {
+  return c.inLogo || c.cssVars.some((name) => BRAND_MEANING_NAME_RE.test(name));
+}
+
 /** How many stylesheets to follow. A site that needs more is not hiding its palette in the sixth. */
 const MAX_STYLESHEETS = 4;
 /** How many icon/logo SVGs to read. A site states its mark in the first one or two. */
 const MAX_LOGOS = 2;
+/**
+ * How many colours the whole pipeline carries. Declared colours are capped at
+ * `MAX_DECLARED_COLORS`; measured-but-undeclared ones fill the rest.
+ */
+const MAX_OBSERVED_COLORS = 64;
+/** How many DECLARED colours reach the prompt. A site states its palette well inside forty hexes. */
+const MAX_DECLARED_COLORS = 40;
 /** Per-document read cap. A stylesheet larger than this is a bundle; its first megabyte still holds the theme. */
 const MAX_BYTES = 1_000_000;
 const FETCH_TIMEOUT_MS = 15_000;
@@ -205,6 +328,36 @@ function stylesheetUrls(html: string, pageUrl: string): string[] {
 }
 
 /**
+ * The exact page the branding pipeline must read, from whatever the client
+ * recorded as their website.
+ *
+ * KEEPS THE PATH, which is the whole point. "Pitch by Deel" records
+ * `https://www.deel.com/the-pitch-by-deel/`; every branding signal used to be
+ * taken from `new URL(...).hostname`, so the palette, the site intelligence and
+ * the screenshot all described deel.com's corporate homepage instead. That is
+ * where `--color-core-cornbread` — Deel's yellow, the third most frequent hex
+ * on the corporate site and absent from the sub-brand's page — entered a
+ * sub-brand's palette as a dominant colour.
+ *
+ * Query and hash are dropped: a tracking parameter is not a different page, and
+ * keeping it would defeat any caching downstream. A bare hostname still works,
+ * so every existing caller keeps its old behaviour.
+ */
+export function brandPageUrl(site: string): string {
+  const trimmed = site.trim();
+  try {
+    const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    // Not parseable as a URL — fall back to the old hostname-ish handling
+    // rather than failing a pipeline that is allowed to observe nothing.
+    return `https://${trimmed.replace(/^https?:\/\//i, "").replace(/\/+$/, "")}/`;
+  }
+}
+
+/**
  * Read the palette a domain actually serves.
  *
  * Never throws and never rejects: an unreachable site yields an empty array,
@@ -212,8 +365,8 @@ function stylesheetUrls(html: string, pageUrl: string): string[] {
  * a non-fatal side pipeline (`applyBrandingForClient`'s call site catches and
  * logs), and making it fatal here would trade a cosmetic gap for a failed run.
  */
-export async function observeSitePalette(domain: string, fetchImpl: typeof fetch = fetch): Promise<ObservedColor[]> {
-  const pageUrl = `https://${domain.replace(/^https?:\/\//, "").replace(/\/+$/, "")}/`;
+export async function observeSitePalette(site: string, fetchImpl: typeof fetch = fetch): Promise<ObservedColor[]> {
+  const pageUrl = brandPageUrl(site);
   const html = await fetchText(pageUrl, fetchImpl);
   if (html === null) return [];
 
@@ -285,18 +438,26 @@ export async function observeSitePalette(domain: string, fetchImpl: typeof fetch
     // ones, and last the variant-scope palettes — which are real CSS but are
     // statements about some other theme. Within a tier, frequency decides.
     .sort((a, b) => rank(a) - rank(b) || b.count - a.count || a.hex.localeCompare(b.hex))
-    .slice(0, 40);
+    .slice(0, MAX_DECLARED_COLORS);
 }
 
 /**
  * How close two colours must be for a painted pixel to count as "this declared
- * colour, rendered". Squared RGB distance; ~12 per channel.
+ * colour, rendered". Squared RGB distance; ~20 per channel.
  *
  * Not zero, because a colour laid over a translucent overlay, or through a
  * gradient stop, or antialiased at a border, lands a shade off the token that
  * produced it. Small enough that two colours a designer chose apart stay apart.
+ *
+ * Was ~12, which is narrower than the measurement itself: `paletteFromPng`
+ * buckets to 16 levels per channel, so a reported hex is already up to ~8.5 off
+ * the pixel that voted for it, before any overlay. xodigital.com.br declares
+ * its peach as `#e6a47c` and paints it as `#d99770` — 12.7 per channel, just
+ * outside the old window — so the site's one real accent was scored "declared,
+ * never painted" while the same pixels were also appended as a nameless
+ * `#d99770`. One colour, counted twice, and vouched for neither time.
  */
-const PAINT_MATCH_DISTANCE = 3 * 12 ** 2;
+const PAINT_MATCH_DISTANCE = 3 * 20 ** 2;
 
 /**
  * Fold a rendered screenshot's measured colours into what the CSS declared.
@@ -319,22 +480,52 @@ export function mergePaintedPalette(
 ): ObservedColor[] {
   if (painted.length === 0) return [...observed];
 
+  // Each measured colour is assigned to ONE declared colour: the nearest inside
+  // the window. Adding a painted colour to every declaration within range makes
+  // the share column meaningless exactly where a palette is decided — on
+  // xodigital.com.br, whose render is 49% white, `#f0f2f5`, `#f3f4f6`,
+  // `#e1f2fb`, `#f7f4f0`, `#f9fafb` and `#ffffff` each reported ~53% of the
+  // page, because each of them is within the window of the same white pixels
+  // and of each other. The extraction then picked the off-white that happened
+  // to sort first and left the actual white out. A pixel is one colour; it
+  // votes once.
   const claimed = new Set<string>();
-  const withPaint = observed.map((color) => {
-    let share = 0;
-    for (const p of painted) {
-      if (distance(color.hex, p.hex) <= PAINT_MATCH_DISTANCE) {
-        share += p.share;
-        claimed.add(p.hex);
+  const shares = new Map<number, number>();
+  for (const p of painted) {
+    let nearest = -1;
+    let best = Number.POSITIVE_INFINITY;
+    for (const [i, color] of observed.entries()) {
+      const d = distance(color.hex, p.hex);
+      // `<` keeps the earlier entry on a tie, and `observed` arrives in
+      // evidence order (mark, then named, then merely frequent), so a tie goes
+      // to the better-vouched-for colour.
+      if (d <= PAINT_MATCH_DISTANCE && d < best) {
+        best = d;
+        nearest = i;
       }
     }
-    return { ...color, paintedShare: share };
-  });
+    if (nearest >= 0) {
+      shares.set(nearest, (shares.get(nearest) ?? 0) + p.share);
+      claimed.add(p.hex);
+    }
+  }
+  const withPaint = observed.map((color, i) => ({ ...color, paintedShare: shares.get(i) ?? 0 }));
 
   // A painted colour that matched no declaration is real evidence with no name.
   // Ranked by area among itself, and kept behind everything the site named.
+  //
+  // `IGNORED_HEXES` is NOT applied here, and that is the point. It exists to
+  // stop resets and shadows dominating a FREQUENCY count of stylesheet text —
+  // a fair rule about declarations, and a wrong one about pixels. Filtering it
+  // here meant that white, which covers 49% of xodigital.com.br's rendered page
+  // and 3% of deel.com/the-pitch-by-deel's, could not reach the model at all
+  // unless the site happened to also declare it in a custom property, while
+  // Source C simultaneously told the model every hex it returns must come from
+  // this list. A page's ground is part of its brand; measuring it at half the
+  // screen and then discarding it was the reason two clients' palettes had no
+  // white in them.
   const undeclared = painted
-    .filter((p) => !claimed.has(p.hex) && !IGNORED_HEXES.has(p.hex))
+    .filter((p) => !claimed.has(p.hex))
     .map((p) => ({
       hex: p.hex,
       count: 0,
@@ -345,7 +536,14 @@ export function mergePaintedPalette(
       paintedShare: p.share,
     }));
 
-  return [...withPaint, ...undeclared].slice(0, 48);
+  // Declared colours are never cut by a longer measured list: `withPaint` is
+  // kept whole and the undeclared ones fill what is left of the budget, largest
+  // area first. A plain `.slice()` over the concatenation used to spend the cap
+  // on whichever declarations happened to sort first and drop measured colours
+  // that cover half the screen.
+  const room = Math.max(0, MAX_OBSERVED_COLORS - withPaint.length);
+  const kept = [...undeclared].sort((a, b) => b.paintedShare - a.paintedShare).slice(0, room);
+  return [...withPaint, ...kept];
 }
 
 /** The prompt block naming what the site really declares. Empty string when nothing was observed. */
@@ -356,7 +554,7 @@ export function describeObservedPalette(observed: readonly ObservedColor[]): str
   const named = observed.filter((c) => !c.inLogo && !isUncorroboratedSlotColor(c) && c.cssVars.length > 0);
   const themed = observed.filter((c) => !c.inLogo && c.cssVars.length === 0 && c.themeVars.length > 0);
   const rest = observed
-    .filter((c) => !c.inLogo && c.cssVars.length === 0 && c.themeVars.length === 0)
+    .filter((c) => !c.inLogo && c.cssVars.length === 0 && c.themeVars.length === 0 && !isBorrowedColor(c))
     .slice(0, 12);
 
   const lines = [
@@ -408,6 +606,12 @@ export function describeObservedPalette(observed: readonly ObservedColor[]): str
       "signature colour is often a fraction of a percent while the page ground is most of the screen.",
       "Use this to tell a real colour from an unused one, never to rank them.",
       "",
+      "The colour a page is MOSTLY MADE OF is one of that brand's colours, and that includes white,",
+      "off-white and near-black. If a neutral above covers a large share of the render, report it, with",
+      "a ground/surface/ink role — a palette for a site that is half white and has no white in it is",
+      "wrong, however unremarkable white feels. Omit a neutral only when the render shows it is not",
+      "actually there.",
+      "",
     );
 
     // Stated separately and explicitly, because area ranking buries it and the
@@ -420,12 +624,25 @@ export function describeObservedPalette(observed: readonly ObservedColor[]): str
         "ground or the ink. A brand's accent is rationed by design, so expect it to be a tiny share of",
         "the page and to be absent from the logo mark and the social avatar, which are usually just the",
         "neutrals. Do not omit the accent because it is small or because the mark lacks it; that is what",
-        "being rationed looks like:",
+        "being rationed looks like. They are listed painted-first: one reading 0.00% of the page is",
+        "declared by the stylesheet and shown nowhere on it, so prefer any candidate above it:",
         ...accents.map(
           (c) =>
             `  ${c.hex}${c.cssVars.length > 0 ? `  (${c.cssVars.join(", ")})` : ""}` +
             `${c.paintedShare !== undefined ? `  ${(c.paintedShare * 100).toFixed(2)}% of the page` : ""}`,
         ),
+        "",
+      );
+    }
+
+    const borrowed = observed.filter(isBorrowedColor);
+    if (borrowed.length > 0) {
+      lines.push(
+        "SOMEBODY ELSE'S COLOURS — each of these exact values belongs to a third party whose widget,",
+        "share button or screenshot mock-up sits on this page, or is a CSS framework's stock palette",
+        "shade, arrived at by typing a class name. They are really in the CSS and really on the screen,",
+        "and nobody chose them for this brand. Never report one as a brand colour:",
+        ...borrowed.slice(0, 12).map((c) => `  ${c.hex}  (${borrowedColorSource(c.hex) ?? "not this brand's"})`),
         "",
       );
     }
@@ -485,6 +702,17 @@ export function describeObservedPalette(observed: readonly ObservedColor[]): str
       "",
     );
   }
+  const borrowed = observed.filter(isBorrowedColor);
+  if (borrowed.length > 0) {
+    lines.push(
+      "SOMEBODY ELSE'S COLOURS — each of these exact values belongs to a third party whose widget,",
+      "share button or screenshot mock-up sits on this page, or is a CSS framework's stock palette",
+      "shade, arrived at by typing a class name. They are really in the CSS, and nobody chose them for",
+      "this brand. Never report one as a brand colour:",
+      ...borrowed.slice(0, 12).map((c) => `  ${c.hex}  (${borrowedColorSource(c.hex) ?? "not this brand's"})`),
+      "",
+    );
+  }
   if (rest.length > 0) {
     lines.push("Other colours present, by frequency:", `  ${rest.map((c) => c.hex).join(", ")}`, "");
   }
@@ -525,14 +753,34 @@ const ACCENT_LIGHTNESS_RANGE = [0.12, 0.92] as const;
  * palette that omits it is wrong.
  *
  * So a candidate accent is a colour that is painted at all, is chromatic rather
- * than a shade of the substrate, and is not effectively black or white.
- * Ordering rewards a brand-meaning CSS name first, then saturation — never
- * area, which is the axis that loses the accent.
+ * than a shade of the substrate, is not effectively black or white, and is not
+ * a third party's (see `isThirdPartyVendorColor` — this list was six WhatsApp
+ * greens for a fintech whose accent is a peach).
+ *
+ * ORDERING, in two parts, and the order of the two parts is the fix.
+ *
+ * When a render exists, a colour the page actually PAINTS comes before one it
+ * merely declares. Ranking by a brand-meaning name first is what put Deel's
+ * `--color-surface-brand-yellow-03` at the head of this list for a sub-brand
+ * page that paints no yellow at all: on a full design system, "brand" and
+ * "accent" appear in half the token names, so the name test stops separating
+ * anything. Within a group the brand-meaning name still leads, then area, then
+ * saturation.
+ *
+ * Area is safe HERE, and only here: the grounds and the inks are already gone,
+ * filtered out by the saturation and lightness tests above, so this ranks the
+ * page's chromatic colours against each other rather than an accent against a
+ * ground, which is the comparison area always loses. Saturation alone put
+ * Tailwind's stock `#22c55e`, worn by one status pill on xodigital.com.br,
+ * above that site's own peach.
+ *
+ * With no render (`paintedShare` undefined everywhere) nothing changes: every
+ * colour lands in the same group and the old name-then-saturation order stands.
  */
 export function accentCandidates(observed: readonly ObservedColor[]): ObservedColor[] {
   return observed
     .filter((c) => {
-      if (isDisqualifiedByRender(c)) return false;
+      if (isDisqualifiedByRender(c) || isBorrowedColor(c)) return false;
       const { saturation, lightness } = chroma(c.hex);
       return (
         saturation >= ACCENT_MIN_SATURATION &&
@@ -541,8 +789,15 @@ export function accentCandidates(observed: readonly ObservedColor[]): ObservedCo
       );
     })
     .sort((a, b) => {
-      const named = (c: ObservedColor) => (c.cssVars.some((n) => /accent|brand|cta|highlight/i.test(n)) ? 0 : 1);
-      return named(a) - named(b) || chroma(b.hex).saturation - chroma(a.hex).saturation;
+      // 0 = the render shows it, 1 = declared only (or nothing was rendered).
+      const shown = (c: ObservedColor) => ((c.paintedShare ?? 0) > 0 ? 0 : 1);
+      const named = (c: ObservedColor) => (c.cssVars.some((n) => BRAND_MEANING_NAME_RE.test(n)) ? 0 : 1);
+      return (
+        shown(a) - shown(b) ||
+        named(a) - named(b) ||
+        (b.paintedShare ?? 0) - (a.paintedShare ?? 0) ||
+        chroma(b.hex).saturation - chroma(a.hex).saturation
+      );
     })
     .slice(0, 6);
 }

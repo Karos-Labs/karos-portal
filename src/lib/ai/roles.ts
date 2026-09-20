@@ -108,7 +108,7 @@ export const AI_ROLES = {
     // observer was wired in. Line pins are load-bearing here and drift with
     // any edit above them — that is the cost of pinning, and the sweep test
     // is what makes the cost visible instead of silent.
-    sites: ["src/lib/branding.ts:500"],
+    sites: ["src/lib/branding.ts:641"],
   },
 
   /* ── COUPLED · web_search only · 2 sites ─────────────────────────────────
@@ -124,7 +124,7 @@ export const AI_ROLES = {
     tier: "HAIKU",
     requires: ["web_search"],
     // Re-pinned from :386 — see branding.fetch_site's own comment above.
-    sites: ["src/lib/branding.ts:540"],
+    sites: ["src/lib/branding.ts:683"],
   },
 
   /* ── PLAIN · no vendor-specific surface · 27 sites ───────────────────────
@@ -205,7 +205,16 @@ export const AI_ROLES = {
     sites: ["src/lib/intel/context-doc-routing.ts:308"],
   },
   "branding.extract": {
-    tier: "HAIKU",
+    // SONNET since 2026-09-20, and the one place in this file where the tier is
+    // the bug report. This call is not transcription — the hexes are handed to
+    // it verbatim and repaired afterwards — it is the judgment of WHICH of up
+    // to sixty observed colours are a brand's and what each is for, read off a
+    // full-page screenshot and an Instagram grid. On HAIKU it returned
+    // `{ hex: "#ffffff", role: "Accent yellow, highlights and CTAs" }` for one
+    // client and a chat-widget green as another's primary accent. One call per
+    // Regenerate; the tier costs cents and decides every colour the client
+    // then sees on everything.
+    tier: "SONNET",
     // SCRUM-394 (IGSTYLE-9) inserted the role-based palette resolver above
     // this call in branding.ts, shifting these two line numbers down from
     // 736/751 — re-pinned against the real file, not carried over stale.
@@ -214,7 +223,7 @@ export const AI_ROLES = {
     // colours" change moved them again, and the ScrappyCoco brand-evidence
     // change (rendered screenshot + Instagram images) moved them a third time.
     // All merged; provider-wiring.test.ts is what catches the drift.
-    sites: ["src/lib/branding.ts:1030", "src/lib/branding.ts:1037"],
+    sites: ["src/lib/branding.ts:1199", "src/lib/branding.ts:1206"],
   },
   // Shifted 36/37 → 37/38 by the credits rework (2026-09), which added one
   // import above them. Re-pinned against the real file, per the rule above.
