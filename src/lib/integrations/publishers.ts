@@ -63,11 +63,17 @@ const VIDEO_URL = /\.(mp4|mov|webm|m4v)(\?|$)/i;
  * STATED RESIDUAL, because this fixes the READ and not the URL's lifetime: a
  * bulk-uploaded clip's `videoUrl` is a V4 signed GCS link minted at upload with a
  * 7-day TTL, and `bulkScheduleClipsAction` spreads a batch one clip per day over
- * weeks — so a clip scheduled beyond that window hands TikTok a URL that has
- * expired. `assetVideoSrc` solves the same problem for playback by re-signing per
- * request from `meta.gcsPath`; a publisher cannot use that route (it is
- * session-authorized, and TikTok fetches anonymously). Re-signing here is the fix
- * for the lifetime and is deliberately not attempted in this change.
+ * weeks — so a clip scheduled beyond that window hands `publishToTikTok` a URL
+ * that has expired. `assetVideoSrc` solves the same problem for playback by
+ * re-signing per request from `meta.gcsPath`, but that route is
+ * session-authorized, and reusing it here is still not attempted in this change
+ * — now more because it would mean writing and testing a new server-to-server
+ * re-sign path than because of who was doing the fetching. That obstacle did
+ * used to be sharper: TikTok itself fetched the URL anonymously under
+ * PULL_FROM_URL (see below), which ruled out any session-bound route outright.
+ * Now that `publishToTikTok` reads the clip's bytes on our own server (FILE_UPLOAD,
+ * 2026-09-20), that specific obstacle is gone — this residual is next up, not
+ * closed.
  *
  * WHAT IS NOT CLAIMED ABOUT REACHING IT. This note used to say the whole path was
  * "unreachable in production today" on the strength of
@@ -76,12 +82,15 @@ const VIDEO_URL = /\.(mp4|mov|webm|m4v)(\?|$)/i;
  * there, integrations-tab.tsx) and nothing else. The admin "Manual credentials"
  * accordion on that same card saves credentials for ANY platform in the registry,
  * tiktok included, so a tiktok integration can exist today and this function can
- * run against it. What the code does say about the failure is right below in
- * `publishToTikTok`: TikTok answers an unverified source domain with an HTTP 200
- * whose body carries an error code (`url_ownership_unverified`), which that check
- * turns into a refusal. Not being able to complete a real publish end to end is
- * the reason the re-sign is not written — an untested one would be guesswork —
- * rather than a reason the expiry cannot be hit.
+ * run against it. What the code used to say about the failure, until 2026-09-20,
+ * was right below in `publishToTikTok`: PULL_FROM_URL made TikTok fetch this URL
+ * itself, and TikTok answers an unverified source domain with an HTTP 200 whose
+ * body carries an error code (`url_ownership_unverified`) — unavoidable, since
+ * these clip URLs resolve to storage.googleapis.com, a domain nobody outside
+ * Google can verify. `publishToTikTok` now uploads the bytes directly
+ * (FILE_UPLOAD) instead of naming a URL for TikTok to fetch, which is what
+ * finally lets a real publish complete end to end — and with it, lets the
+ * expiry residual above actually get hit rather than staying theoretical.
  */
 function clipUrl(asset: Asset): string | null {
   const clip = assetVideos(asset)[0]?.url;
@@ -413,6 +422,57 @@ async function publishToTwitter(
 
 /* ── TikTok ──────────────────────────────────────────────────────────── */
 
+/** TikTok's own limits for a FILE_UPLOAD chunk plan (Media Transfer Guide). */
+const TIKTOK_MAX_CHUNK_BYTES = 64 * 1024 * 1024; // 64 MB
+const TIKTOK_MAX_VIDEO_BYTES = 4 * 1024 * 1024 * 1024; // 4 GB
+
+/**
+ * The chunk_size / total_chunk_count TikTok's init call wants.
+ *
+ * Anything up to 64MB (every short-form clip this app makes, in practice) goes
+ * up as ONE chunk — TikTok requires chunk_size === video_size in that case,
+ * which also covers their stricter sub-5MB rule for free. Past 64MB, chunks
+ * are fixed at the max size and `total_chunk_count` is `floor(size / chunk)`
+ * exactly as their docs specify: the remainder rides along on the last chunk,
+ * which their "final chunk may run past chunk_size, up to 128MB" allowance
+ * exists precisely to cover.
+ */
+function planTikTokChunks(videoSize: number): { chunkSize: number; totalChunkCount: number } {
+  if (videoSize > TIKTOK_MAX_VIDEO_BYTES) {
+    throw new Error(
+      `TikTok publish failed: video is ${(videoSize / (1024 * 1024)).toFixed(0)}MB, over TikTok's 4GB upload limit`,
+    );
+  }
+  if (videoSize <= TIKTOK_MAX_CHUNK_BYTES) {
+    return { chunkSize: videoSize, totalChunkCount: 1 };
+  }
+  return { chunkSize: TIKTOK_MAX_CHUNK_BYTES, totalChunkCount: Math.floor(videoSize / TIKTOK_MAX_CHUNK_BYTES) };
+}
+
+/** The clip's total byte size, off the same signed URL we're about to read it from. */
+async function probeVideoSize(videoUrl: string): Promise<number> {
+  const res = await fetch(videoUrl, { headers: { Range: "bytes=0-0" } });
+  if (res.status === 206) {
+    // "bytes 0-0/12345678" — GCS answers a satisfiable range with the total after the slash.
+    const total = Number(res.headers.get("content-range")?.split("/")[1]);
+    if (Number.isFinite(total) && total > 0) return total;
+  }
+  // Range not honoured (unusual for GCS, but not this function's job to assume) — the
+  // full-body response still carries the real size on Content-Length.
+  const total = Number(res.headers.get("content-length"));
+  if (Number.isFinite(total) && total > 0) return total;
+  throw new Error("TikTok publish failed: could not determine the video file's size");
+}
+
+/** One byte range of the clip, straight off its signed GCS URL. */
+async function fetchVideoChunk(videoUrl: string, start: number, end: number): Promise<ArrayBuffer> {
+  const res = await fetch(videoUrl, { headers: { Range: `bytes=${start}-${end}` } });
+  if (!res.ok && res.status !== 206) {
+    throw new Error(`TikTok publish failed: could not read the video file (HTTP ${res.status})`);
+  }
+  return res.arrayBuffer();
+}
+
 async function publishToTikTok(
   credentials: Record<string, string>,
   asset: Asset,
@@ -420,7 +480,7 @@ async function publishToTikTok(
   const token = credentials.accessToken;
   if (!token) throw new Error("No access token");
 
-  // TikTok is video-first: the Content Posting API pulls a hosted video by URL.
+  // TikTok is video-first: the Content Posting API needs the clip's bytes.
   // `clipUrl` is where that URL comes from — every field a clip can live in, not
   // just the cover-image field this used to read (#48).
   const videoUrl = clipUrl(asset);
@@ -428,7 +488,21 @@ async function publishToTikTok(
     throw new Error("TikTok posts require a video file (e.g. video/mp4)");
   }
 
-  const res = await fetch("https://open.tiktokapis.com/v2/post/publish/video/init/", {
+  // FILE_UPLOAD, not PULL_FROM_URL (2026-09-20 — SCRUM TikTok app-review fix).
+  // PULL_FROM_URL hands TikTok the signed GCS link and has THEM fetch it, which
+  // TikTok only allows once the source domain is verified — a DNS/file check
+  // you can only do on a domain you own. This app's clip URLs resolve to
+  // Google's storage.googleapis.com, which nobody outside Google can verify,
+  // so every PULL_FROM_URL publish was always going to end in the
+  // `url_ownership_unverified` failure `clipUrl`'s own comment already named.
+  // FILE_UPLOAD sidesteps the requirement entirely: our server reads the
+  // clip's bytes itself (the same signed URL, an ordinary ranged GET) and PUTs
+  // them straight to TikTok, so no domain claim is ever made. The cost is the
+  // chunked-upload dance below, which TikTok requires even for a single chunk.
+  const videoSize = await probeVideoSize(videoUrl);
+  const { chunkSize, totalChunkCount } = planTikTokChunks(videoSize);
+
+  const initRes = await fetch("https://open.tiktokapis.com/v2/post/publish/video/init/", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -441,26 +515,69 @@ async function publishToTikTok(
         title: asset.content.slice(0, 2200),
         privacy_level: "SELF_ONLY",
       },
-      source_info: { source: "PULL_FROM_URL", video_url: videoUrl },
+      source_info: {
+        source: "FILE_UPLOAD",
+        video_size: videoSize,
+        chunk_size: chunkSize,
+        total_chunk_count: totalChunkCount,
+      },
     }),
   });
 
-  if (res.status === 401 || res.status === 403) throw new TokenExpiredError("tiktok", res.status);
-  if (!res.ok) {
-    const err = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
-    throw new Error(`TikTok publish failed: ${err.error?.message ?? res.status}`);
+  // TEMPORARY — DIAGNOSTIC ONLY (2026-09-20): a 401/403 here has always been assumed
+  // to mean an expired/revoked token, but that assumption was never checked against
+  // TikTok's actual response body. Surface the real body so the next Publish Now
+  // attempt tells us whether this is really TokenExpiredError or something else
+  // (app not actually approved for Content Posting API, creator_info/privacy_level,
+  // etc). Revert this block once the real cause is known — see TikTok status doc.
+  if (initRes.status === 401 || initRes.status === 403) {
+    const body = await initRes.text().catch(() => "");
+    throw new Error(`TikTok publish failed (HTTP ${initRes.status}): ${body.slice(0, 500)}`);
   }
-  // A logical failure (e.g. url_ownership_unverified) still returns HTTP 200 with a
-  // non-"ok" error code, so inspect the body rather than trusting the status alone.
-  const body = (await res.json()) as {
-    data?: { publish_id?: string };
+  if (!initRes.ok) {
+    const err = (await initRes.json().catch(() => ({}))) as { error?: { message?: string } };
+    throw new Error(`TikTok publish failed: ${err.error?.message ?? initRes.status}`);
+  }
+  // A logical failure still returns HTTP 200 with a non-"ok" error code, so inspect
+  // the body rather than trusting the status alone — the same shape that hid the
+  // PULL_FROM_URL failure this replaces.
+  const initBody = (await initRes.json()) as {
+    data?: { publish_id?: string; upload_url?: string };
     error?: { code?: string; message?: string };
   };
-  if (body.error?.code && body.error.code !== "ok") {
-    throw new Error(`TikTok publish failed: ${body.error.message ?? body.error.code}`);
+  if (initBody.error?.code && initBody.error.code !== "ok") {
+    throw new Error(`TikTok publish failed: ${initBody.error.message ?? initBody.error.code}`);
   }
+  const uploadUrl = initBody.data?.upload_url;
+  if (!uploadUrl) throw new Error("TikTok publish failed: no upload_url returned");
+
+  // Chunks go up SEQUENTIALLY (TikTok's own requirement, not a style choice) —
+  // straight from the clip's signed GCS URL to TikTok's upload_url, nothing
+  // touches disk on this server. `upload_url` carries its own authorization;
+  // it does not take our OAuth bearer token.
+  for (let i = 0; i < totalChunkCount; i++) {
+    const start = i * chunkSize;
+    const end = i === totalChunkCount - 1 ? videoSize - 1 : start + chunkSize - 1;
+    const chunk = await fetchVideoChunk(videoUrl, start, end);
+    const putRes = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "video/mp4",
+        "Content-Length": String(end - start + 1),
+        "Content-Range": `bytes ${start}-${end}/${videoSize}`,
+      },
+      body: chunk,
+    });
+    if (!putRes.ok) {
+      const text = await putRes.text().catch(() => "");
+      throw new Error(
+        `TikTok publish failed: chunk ${i + 1}/${totalChunkCount} upload failed (HTTP ${putRes.status}) ${text.slice(0, 200)}`,
+      );
+    }
+  }
+
   // TikTok returns a publish_id (an async publish-job handle), the closest thing to a post id here.
-  return { postId: body.data?.publish_id ?? null };
+  return { postId: initBody.data?.publish_id ?? null };
 }
 
 /* ── Dispatcher ──────────────────────────────────────────────────────── */
