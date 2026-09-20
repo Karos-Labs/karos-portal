@@ -118,7 +118,7 @@ async function registerMedia(opts: {
     // content type (the bucket-import path) resolves by extension rather than
     // being stored as image/jpeg. See that function for why it matters.
     mimeType: mediaMimeFor(opts.contentType, opts.filename),
-    channels: [MEDIA_REGISTRATION[kind].channel],
+    channels: [...MEDIA_REGISTRATION[kind].channels],
     status: "draft",
     createdBy: opts.createdBy,
     createdAt: Date.now(),

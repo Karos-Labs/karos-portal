@@ -178,8 +178,13 @@ export function mediaMimeFor(contentType?: string, filename?: string): string {
  * not do is register a file against a platform its own type rejects.
  */
 export const MEDIA_REGISTRATION: Readonly<
-  Record<MediaKind, { readonly type: AssetType; readonly channel: string }>
+  Record<MediaKind, { readonly type: AssetType; readonly channels: readonly string[] }>
 > = {
-  image: { type: "instagram_post", channel: "instagram" },
-  video: { type: "social_post", channel: "tiktok" },
+  // Both Instagram integrations, same reasoning as the Instagram Agent's own
+  // materializer: "instagram" (Facebook Login) needs a linked Facebook Page and
+  // fails outright without one, so an uploaded photo needs "instagram_business"
+  // (direct login, no Page required) as a real fallback target, not just the
+  // one that fails for any account without a Page.
+  image: { type: "instagram_post", channels: ["instagram", "instagram_business"] },
+  video: { type: "social_post", channels: ["tiktok"] },
 };

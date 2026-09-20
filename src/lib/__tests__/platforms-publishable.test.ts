@@ -864,11 +864,13 @@ describe("#49 — the draft-only fence", () => {
       // PUBLISHABLE_PLATFORMS[type] with the asset's channels. Derived from the
       // map, so widening either side moves this expectation with it.
       for (const kind of KINDS) {
-        const { type, channel } = MEDIA_REGISTRATION[kind];
-        expect(
-          PUBLISHABLE_PLATFORMS[type] ?? [],
-          `a ${kind} registers as "${type}" on "${channel}", which that type rejects`,
-        ).toContain(channel);
+        const { type, channels } = MEDIA_REGISTRATION[kind];
+        for (const channel of channels) {
+          expect(
+            PUBLISHABLE_PLATFORMS[type] ?? [],
+            `a ${kind} registers as "${type}" on "${channel}", which that type rejects`,
+          ).toContain(channel);
+        }
       }
     });
   });
