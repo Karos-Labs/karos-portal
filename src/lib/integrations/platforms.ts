@@ -94,7 +94,6 @@ export const READ_ONLY_PLATFORM_IDS = new Set<string>([
   "google_analytics",
   "google_business_profile",
   "instagram_insights",
-  "instagram_business",
 ]);
 
 /**
@@ -146,7 +145,7 @@ export const PENDING_VERIFICATION_PLATFORM_IDS = new Set<string>([]);
  * is simply no longer inferable.
  */
 export const PUBLISHABLE_PLATFORMS: Record<string, string[]> = {
-  instagram_post: ["instagram", "tiktok"],
+  instagram_post: ["instagram", "instagram_business", "tiktok"],
   social_post: ["twitter", "linkedin", "tiktok"],
   article: ["linkedin"],
   email: [],
@@ -237,12 +236,18 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
    * the card above. "instagram" above goes through Facebook Login and needs
    * the client's Instagram professional account linked to a Facebook Page;
    * this goes through Meta's newer Instagram Login directly, so it also works
-   * for a client whose Instagram account has no linked Page. Read-only here
-   * (category "analytics") — the agents' publish path stays on "instagram"
-   * above; this exists for the extra account data ("instagram_business_basic",
-   * "instagram_business_manage_insights") only the Instagram Login product
-   * grants, which agent-engine's Instagram agent will read from once it has a
-   * genuine use for the Graph API (Albert, 2026-09-17).
+   * for a client whose Instagram account has no linked Page.
+   *
+   * PUBLISHING HERE SINCE 2026-09-20 (Albert): this card used to be read-only
+   * (category "analytics") on the reasoning that the agents' publish path
+   * stayed on "instagram" above and this existed only for the extra account
+   * data ("instagram_business_basic", "instagram_business_manage_insights")
+   * only the Instagram Login product grants. Albert asked for Karos Labs' own
+   * account specifically — connected via THIS product, not the Facebook-Login
+   * one — to be publishable through the same auto-publish flow, so
+   * `publishToInstagramBusiness` (publishers.ts) and "publishing" here replace
+   * that read-only stance. `instagram_business_content_publish` is the scope
+   * that backs it (oauth.ts).
    */
   {
     id: "instagram_business",
@@ -250,7 +255,7 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
     icon: "Camera",
     color: "#E1306C",
     description:
-      "An additional Instagram connection for deeper account insights. Works even without a linked Facebook Page.",
+      "Publish posts and get deeper account insights, even without a linked Facebook Page.",
     fields: [
       {
         key: "accessToken",
@@ -260,7 +265,7 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
         hint: "Long-lived token from Meta for Developers → Instagram API setup with Instagram login",
       },
     ],
-    category: "analytics",
+    category: "publishing",
   },
   /* NO FACEBOOK ENTRY (portal feedback round 2, 2026-09: "throughout it all we
      can remove Facebook, we don't work with Facebook"). This array IS the
