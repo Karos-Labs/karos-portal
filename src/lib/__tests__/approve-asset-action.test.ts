@@ -84,6 +84,82 @@ describe("approveAssetAction closes the producing run", () => {
   });
 });
 
+describe("approveAssetAction with an explicit multi-platform pick", () => {
+  beforeEach(() => {
+    vi.spyOn(shared, "requireStaff").mockImplementation(
+      async () => ({ id: "u-staff", role: "KAROS_EMPLOYEE", disabled: false, clientId: "c1" }) as any,
+    );
+    vi.spyOn(auth, "getCurrentUser").mockImplementation(
+      async () => ({ id: "u-staff", role: "KAROS_EMPLOYEE", disabled: false, clientId: "c1" }) as any,
+    );
+  });
+
+  it("stores every checked platform, first one as scheduledPlatform for legacy readers", async () => {
+    const asset = makeAsset();
+    (data.getAsset as any).mockResolvedValue(asset);
+    (data.listClientIntegrations as any).mockResolvedValue([
+      { id: "i1", platform: "instagram", clientId: "c1", connectedAt: 1 },
+      { id: "i2", platform: "tiktok", clientId: "c1", connectedAt: 1 },
+    ]);
+    (integ.integrationIsUsable as any).mockReturnValue(true);
+    (data.getClientSettings as any).mockResolvedValue({ clientId: "c1", autoScheduleEnabled: true });
+    const updated: any[] = [];
+    (data.updateAsset as any).mockImplementation(async (id: string, patch: Record<string, any>) => {
+      updated.push({ id, patch });
+    });
+
+    await actions.approveAssetAction("a1", {
+      scheduledAt: NOW + 86_400_000,
+      platforms: ["instagram", "tiktok"],
+      publishMode: "auto",
+    });
+
+    expect(updated.length).toBe(1);
+    const patch = updated[0].patch;
+    expect(patch.scheduledPlatform).toBe("instagram");
+    expect(patch.scheduledPlatforms).toEqual(["instagram", "tiktok"]);
+    expect(patch.publishMode).toBe("auto");
+  });
+
+  it("refuses auto-publish when any one of the checked platforms has no active integration", async () => {
+    const asset = makeAsset();
+    (data.getAsset as any).mockResolvedValue(asset);
+    (data.listClientIntegrations as any).mockResolvedValue([
+      { id: "i1", platform: "instagram", clientId: "c1", connectedAt: 1 },
+      // tiktok is not connected at all
+    ]);
+    (integ.integrationIsUsable as any).mockReturnValue(true);
+    (data.getClientSettings as any).mockResolvedValue({ clientId: "c1", autoScheduleEnabled: true });
+
+    await expect(
+      actions.approveAssetAction("a1", {
+        scheduledAt: NOW + 86_400_000,
+        platforms: ["instagram", "tiktok"],
+        publishMode: "auto",
+      }),
+    ).rejects.toThrow(/Connect an active tiktok integration/);
+    expect(data.updateAsset).not.toHaveBeenCalled();
+  });
+
+  it("a manual-push multi-platform pick skips the integration check entirely", async () => {
+    const asset = makeAsset();
+    (data.getAsset as any).mockResolvedValue(asset);
+    (data.listClientIntegrations as any).mockResolvedValue([]);
+    const updated: any[] = [];
+    (data.updateAsset as any).mockImplementation(async (id: string, patch: Record<string, any>) => {
+      updated.push({ id, patch });
+    });
+
+    await actions.approveAssetAction("a1", {
+      scheduledAt: NOW + 86_400_000,
+      platforms: ["instagram", "tiktok"],
+      publishMode: "manual",
+    });
+
+    expect(updated[0].patch.scheduledPlatforms).toEqual(["instagram", "tiktok"]);
+  });
+});
+
 describe("approveAssetAction auto-schedule behavior", () => {
   it("auto-schedules and marks auto when an active integration exists and recommendedAt is present", async () => {
     const asset = makeAsset({ recommendedAt: NOW + 86_400_000, channels: ["linkedin"] });

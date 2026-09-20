@@ -1511,6 +1511,16 @@ export interface Asset {
   scheduledAt?: number;
   /** Which platform to publish to (matches ClientIntegration.platform). */
   scheduledPlatform?: string;
+  /**
+   * Every platform to publish to, when more than one was picked at approve
+   * time — a post can now go out to several channels at once. Present ⇒
+   * authoritative for publishing (the cron and Publish Now loop this list);
+   * `scheduledPlatform` is kept in sync as `scheduledPlatforms[0]` so every
+   * reader that only knows about a single platform (the calendar chip,
+   * `preferredPlatform`) still sees a sane value. Absent ⇒ single-platform
+   * behavior exactly as before this field existed.
+   */
+  scheduledPlatforms?: string[];
   /** How this asset reaches the platform once scheduled. Absent on legacy assets ⇒ "auto". */
   publishMode?: PublishMode;
   /**
@@ -1540,6 +1550,13 @@ export interface Asset {
   platformPostId?: string | null;
   /** Last publish failure (manual or cron), surfaced on the asset card. Cleared on success. */
   publishError?: string;
+  /**
+   * Per-platform outcome of the most recent multi-platform publish attempt
+   * (`scheduledPlatforms.length > 1`), keyed by platform id. Absent for a
+   * single-platform asset, where `platformPostId`/`publishError` alone say
+   * everything there is to say.
+   */
+  platformResults?: Record<string, { postId?: string | null; error?: string }>;
   /**
    * Epoch millis when a publish attempt claimed this asset. Set transactionally by
    * `claimAssetForPublish` so the auto-cron, a manual "Publish Now", or two overlapping

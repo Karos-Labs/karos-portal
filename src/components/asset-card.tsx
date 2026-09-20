@@ -427,7 +427,10 @@ export function AssetCard({
     setBusy(true);
     setPublishError(null);
     try {
-      const res = await publishAssetNowAction(asset.id, asset.scheduledPlatform);
+      // No explicit platform: publishAssetNowAction reads asset.scheduledPlatforms
+      // (every platform this post was approved for) itself, falling back to
+      // scheduledPlatform for a legacy single-platform asset.
+      const res = await publishAssetNowAction(asset.id);
       if (res.ok) {
         router.refresh();
       } else {
@@ -710,7 +713,9 @@ export function AssetCard({
                     {" "}
                     on{" "}
                     <span className="font-medium text-foreground">
-                      {PLATFORM_LABELS[asset.scheduledPlatform] ?? asset.scheduledPlatform}
+                      {(asset.scheduledPlatforms?.length ? asset.scheduledPlatforms : [asset.scheduledPlatform])
+                        .map((p) => PLATFORM_LABELS[p] ?? p)
+                        .join(" + ")}
                     </span>
                   </>
                 )}
@@ -834,8 +839,12 @@ export function AssetCard({
                   onClick={handlePublishNow}
                   loading={busy}
                   title={`Push live now via ${
-                    PLATFORM_LABELS[asset.scheduledPlatform ?? compatibleConnected[0]] ??
-                    "the connected platform"
+                    (asset.scheduledPlatforms?.length
+                      ? asset.scheduledPlatforms
+                      : [asset.scheduledPlatform ?? compatibleConnected[0]]
+                    )
+                      .map((p) => PLATFORM_LABELS[p] ?? p)
+                      .join(" + ") || "the connected platform"
                   }`}
                 >
                   <Icon name="Send" className="h-3.5 w-3.5" />

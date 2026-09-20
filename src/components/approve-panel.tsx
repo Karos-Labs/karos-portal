@@ -69,7 +69,14 @@ export function ApprovePanel({
     recommended ? toLocalInputValue(recommended) : minDatetime,
   );
   const [mode, setMode] = useState<PublishMode>(canAuto ? "auto" : "placeholder");
-  const [platform, setPlatform] = useState(availablePlatforms[0] ?? "");
+  // Multiple platforms may be checked at once — the asset then publishes to
+  // every one of them (see publishAssetToPlatform's per-platform loop in
+  // asset-actions.ts / the auto-publish cron). Starts on just the first
+  // connected platform so the common single-platform case needs no extra click.
+  const [platforms, setPlatforms] = useState<string[]>(availablePlatforms[0] ? [availablePlatforms[0]] : []);
+  function togglePlatform(p: string) {
+    setPlatforms((prev) => (prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]));
+  }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // AI recommendation aware of the client's calendar density (fetched on open).
@@ -121,12 +128,16 @@ export function ApprovePanel({
 
   async function handleApprove() {
     if (!datetime) return;
+    if (mode !== "placeholder" && platforms.length === 0) {
+      setError("Pick at least one platform");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       await approveAssetAction(asset.id, {
         scheduledAt: new Date(datetime).getTime(),
-        platform: mode === "placeholder" ? undefined : platform || undefined,
+        platforms: mode === "placeholder" ? undefined : platforms,
         publishMode: mode,
       });
       router.refresh();
@@ -181,21 +192,35 @@ export function ApprovePanel({
           />
         </div>
 
-        {/* Platform picker (auto/manual modes with connected platforms) */}
+        {/* Platform picker (auto/manual modes with connected platforms) — check
+            as many as apply; the asset publishes to every one checked. */}
         {showPlatformPicker && (
           <div className="min-w-[130px]">
-            <label className="mb-1 block text-[11px] text-muted-2">Platform</label>
-            <select
-              value={platform}
-              onChange={(e) => setPlatform(e.target.value)}
-              className="h-8 w-full rounded-md border border-border bg-surface px-2.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-neon/40"
-            >
+            <label className="mb-1 block text-[11px] text-muted-2">
+              Platform{platforms.length > 1 ? "s" : ""}
+            </label>
+            <div className="flex flex-wrap gap-1.5">
               {availablePlatforms.map((p) => (
-                <option key={p} value={p}>
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => togglePlatform(p)}
+                  aria-pressed={platforms.includes(p)}
+                  className={cn(
+                    "flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors",
+                    platforms.includes(p)
+                      ? "border-neon/60 bg-neon/10 text-neon"
+                      : "border-border text-muted hover:text-foreground",
+                  )}
+                >
+                  <Icon
+                    name={platforms.includes(p) ? "SquareCheck" : "Square"}
+                    className="h-3.5 w-3.5"
+                  />
                   {PLATFORM_LABELS[p] ?? p}
-                </option>
+                </button>
               ))}
-            </select>
+            </div>
           </div>
         )}
       </div>
