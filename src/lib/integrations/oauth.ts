@@ -337,19 +337,6 @@ export const OAUTH_CONFIGS: Record<string, OAuthPlatformConfig> = {
     extendedScopes: ["research.data.basic"],
     envApprovalFlag: "TIKTOK_RESEARCH_API_APPROVED",
   },
-  reddit: {
-    envClientId: "REDDIT_CLIENT_ID",
-    envClientSecret: "REDDIT_CLIENT_SECRET",
-    authUrl: "https://www.reddit.com/api/v1/authorize",
-    tokenUrl: "https://www.reddit.com/api/v1/access_token",
-    // "identity" -> /api/v1/me (karma, account age); "history" -> own post/comment
-    // history (for the removal-rate / voice check); "read" -> browsing threads.
-    // No separate approval needed for these at low volume, but Reddit's 2023 API
-    // terms require a paid Data API license for meaningful commercial volume —
-    // a business/legal call, not an engineering one.
-    scopes: ["identity", "history", "read"],
-    extraAuthParams: { duration: "permanent" },
-  },
 };
 
 /** Returns platform IDs that have their OAuth env vars configured. */

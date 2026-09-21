@@ -87,7 +87,6 @@ export const OAUTH_SUPPORTED_PLATFORM_IDS = new Set<string>([
   "twitter",
   "youtube",
   "tiktok",
-  "reddit",
 ]);
 
 /**
@@ -97,7 +96,6 @@ export const OAUTH_SUPPORTED_PLATFORM_IDS = new Set<string>([
  */
 export const READ_ONLY_PLATFORM_IDS = new Set<string>([
   "linkedin_community",
-  "reddit",
   "instagram_insights",
 ]);
 
@@ -164,6 +162,11 @@ export const PLATFORM_LABELS: Record<string, string> = {
   x: "X",
   youtube: "YouTube",
   tiktok: "TikTok",
+  /** The OAuth "connect Reddit" integration was removed 2026-09-21 (it had no
+   * reader anywhere in this repo) — this label stays so `platformLabel("reddit")`
+   * still reads "Reddit" rather than the raw id anywhere it's asked for, same as
+   * "facebook" and "google" below. Not to be confused with the still-live
+   * Reddit content-drafting agent, which never went through this OAuth flow. */
   reddit: "Reddit",
   /** Legacy aggregate id for the Google OAuth connection (still in live data). */
   google: "Google",
@@ -427,28 +430,5 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
       },
     ],
     category: "publishing",
-  },
-  {
-    id: "reddit",
-    name: "Reddit",
-    icon: "MessageSquare",
-    color: "#FF4500",
-    description: "Read account history, karma, and thread activity. Draft-first, never auto-posts.",
-    fields: [
-      {
-        key: "accessToken",
-        label: "OAuth Access Token",
-        type: "password",
-        required: true,
-        hint: "Connect via the button above, or paste a token from a Reddit app at reddit.com/prefs/apps",
-      },
-      {
-        key: "refreshToken",
-        label: "Refresh Token",
-        type: "password",
-        hint: "Captured automatically during the OAuth consent flow (duration=permanent)",
-      },
-    ],
-    category: "analytics",
   },
 ];

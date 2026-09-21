@@ -40,7 +40,7 @@
  *      repo's equivalent of the "false positive" trap the agent-engine half
  *      guards against with its eleven-name regression list: a crude grep
  *      would report LINKEDIN_CLIENT_ID, TWITTER_CLIENT_ID, GOOGLE_CLIENT_ID,
- *      FACEBOOK_APP_ID, TIKTOK_CLIENT_KEY, REDDIT_CLIENT_ID, and their
+ *      FACEBOOK_APP_ID, TIKTOK_CLIENT_KEY, and their
  *      *_SECRET partners, plus META_ADVANCED_ACCESS_APPROVED,
  *      TIKTOK_RESEARCH_API_APPROVED, and
  *      FIREFLIES_WEBHOOK_SECRET, as "wired but never read" — every one a false
