@@ -53,11 +53,20 @@ export function socialPlatformsFor(identity: string): SocialPlatform[] {
 
 /** Platform-registry id → mark id ("twitter", the LinkedIn company-page
     variant, and Instagram's second (direct-login) connection all map onto
-    their base marks — same brand, same logo, different OAuth flow). */
+    their base marks — same brand, same logo, different OAuth flow).
+    NO "instagram_insights" BRANCH, unlike reddit/facebook below: that id's
+    only registry entry was removed 2026-09-21 along with its two dead
+    readers (instagram-insights.ts), it never had an OAuth flow, and it was
+    never schedulable (`PUBLISHABLE_PLATFORMS` never listed it, and
+    `READ_ONLY_PLATFORM_IDS` kept it off every card that writes
+    `scheduledPlatform`) — so unlike reddit's still-live content-drafting
+    agent or a stray already-connected facebook/google integration, nothing
+    in this codebase can hand this function that id any more. A null result
+    here is a missing icon, not a wrong one — the safer degrade. */
 export function platformForIntegrationId(id: string): SocialPlatform | null {
   if (id === "twitter") return "x";
   if (id === "linkedin_community") return "linkedin";
-  if (id === "instagram_business" || id === "instagram_insights") return "instagram";
+  if (id === "instagram_business") return "instagram";
   return id === "instagram" || id === "x" || id === "tiktok" || id === "linkedin" || id === "reddit" || id === "facebook" || id === "youtube"
     ? id
     : null;

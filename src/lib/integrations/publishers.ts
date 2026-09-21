@@ -568,7 +568,11 @@ function planTikTokChunks(videoSize: number): { chunkSize: number; totalChunkCou
   return { chunkSize: TIKTOK_MAX_CHUNK_BYTES, totalChunkCount: Math.floor(videoSize / TIKTOK_MAX_CHUNK_BYTES) };
 }
 
-/** The clip's total byte size, off the same signed URL we're about to read it from. */
+/**
+ * The clip's total byte size, off the same signed URL we're about to read it
+ * from. Shared by every publisher that uploads bytes itself (TikTok, YouTube)
+ * — the error below deliberately names neither, since either caller can hit it.
+ */
 async function probeVideoSize(videoUrl: string): Promise<number> {
   const res = await fetch(videoUrl, { headers: { Range: "bytes=0-0" } });
   if (res.status === 206) {
@@ -580,14 +584,14 @@ async function probeVideoSize(videoUrl: string): Promise<number> {
   // full-body response still carries the real size on Content-Length.
   const total = Number(res.headers.get("content-length"));
   if (Number.isFinite(total) && total > 0) return total;
-  throw new Error("TikTok publish failed: could not determine the video file's size");
+  throw new Error("Video publish failed: could not determine the video file's size");
 }
 
-/** One byte range of the clip, straight off its signed GCS URL. */
+/** One byte range of the clip, straight off its signed GCS URL. Shared, see probeVideoSize. */
 async function fetchVideoChunk(videoUrl: string, start: number, end: number): Promise<ArrayBuffer> {
   const res = await fetch(videoUrl, { headers: { Range: `bytes=${start}-${end}` } });
   if (!res.ok && res.status !== 206) {
-    throw new Error(`TikTok publish failed: could not read the video file (HTTP ${res.status})`);
+    throw new Error(`Video publish failed: could not read the video file (HTTP ${res.status})`);
   }
   return res.arrayBuffer();
 }
@@ -699,6 +703,119 @@ async function publishToTikTok(
   return { postId: initBody.data?.publish_id ?? null };
 }
 
+/* ── YouTube ─────────────────────────────────────────────────────────── */
+
+/** YouTube's own ceiling for `snippet.title` (Data API v3 docs). */
+const YOUTUBE_TITLE_MAX = 100;
+
+/**
+ * A real video title, which YouTube requires and this app's assets do not
+ * carry — `Asset` only has `content` (the caption/body text every other
+ * publisher posts verbatim). First line of the caption, cut to its first
+ * sentence when one is found within that line, else the line itself, capped
+ * at YouTube's own title length. A caption-less clip (the bulk-upload shape —
+ * see `bulkClip` in publisher-media-payload.test.ts, and `publishToTikTok`'s
+ * own title slice above) falls back to a dated placeholder rather than
+ * shipping an empty `snippet.title`, which the API rejects outright.
+ */
+function youtubeTitleFrom(asset: Asset): string {
+  const text = asset.content.trim();
+  if (!text) return `Karos Labs upload - ${new Date().toISOString().slice(0, 10)}`;
+  const firstLine = text.split("\n")[0]!.trim();
+  const sentenceEnd = firstLine.search(/[.!?](\s|$)/);
+  const cut = sentenceEnd === -1 ? firstLine : firstLine.slice(0, sentenceEnd + 1);
+  return (cut || firstLine).slice(0, YOUTUBE_TITLE_MAX).trim();
+}
+
+/**
+ * YouTube Data API v3's resumable upload protocol — the same shape of problem
+ * `publishToTikTok` solved (2026-09-20: upload this server reads bytes for
+ * itself, off the clip's signed GCS URL, rather than handing a third party a
+ * URL to fetch), reusing its `clipUrl`/`probeVideoSize`/`fetchVideoChunk`
+ * helpers directly since none of the three name TikTok.
+ *
+ * TWO PROTOCOL DIFFERENCES FROM TIKTOK, both load-bearing:
+ *  - The init call's answer is NOT in its JSON body. YouTube hands back the
+ *    resumable session URL in the `Location` response HEADER — TikTok's
+ *    `upload_url` sits in `data.upload_url`. Missing header is treated the
+ *    same as a missing `upload_url` there: a clear thrown error.
+ *  - YouTube's resumable protocol allows ONE PUT of the whole file (the
+ *    `Content-Range: bytes 0-N/N` header below IS the "this is everything"
+ *    case, not a slice of a bigger plan) — no TikTok-style
+ *    total_chunk_count/chunk_size negotiation, and no server-side reason to
+ *    add one: this route calls out to Google directly rather than accepting
+ *    a large inbound request body itself, so Next's own body-size limits
+ *    never enter into it. `fetchVideoChunk` still does the reading — it is
+ *    just asked for the single range that is the entire file.
+ *
+ * PRIVATE ON PURPOSE, like TikTok's `SELF_ONLY`: `privacyStatus: "private"`
+ * keeps every upload off the public channel until this path is proven against
+ * a real account in production. Flip it once that happens.
+ */
+async function publishToYouTube(
+  credentials: Record<string, string>,
+  asset: Asset,
+): Promise<PublishResult> {
+  const token = credentials.accessToken;
+  if (!token) throw new Error("No access token");
+
+  const videoUrl = clipUrl(asset);
+  if (!videoUrl) {
+    throw new Error("YouTube posts require a video file (e.g. video/mp4)");
+  }
+
+  const videoSize = await probeVideoSize(videoUrl);
+  const title = youtubeTitleFrom(asset);
+
+  const initRes = await fetch(
+    "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json; charset=UTF-8",
+        "X-Upload-Content-Type": "video/*",
+        "X-Upload-Content-Length": String(videoSize),
+      },
+      body: JSON.stringify({
+        snippet: { title, description: asset.content },
+        status: { privacyStatus: "private" },
+      }),
+    },
+  );
+
+  if (initRes.status === 401 || initRes.status === 403) throw new TokenExpiredError("youtube", initRes.status);
+  if (!initRes.ok) {
+    const err = (await initRes.json().catch(() => ({}))) as { error?: { message?: string } };
+    throw new Error(`YouTube publish failed: ${err.error?.message ?? initRes.status}`);
+  }
+  const sessionUrl = initRes.headers.get("location");
+  if (!sessionUrl) {
+    throw new Error("YouTube publish failed: no upload session URL returned");
+  }
+
+  // Same read-then-PUT shape as publishToTikTok's chunk loop, collapsed to the
+  // one call YouTube's protocol allows for a whole file.
+  const bytes = await fetchVideoChunk(videoUrl, 0, videoSize - 1);
+  const putRes = await fetch(sessionUrl, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "video/*",
+      "Content-Length": String(videoSize),
+      "Content-Range": `bytes 0-${videoSize - 1}/${videoSize}`,
+    },
+    body: bytes,
+  });
+
+  if (putRes.status === 401 || putRes.status === 403) throw new TokenExpiredError("youtube", putRes.status);
+  if (!putRes.ok) {
+    const err = (await putRes.json().catch(() => ({}))) as { error?: { message?: string } };
+    throw new Error(`YouTube publish failed: upload failed (HTTP ${putRes.status}) ${err.error?.message ?? ""}`.trim());
+  }
+  const published = (await putRes.json().catch(() => ({}))) as { id?: string };
+  return { postId: published.id ?? null };
+}
+
 /* ── Dispatcher ──────────────────────────────────────────────────────── */
 
 export async function publishAssetToPlatform(
@@ -720,9 +837,7 @@ export async function publishAssetToPlatform(
     case "tiktok":
       return publishToTikTok(integration.credentials, asset);
     case "youtube":
-      // Video upload (resumable, multi-GB) is a different beast — YouTube items
-      // stay on the calendar as manual/placeholder entries for now.
-      throw new Error("YouTube publishing is not automated yet - post manually and mark as published");
+      return publishToYouTube(integration.credentials, asset);
     default:
       throw new Error(`Publisher not implemented for platform: ${platform}`);
   }

@@ -13,8 +13,20 @@
  * sellable channel (portal feedback round 2, 2026-09). The Facebook Graph API
  * is still the transport (an Instagram professional account is always linked
  * through a Facebook Page), but nothing here posts to, reads, or names a
- * Facebook Page as a product; the client-facing surface is Instagram insights
- * only, and `platforms.ts`'s registry entry for this is `instagram_insights`.
+ * Facebook Page as a product.
+ *
+ * TWO OF THE THREE READERS THIS FILE ONCE HELD WERE REMOVED 2026-09-21:
+ * `listRecentInstagramMedia` and `fetchInstagramMediaInsights` backed the
+ * `instagram_insights` platform card (`platforms.ts`), which had no OAuth
+ * flow, no automated setup, and — confirmed by grep — no caller anywhere in
+ * `src/` outside this file and its own tests. Nothing ever read what that
+ * card's stored `pageId` would have been used for, so the card and both
+ * functions were retired together (their only reader was each other).
+ * `resolveInstagramBusinessAccountId` and `fetchInstagramFollowerCount`
+ * below are unrelated and stay: the follower sweep
+ * (`src/app/api/followers/sync/route.ts`) calls `fetchInstagramFollowerCount`
+ * against a CLIENT'S OWN `instagram` integration token, never this module's
+ * system-user token, and is live.
  *
  * Gated the same way `oauth.ts`'s existing Meta scopes already are:
  * `META_ADVANCED_ACCESS_APPROVED` — this file's calls need `pages_show_list`
@@ -78,97 +90,6 @@ export async function resolveInstagramBusinessAccountId(
   await assertGraphOk(res);
   const body = (await res.json()) as { instagram_business_account?: { id?: string } };
   return body.instagram_business_account?.id ?? null;
-}
-
-export type InstagramMediaType = "FEED" | "REELS" | "STORY";
-
-export interface InstagramMediaSummary {
-  id: string;
-  mediaType: InstagramMediaType;
-  timestamp?: string;
-  permalink?: string;
-}
-
-function normalizeMediaType(raw: { media_type?: string; media_product_type?: string }): InstagramMediaType {
-  if (raw.media_product_type === "REELS") return "REELS";
-  if (raw.media_product_type === "STORY") return "STORY";
-  return "FEED";
-}
-
-/** `instagram_basic`: the client's own recent posts/reels, newest first. */
-export async function listRecentInstagramMedia(
-  systemUserToken: string,
-  igUserId: string,
-  limit = 25,
-): Promise<InstagramMediaSummary[]> {
-  const res = await fetch(
-    `${metaGraphUrl(`${encodeURIComponent(igUserId)}/media`)}` +
-      `?fields=id,media_type,media_product_type,timestamp,permalink&limit=${limit}` +
-      `&access_token=${encodeURIComponent(systemUserToken)}`,
-  );
-  await assertGraphOk(res);
-  const body = (await res.json()) as {
-    data?: Array<{ id: string; media_type?: string; media_product_type?: string; timestamp?: string; permalink?: string }>;
-  };
-  return (body.data ?? []).map((m) => ({
-    id: m.id,
-    mediaType: normalizeMediaType(m),
-    ...(m.timestamp !== undefined ? { timestamp: m.timestamp } : {}),
-    ...(m.permalink !== undefined ? { permalink: m.permalink } : {}),
-  }));
-}
-
-export interface InstagramMediaInsights {
-  mediaId: string;
-  reach: number | null;
-  views: number | null;
-  saved: number | null;
-  shares: number | null;
-  follows: number | null;
-  profileVisits: number | null;
-}
-
-/**
- * Per Meta's documented `instagram-media/insights` metric support (checked
- * 2026-09-16): `saved` is FEED+REELS only; `follows`/`profile_visits` are
- * FEED+STORY only; `reach`/`views`/`shares` apply to all three. A metric not
- * valid for the media's type is never requested and comes back `null` here —
- * never a fabricated `0` (same rule `analytics-providers.ts`'s "pull what you
- * can" comment already follows for this client's own published posts).
- */
-function metricsForMediaType(mediaType: InstagramMediaType): string[] {
-  const metrics = ["reach", "views", "shares"];
-  if (mediaType === "FEED" || mediaType === "REELS") metrics.push("saved");
-  if (mediaType === "FEED" || mediaType === "STORY") metrics.push("follows", "profile_visits");
-  return metrics;
-}
-
-/** `instagram_manage_insights`: the six metrics the client dashboard reports, for one post/reel/story. */
-export async function fetchInstagramMediaInsights(
-  systemUserToken: string,
-  mediaId: string,
-  mediaType: InstagramMediaType,
-): Promise<InstagramMediaInsights> {
-  const metrics = metricsForMediaType(mediaType);
-  const res = await fetch(
-    `${metaGraphUrl(`${encodeURIComponent(mediaId)}/insights`)}?metric=${metrics.join(",")}` +
-      `&access_token=${encodeURIComponent(systemUserToken)}`,
-  );
-  await assertGraphOk(res);
-  const body = (await res.json()) as { data?: Array<{ name: string; values?: Array<{ value?: number }> }> };
-  const valueOf = (name: string): number | null => {
-    if (!metrics.includes(name)) return null;
-    return body.data?.find((d) => d.name === name)?.values?.[0]?.value ?? 0;
-  };
-  return {
-    mediaId,
-    reach: valueOf("reach"),
-    views: valueOf("views"),
-    saved: valueOf("saved"),
-    shares: valueOf("shares"),
-    follows: valueOf("follows"),
-    profileVisits: valueOf("profile_visits"),
-  };
 }
 
 /**

@@ -96,7 +96,6 @@ export const OAUTH_SUPPORTED_PLATFORM_IDS = new Set<string>([
  */
 export const READ_ONLY_PLATFORM_IDS = new Set<string>([
   "linkedin_community",
-  "instagram_insights",
 ]);
 
 /**
@@ -137,10 +136,21 @@ export const PENDING_VERIFICATION_PLATFORM_IDS = new Set<string>([]);
  * (Instagram Login, no Page required) supersedes it for every case that
  * matters, so a target that only sometimes works has no reason to stay
  * inferable. `publishToInstagram` stays for anything already connected.
+ *
+ * `social_post` APPENDED "youtube" last (2026-09-21, real upload landed in
+ * `publishToYouTube`). Appended, not inserted ahead of "tiktok": a client
+ * connected to both keeps inferring tiktok first, same as before this
+ * change — the blind-guess case this ordering governs is narrow to begin
+ * with, since every real scheduling path (the schedule form, bulk-upload,
+ * the webhook's platform hint) stamps `asset.scheduledPlatform` explicitly
+ * before either cron ever calls `inferPlatform`, and that field always wins
+ * over this array (see both call sites: `asset.scheduledPlatform ??
+ * inferPlatform(...)`). This list only gets reached for a post nobody
+ * targeted at all.
  */
 export const PUBLISHABLE_PLATFORMS: Record<string, string[]> = {
   instagram_post: ["instagram_business", "tiktok"],
-  social_post: ["twitter", "linkedin", "tiktok"],
+  social_post: ["twitter", "linkedin", "tiktok", "youtube"],
   article: ["linkedin"],
   email: [],
   note: [],
@@ -170,6 +180,18 @@ export const PLATFORM_LABELS: Record<string, string> = {
   reddit: "Reddit",
   /** Legacy aggregate id for the Google OAuth connection (still in live data). */
   google: "Google",
+  /** The manual-credentials-only "Instagram performance" card, removed from
+   * PLATFORM_REGISTRY 2026-09-21 (confirmed dead: no OAuth flow, no caller of
+   * either function it backed anywhere in src/ outside its own file and
+   * tests). Kept here for the same reason `.facebook`/`.google` are: a client
+   * whose admin set this up before the removal can still have an
+   * `instagram_insights` `ClientIntegration` document in Firestore, and this
+   * one line is what stops `platformLabel()` printing the raw id if that
+   * document is ever read back through this map. It is a harmless fallback
+   * string either way, which is why the same caution did not carry over to
+   * `agent-identity.tsx`'s `platformForIntegrationId` — see that function's
+   * comment for why a MARK is a different call than a LABEL. */
+  instagram_insights: "Instagram performance",
 };
 
 /**
@@ -287,24 +309,17 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
      and out of the onboarding wizard. `PLATFORM_LABELS.facebook` stays: a
      client with a Facebook integration already in Firestore must still see it
      named rather than see the raw id. */
-  {
-    id: "instagram_insights",
-    name: "Instagram performance",
-    icon: "TrendingUp",
-    color: "#E1306C",
-    description:
-      "Read post and reel performance across your account: reach, saves, shares, views, profile visits, and follows.",
-    fields: [
-      {
-        key: "pageId",
-        label: "Facebook Page ID (linked to your Instagram account)",
-        type: "text",
-        required: true,
-        hint: "Add Karos Labs as a partner on this Page in Meta Business Settings first, with Page and Instagram access — this connection reads through our own Business Manager System User, not a per-account OAuth login.",
-      },
-    ],
-    category: "analytics",
-  },
+  /* NO "instagram_insights" ENTRY (removed 2026-09-21). It was a manual-
+     credentials-only card ("Instagram performance": an admin typed in a
+     client's Facebook Page ID so Karos Labs' shared System User token could
+     read detailed media-level insights) with no OAuth flow and, confirmed by
+     grep, no caller anywhere in src/ of either function it backed
+     (`listRecentInstagramMedia`/`fetchInstagramMediaInsights`,
+     instagram-insights.ts — both removed with it) outside their own tests.
+     Unlike the "instagram" entry above, there is no still-connected client
+     to keep this card visible for, so nothing here parallels `hidden: true`.
+     `PLATFORM_LABELS.instagram_insights` stays regardless, one line, for the
+     same legacy-data reason `.facebook`/`.google` do. */
   {
     id: "linkedin",
     name: "LinkedIn",
