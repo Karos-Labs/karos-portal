@@ -179,6 +179,39 @@ export async function requireClientAccess(clientId: string): Promise<AppUser> {
 }
 
 /**
+ * THE ASSIGNMENT HALF, FOR ACTIONS THAT RETURN THEIR REFUSAL RATHER THAN THROW.
+ *
+ * `requireClientAccess` above is the whole rule and throws, which is right for
+ * an action whose caller has no error surface. A dozen others own their own
+ * result shape — `{ ok: false, error }`, `{ error }`, `{ email: "" }` — and
+ * each of those had rewritten the ROLE half inline (`const isStaff = …`) and
+ * then stopped, so staff passed for ANY client. That is the same `canViewClient`
+ * fence `requireClientAccess`, `listClients({ employeeId })` and the MCP actor
+ * check all enforce, missing at a dozen writes — including LinkedIn seat
+ * credentials, a client's join token, and auto-publish on a live channel.
+ *
+ * So the rule is asked here and the SENTENCE is returned, letting each caller
+ * keep its own shape. Callers still write their own role branch, because the
+ * CLIENT_USER side genuinely differs between them (one requires `isGroupAdmin`,
+ * one compares against a differently-named parameter); what they must not keep
+ * doing is stopping there. Non-staff return null because their branch has
+ * already decided — this function answers only "may this STAFF member act on
+ * this client", which is the half that was missing.
+ *
+ * Loads the client for every staff role rather than short-circuiting admins,
+ * deliberately: `requireClientAccess` does the same, and one rule with one cost
+ * is worth more here than a saved read on a path that is about to read the
+ * client anyway.
+ */
+export async function staffAssignmentRefusal(
+  user: AppUser,
+  clientId: string,
+): Promise<string | null> {
+  if (user.role !== "KAROS_ADMIN" && user.role !== "KAROS_EMPLOYEE") return null;
+  return clientAccessRefusal(user, await getClient(clientId));
+}
+
+/**
  * Two sentences, because there are two different things that happen, and one of
  * them is a LOST RACE and the other is not.
  *
@@ -235,6 +268,11 @@ export async function requireTaskAccess(
 
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
   if (!isStaff && (user.role !== "CLIENT_USER" || user.clientId !== clientId)) {
+    return { ok: false, error: "You do not have access to this task." };
+  }
+  // The assignment half. Same sentence for an unassigned employee as for a
+  // client naming someone else's task, so neither learns which ids exist.
+  if (await staffAssignmentRefusal(user, clientId)) {
     return { ok: false, error: "You do not have access to this task." };
   }
 

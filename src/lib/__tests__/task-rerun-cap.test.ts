@@ -47,6 +47,12 @@ beforeEach(() => {
   // vi.mock factory above, since reset strips a vi.fn()'s implementation too.
   vi.clearAllMocks();
   vi.spyOn(auth, "getCurrentUser").mockResolvedValue(STAFF);
+  // `requireTaskAccess` asks the ASSIGNMENT half now, not just the role half,
+  // so the fixture has to say which client this staff member is assigned to.
+  // The auto-mock returned `undefined` here, which the fence correctly reads as
+  // "client not found" — the fixture was modelling any-staff-any-client, which
+  // is the thing that stopped being true.
+  (data.getClient as any).mockResolvedValue({ id: "c1", assignedEmployeeIds: [STAFF.uid] });
 });
 
 afterEach(() => {
