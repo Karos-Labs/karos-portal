@@ -21,7 +21,6 @@ import {
   OAUTH_SUPPORTED_PLATFORM_IDS,
   PENDING_VERIFICATION_PLATFORM_IDS,
   READ_ONLY_PLATFORM_IDS,
-  GOOGLE_READ_ONLY_SUB_PLATFORM_IDS,
   type PlatformConfig,
 } from "@/lib/integrations/platforms";
 import { SocialPlatformMark, platformForIntegrationId } from "@/components/agent-identity";
@@ -37,8 +36,6 @@ interface Props {
   clientId: string;
   integrations: IntegrationView[];
   oauthEnabledPlatforms: string[];
-  /** False until Google approves Business Profile access — see oauth.ts. */
-  googleBusinessProfileRequested: boolean;
   currentUserRole: Role;
   /** Sanitized LinkedIn employee seats (no tokens) for the multi-seat workspace. */
   linkedinSeats?: SeatView[];
@@ -52,19 +49,6 @@ interface Props {
 function PlatformMark({ id, className }: { id: string; className?: string }) {
   const platform = platformForIntegrationId(id);
   return platform ? <SocialPlatformMark platform={platform} className={className} /> : null;
-}
-
-/** Google's multicolor G - inherently multi-color, so it stays local rather than
-    joining the monochrome shared marks. Used by the Google Services Suite card. */
-function GoogleLogo() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
-      <path fill="#4285F4" d="M23.52 12.273c0-.851-.076-1.67-.218-2.455H12v4.645h6.458a5.52 5.52 0 01-2.394 3.622v3.01h3.878c2.269-2.09 3.578-5.166 3.578-8.822z" />
-      <path fill="#34A853" d="M12 24c3.24 0 5.956-1.075 7.942-2.905l-3.878-3.01c-1.075.72-2.45 1.147-4.064 1.147-3.126 0-5.77-2.112-6.715-4.948H1.28v3.108A11.998 11.998 0 0012 24z" />
-      <path fill="#FBBC05" d="M5.285 14.284A7.21 7.21 0 014.909 12c0-.793.136-1.564.376-2.284V6.608H1.28A11.998 11.998 0 000 12c0 1.936.463 3.768 1.28 5.392l4.005-3.108z" />
-      <path fill="#EA4335" d="M12 4.77c1.762 0 3.344.606 4.588 1.795l3.442-3.442C17.951 1.19 15.236 0 12 0 7.31 0 3.253 2.69 1.28 6.608l4.005 3.108C6.23 6.882 8.874 4.77 12 4.77z" />
-    </svg>
-  );
 }
 
 /* ── Branded connect button ──────────────────────────────────────────── */
@@ -187,7 +171,7 @@ function ChannelSection({
    */
   tagOf?: (p: PlatformConfig) => string | null;
   renderCard: (p: PlatformConfig) => React.ReactNode;
-  /** Always-full cards that belong to this section (the merged Google suite). */
+  /** Always-full cards that belong to this section, rendered ahead of the grid. */
   leadingCards?: React.ReactNode;
 }) {
   const [expanded, setExpanded] = useState<string[]>([]);
@@ -909,296 +893,12 @@ function PlatformCard({
   );
 }
 
-/* ── Unified Google card ─────────────────────────────────────────────
- * Replaces three separate cards (Search Console / Analytics / Business
- * Profile) with one. All three share one OAuth flow (provider id
- * "google_unified" - see oauth.ts) that fans a single token pair out to all
- * three ClientIntegration docs server-side; this card is purely a different
- * way of looking at + managing those same three docs, not a fourth doc of
- * its own. YouTube stays a separate standalone card in the grid - it's also
- * a publish target, unlike these three. ────────────────────────────── */
-
-const GOOGLE_SUB_SERVICES = [
-  { id: "google_search_console", label: "Search Console" },
-  { id: "google_analytics", label: "Analytics" },
-  { id: "google_business_profile", label: "Business Profile" },
-] as const;
-
-function GoogleUnifiedCard({
-  integrations,
-  youtubeConnected,
-  clientId,
-  isOAuthEnabled,
-  isConnecting,
-  isAdmin,
-  businessProfileRequested,
-  onOAuthConnect,
-  onDisconnected,
-}: {
-  integrations: IntegrationView[];
-  /** Whether the (separately-connected, standalone) YouTube card is linked -
-   * shown here only as an at-a-glance status pill, not a control. */
-  youtubeConnected: boolean;
-  clientId: string;
-  isOAuthEnabled: boolean;
-  isConnecting: boolean;
-  isAdmin: boolean;
-  /**
-   * Whether the consent request actually asks for Business Profile. Google
-   * gates that scope behind a manual approval, and until it lands the portal
-   * deliberately leaves it out — so the card must not count it as a service
-   * the client failed to connect.
-   */
-  businessProfileRequested: boolean;
-  onOAuthConnect: () => void;
-  onDisconnected: () => void;
-}) {
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
-  /** Failure text for a per-service disconnect - this card had no error slot. */
-  const [subError, setSubError] = useState<string | null>(null);
-
-  const byId = new Map(integrations.map((i) => [i.platform, i]));
-  // A service the consent screen never asked for is not one the client failed
-  // to connect. Without this the gated Business Profile scope makes a perfect
-  // connect read "2 / 3 connected" and never reach the healthy badge.
-  const offered = GOOGLE_SUB_SERVICES.filter(
-    (s) => s.id !== "google_business_profile" || businessProfileRequested,
-  );
-  const connectedCount = offered.filter((s) => byId.has(s.id)).length;
-  const allConnected = connectedCount === offered.length;
-  const anyConnected = connectedCount > 0;
-  // Same "nothing to connect to yet on our side" gate as the platform cards -
-  // Google shares one OAuth app across all four services, so it's one flag.
-  const comingSoon = !anyConnected && !isOAuthEnabled;
-  const anyNeedsReconnect = offered.some((s) => {
-    const i = byId.get(s.id);
-    return i && integrationNeedsReconnect(i);
-  });
-  const isHealthyConnected = allConnected && !anyNeedsReconnect;
-
-  async function handleDisconnectSub(id: string) {
-    setDisconnectingId(id);
-    setSubError(null);
-    try {
-      const res = await deleteIntegrationAction(clientId, id);
-      if (res.error) {
-        // Same empty catch as the platform card had, and the same claim that
-        // "revalidation corrects state" - it doesn't on the failure path. This
-        // card had no error slot at all, so the refusal had nowhere to go.
-        setSubError(res.error);
-        return;
-      }
-      onDisconnected();
-    } catch {
-      setSubError("Couldn't disconnect this service. Please try again.");
-    } finally {
-      setDisconnectingId(null);
-    }
-  }
-
-  return (
-    <div
-      className={cn(
-        "overflow-hidden rounded-[var(--radius)] border flex h-full flex-col transition-colors",
-        advancedOpen
-          ? "border-border-strong"
-          : isHealthyConnected
-            ? "border-success/30 shadow-lg shadow-success/10"
-            : "border-border",
-      )}
-      style={{ background: "var(--surface)" }}
-    >
-      {/* Header */}
-      <div className="flex items-start gap-3 p-4">
-        <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04]">
-          <GoogleLogo />
-        </div>
-        {/* Name and status stack, matching every platform card */}
-        <div className="min-w-0 flex-1 space-y-1">
-          <p className="font-semibold leading-none">Google Services Suite</p>
-          <div className="flex flex-wrap items-center gap-2">
-            {allConnected ? (
-              anyNeedsReconnect ? (
-                <Badge tone="warning">
-                  <Icon name="TriangleAlert" className="h-3 w-3" />
-                  Reconnect needed
-                </Badge>
-              ) : (
-                <Badge tone="neon">
-                  <Icon name="CircleCheck" className="h-3 w-3" />
-                  Connected
-                </Badge>
-              )
-            ) : anyConnected ? (
-              <Badge tone="warning">
-                {connectedCount} / {offered.length} connected
-              </Badge>
-            ) : comingSoon ? (
-              <Badge tone="neutral">
-                <Icon name="Clock" className="h-3 w-3" />
-                Coming soon
-              </Badge>
-            ) : (
-              <Badge tone="neutral">Not connected</Badge>
-            )}
-          </div>
-          <p className="truncate text-xs text-muted-2">
-            Connect Google Analytics 4, Search Console, YouTube, and Business Profile in a single
-            authorization step.
-          </p>
-          {/* Dynamic per-service status chips - YouTube is informational only
-              here (it keeps its own standalone card + OAuth below, since it's
-              also a publish target), so this pill isn't part of GOOGLE_SUB_SERVICES. */}
-          <div className="flex flex-wrap gap-1.5 pt-1.5">
-            {[...offered, { id: "youtube", label: "YouTube" }].map((s) => {
-              const connected = s.id === "youtube" ? youtubeConnected : byId.has(s.id);
-              return (
-                <span
-                  key={s.id}
-                  className={cn(
-                    "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium",
-                    connected ? "border-neon/40 text-neon" : "border-border text-muted-2",
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "h-1.5 w-1.5 rounded-full",
-                      connected ? "bg-neon" : "bg-foreground/20",
-                    )}
-                  />
-                  {s.label}
-                </span>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* Action area */}
-      <div className="px-4 pb-4 space-y-3">
-        {/* Official Google button treatment: white ground, multicolor G, dark label.
-            Replaced entirely by a disabled "Coming soon" control while the app's
-            own Google OAuth credentials aren't set - see comingSoon above. */}
-        {comingSoon ? (
-          <button
-            disabled
-            className="flex w-full items-center justify-center gap-2 rounded-md border border-border bg-foreground/[0.03] px-4 py-2.5 text-sm font-semibold text-muted-2 opacity-70"
-          >
-            <Icon name="Clock" className="h-3.5 w-3.5" />
-            Coming soon
-          </button>
-        ) : (
-          <button
-            onClick={onOAuthConnect}
-            disabled={isConnecting}
-            className={cn(
-              // round 6 (rule 2): see BrandedConnectButton's note - Google's
-              // own fill, a colour-only hover, and the one `.focus-ring`.
-              "focus-ring relative inline-flex w-full items-center justify-center gap-2.5 rounded-md bg-white px-4 py-2.5 text-sm font-semibold text-[#1f1f1f] shadow-sm transition-colors duration-150",
-              "hover:brightness-[0.97]",
-              "disabled:pointer-events-none disabled:opacity-60",
-            )}
-          >
-            {isConnecting ? (
-              <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-            ) : (
-              <GoogleLogo />
-            )}
-            {isConnecting ? "Connecting…" : anyConnected ? "Reconnect Google Suite" : "Connect Google Suite"}
-          </button>
-        )}
-
-        {/* Same rule as the platform cards: everyone who can press the button
-            gets told it can't work yet (QA F55) - only admins get the env-var
-            detail. */}
-        {comingSoon && (
-          <p className="text-[11px] text-muted-2">
-            {isAdmin
-              ? "OAuth env vars not set (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET). Add them to enable Connect."
-              : "Google Suite isn't connectable yet. Ask your Karos team to finish setting it up."}
-          </p>
-        )}
-
-        {isAdmin && (
-          <button
-            onClick={() => setAdvancedOpen((o) => !o)}
-            className="flex w-full items-center gap-1.5 text-[11px] text-muted-2 hover:text-muted transition-colors"
-          >
-            <Icon
-              name="ChevronDown"
-              className={cn("h-3 w-3 transition-transform duration-200", advancedOpen && "rotate-180")}
-            />
-            Manage individual services
-          </button>
-        )}
-      </div>
-
-      {/* Per-service breakdown - admin only */}
-      {isAdmin && (
-        <div
-          className={cn(
-            "grid transition-[grid-template-rows] duration-300 ease-in-out",
-            advancedOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
-          )}
-        >
-          <div className="overflow-hidden">
-            <div className="space-y-2 border-t border-border px-4 pb-5 pt-4">
-              {GOOGLE_SUB_SERVICES.map((s) => {
-                const integration = byId.get(s.id);
-                return (
-                  <div
-                    key={s.id}
-                    className="flex items-center justify-between gap-2 rounded-md border border-border bg-foreground/[0.03] px-3 py-2"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium">{s.label}</p>
-                      <p className="truncate text-[11px] text-muted-2">
-                        {integration
-                          ? (integration.accountName || "Connected via unified flow")
-                          : "Not connected"}
-                      </p>
-                    </div>
-                    {integration && (
-                      <Button
-                        size="sm"
-                        variant="danger"
-                        onClick={() => handleDisconnectSub(s.id)}
-                        loading={disconnectingId === s.id}
-                      >
-                        <Icon name="Unplug" className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                  </div>
-                );
-              })}
-              {subError && (
-                <p className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
-                  {subError}
-                </p>
-              )}
-              <p className="pt-1 text-[11px] text-muted-2">
-                Reconnecting always goes through the button above. Google issues one token pair
-                covering all three services at once, so there&apos;s no separate per-service OAuth.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 /* ── Tab root ────────────────────────────────────────────────────────── */
 
 export function IntegrationsTab({
   clientId,
   integrations,
   oauthEnabledPlatforms,
-  googleBusinessProfileRequested,
   currentUserRole,
   linkedinSeats = [],
   seatLimit = DEFAULT_LINKEDIN_SEAT_LIMIT,
@@ -1233,37 +933,23 @@ export function IntegrationsTab({
    */
   const oauthReportedRef = useRef<Record<string, boolean>>({});
 
-  // The three read-only Google services render as ONE merged card, so they
-  // count as one slot here too - otherwise this stat would disagree with
-  // what's visually on screen (e.g. "6/9" while only 7 cards are shown).
-  const googleMergedIds = new Set<string>(GOOGLE_READ_ONLY_SUB_PLATFORM_IDS);
   // A `hidden` platform (see PlatformConfig.hidden) stays off the grid unless
   // this client already has an integration document for it — retired from new
   // connections, but a client already connected through it can still see and
   // manage that card.
   const standalonePlatforms = PLATFORM_REGISTRY.filter(
-    (p) => !googleMergedIds.has(p.id) && (!p.hidden || integrations.some((i) => i.platform === p.id)),
+    (p) => !p.hidden || integrations.some((i) => i.platform === p.id),
   );
-  // Counts follow the same three-bucket rule as the grid. The badge used to
-  // count any integration DOC as connected, with no status check, so an expired
-  // channel was tallied as working - the count and the card contradicted each
-  // other. "Connected" now means usable; anything needing a reconnect is
-  // reported separately rather than being quietly folded into a green number.
-  const usableGoogleCount = GOOGLE_READ_ONLY_SUB_PLATFORM_IDS.filter((id) => {
-    const i = integrations.find((x) => x.platform === id);
-    return !!i && integrationIsUsable(i);
-  }).length;
-  const staleGoogleCount = GOOGLE_READ_ONLY_SUB_PLATFORM_IDS.filter((id) => {
-    const i = integrations.find((x) => x.platform === id);
-    return !!i && !integrationIsUsable(i);
-  }).length;
-  const connectedCount =
-    standalonePlatforms.filter((p) => platformStatus(p) === "live").length +
-    (usableGoogleCount > 0 ? 1 : 0);
-  const needsReconnectCount =
-    standalonePlatforms.filter((p) => platformStatus(p) === "needs-reconnect").length +
-    (usableGoogleCount === 0 && staleGoogleCount > 0 ? 1 : 0);
-  const totalCardCount = standalonePlatforms.length + 1; // +1 for the merged Google Services Suite card
+  // The badge used to count any integration DOC as connected, with no status
+  // check, so an expired channel was tallied as working - the count and the
+  // card contradicted each other. "Connected" now means usable; anything
+  // needing a reconnect is reported separately rather than being quietly
+  // folded into a green number.
+  const connectedCount = standalonePlatforms.filter((p) => platformStatus(p) === "live").length;
+  const needsReconnectCount = standalonePlatforms.filter(
+    (p) => platformStatus(p) === "needs-reconnect",
+  ).length;
+  const totalCardCount = standalonePlatforms.length;
 
   // Two sections, driven by each platform's registry `category` - a new
   // platform lands in the right section just by declaring one, no UI changes.
@@ -1440,11 +1126,7 @@ export function IntegrationsTab({
         renderCard={renderPlatformCard}
       />
 
-      {/* Analytics & Performance Intelligence - the three read-only Google
-          services (Search Console / Analytics / Business Profile) render as
-          ONE merged card; YouTube's own standalone card stays in Publishing
-          since it's also a post target, but its status still surfaces here
-          as an info pill on the Google Suite card. */}
+      {/* Analytics & Performance Intelligence — read-only sources. */}
       <ChannelSection
         title="Analytics &amp; performance intelligence"
         blurb="Read-only sources agents pull performance data and content ideas from."
@@ -1452,23 +1134,6 @@ export function IntegrationsTab({
         statusOf={platformStatus}
         tagOf={platformTag}
         renderCard={renderPlatformCard}
-        leadingCards={
-          // The merged Google suite is one card covering three services and has
-          // its own internal connected/not state, so it always renders in full
-          // rather than partitioning with the standalone platforms.
-          <GoogleUnifiedCard
-            key="google_unified"
-            integrations={integrations.filter((i) => googleMergedIds.has(i.platform))}
-            youtubeConnected={integrations.some((i) => i.platform === "youtube")}
-            clientId={clientId}
-            isOAuthEnabled={oauthEnabledPlatforms.includes("google_unified")}
-            businessProfileRequested={googleBusinessProfileRequested}
-            isConnecting={connectingPlatform === "google_unified"}
-            isAdmin={isAdmin}
-            onOAuthConnect={() => openOAuthPopup("google_unified")}
-            onDisconnected={() => router.refresh()}
-          />
-        }
       />
 
       {/* Footer note */}

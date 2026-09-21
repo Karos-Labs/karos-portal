@@ -187,9 +187,6 @@ describe("refreshIntegrationCredentials — per provider", () => {
 
   it.each([
     ["youtube", "g-yt"],
-    ["google_search_console", "g-gsc"],
-    ["google_analytics", "g-ga"],
-    ["google_business_profile", "g-gbp"],
   ])(
     "%s: client_id/client_secret in the form, and the refresh token is NOT rotated",
     async (platform, token) => {

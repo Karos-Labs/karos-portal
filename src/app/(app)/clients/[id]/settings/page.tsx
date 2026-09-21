@@ -19,7 +19,7 @@ import {
   listClientActionStates,
 } from "@/lib/data";
 import { listClientAgents } from "@/lib/data-client-agents";
-import { getOAuthEnabledPlatforms, googleBusinessProfileRequested } from "@/lib/integrations/oauth";
+import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
 import { sanitizeIntegrations, sanitizeLinkedinSeats } from "@/lib/integrations/sanitize";
 import {
   CREDIT_COSTS,
@@ -878,7 +878,6 @@ export default async function ClientSettingsPage({
       clientId={client.id}
       integrations={sanitizedIntegrations}
       oauthEnabledPlatforms={oauthEnabledPlatforms}
-      googleBusinessProfileRequested={googleBusinessProfileRequested()}
       currentUserRole={user.role}
       linkedinSeats={sanitizedLinkedinSeats}
       seatLimit={client.linkedinSeatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT}

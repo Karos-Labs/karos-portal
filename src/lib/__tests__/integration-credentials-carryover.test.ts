@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * fields the form rendered and then FULL-OVERWRITES the stored map. The OAuth
  * bookkeeping the callback writes is not in that registry: `expiresAt` is
  * declared by no platform at all, and `refreshToken` only by linkedin_community,
- * youtube, tiktok, reddit and the three google_* entries — X, Instagram and
+ * youtube, tiktok and reddit — X, Instagram and
  * LinkedIn declare `accessToken` alone. So editing an account name on an X
  * channel used to throw its refresh token away, and editing a Meta channel used
  * to throw away the `expiresAt` that schedules the long-lived re-exchange, which

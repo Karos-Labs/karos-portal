@@ -42,7 +42,7 @@
  *      would report LINKEDIN_CLIENT_ID, TWITTER_CLIENT_ID, GOOGLE_CLIENT_ID,
  *      FACEBOOK_APP_ID, TIKTOK_CLIENT_KEY, REDDIT_CLIENT_ID, and their
  *      *_SECRET partners, plus META_ADVANCED_ACCESS_APPROVED,
- *      TIKTOK_RESEARCH_API_APPROVED, GOOGLE_BUSINESS_PROFILE_APPROVED, and
+ *      TIKTOK_RESEARCH_API_APPROVED, and
  *      FIREFLIES_WEBHOOK_SECRET, as "wired but never read" — every one a false
  *      positive. See `scripts/lib/__tests__/env-inventory-core.test.ts` for
  *      the regression assertion.
