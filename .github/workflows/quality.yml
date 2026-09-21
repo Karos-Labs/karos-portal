@@ -42,3 +42,20 @@ jobs:
       # indirection resolution has proven itself over a few releases.
       - name: Env inventory (read-but-undocumented must be empty)
         run: npx tsx scripts/env-inventory.ts
+
+      # THE GATE THAT WAS MISSING. This pipeline type-checks, lints, tests and
+      # inventories env vars, and never once looked at what it was shipping:
+      # the tree was on a Next release carrying a middleware/proxy BYPASS
+      # advisory — an authorization-bypass primitive in an app whose entire
+      # authz model is in-process — for as long as it took someone to run
+      # `npm audit` by hand.
+      #
+      # `--omit=dev` because this asks what PRODUCTION ships; a dev-only
+      # advisory is real but is not a deployed risk and must not block a
+      # release. `--audit-level=high` because the five moderates left in the
+      # tree today are all one transitive chain whose only fix is
+      # `@google-cloud/storage` v8 — a semver-major upgrade that deserves its
+      # own change, not a red build on every unrelated PR. Lower the level in
+      # the same commit that takes that major.
+      - name: Dependency audit (production tree, high and critical fail)
+        run: npm audit --omit=dev --audit-level=high
