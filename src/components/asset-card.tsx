@@ -6,10 +6,12 @@ import { useRouter } from "next/navigation";
 import { Card, Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ImageLightbox } from "@/components/image-lightbox";
-import { CopyCaptionButton } from "@/components/copy-caption-button";
+import { CopyCaptionButton, captionText } from "@/components/copy-caption-button";
+import { downloadTextFile } from "@/components/draft-review-kit";
 import { assetStatusLabel, isPublishHold, PUBLISH_HOLD_HEADING } from "@/lib/asset-status-copy";
 import {
   assetDownloadTargets,
+  assetFileStem,
   assetImages,
   assetLiMedia,
   assetVideoSrc,
@@ -799,6 +801,25 @@ export function AssetCard({
                 {d.label}
               </a>
             ))}
+            {/* The CEO's ask (2026-09-21): a Download for the CONTENT itself,
+                always present, so staff can hand a post off to a platform we
+                have no API for or bypass auto-publish for one post — the same
+                control every drafts reader now offers. Withheld for a
+                liBatch/redditBatch/xBatch note: each draft inside a batch
+                already has its own precise Download for its own text, and a
+                second one here would just be a dump of the raw multi-account
+                markdown under the same label. */}
+            {!liBatch && !redditBatch && !xBatch && asset.content && (
+              <button
+                type="button"
+                onClick={() => downloadTextFile(captionText(asset), `${assetFileStem(asset.title)}.txt`)}
+                className="inline-flex items-center gap-1 text-xs text-muted transition-colors hover:text-foreground"
+                title="Save this content as a file, to post yourself"
+              >
+                <Icon name="Download" className="h-3.5 w-3.5" />
+                Download
+              </button>
+            )}
             {asset.status === "draft" && asset.recommendedAt && (
               <span
                 className="inline-flex items-center gap-1 text-xs text-muted-2"

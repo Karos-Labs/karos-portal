@@ -22,7 +22,9 @@ import { addXDraftFeedbackAction } from "@/lib/actions/x-agent-actions";
 import { laneLabel } from "@/lib/draft-lane-label";
 import { stripInlineMarkdown } from "@/lib/doc-render";
 import { normalizeDashes } from "@/lib/text-utils";
+import { assetFileStem } from "@/lib/asset-images";
 import { splitMetaLinks } from "@/lib/draft-meta";
+import { AwaitingReviewBadge, DownloadDraftButton } from "@/components/draft-review-kit";
 import {
   classifyXMetaBullet,
   xIntentUrl,
@@ -182,7 +184,9 @@ function DraftCard({
             <Badge tone="success">
               {sent === "posted" ? "Picked" : sent === "posted_with_edits" ? "Picked with edits" : "Skipped"}
             </Badge>
-          ) : null}
+          ) : (
+            <AwaitingReviewBadge />
+          )}
         </div>
       </div>
       {draft.laneNote ? (
@@ -340,6 +344,13 @@ function DraftCard({
                 <Button size="sm" variant="ghost" onClick={() => setMode("skipping")}>
                   Skip
                 </Button>
+                {/* ALWAYS present, same as every other reader — the full
+                    chain (post + any replies) as one text file, for a client
+                    who wants to post it themselves. */}
+                <DownloadDraftButton
+                  text={fullText}
+                  filename={`${assetFileStem(accountTitle)}-x.txt`}
+                />
               </div>
               <p className="text-[11px] text-muted-2">
                 Picking copies the text and opens X with the post ready

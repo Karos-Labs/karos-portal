@@ -355,13 +355,21 @@ const POST_CHIP_CLASS: Record<CalendarPost["kind"], string> = {
  * The chip one cell above already read "Failed to publish" off the map below,
  * which is how a card and its own chip disagreed about the same post.
  */
-const POST_KIND_TONE: Record<CalendarPost["kind"], "success" | "info" | "neutral" | "danger"> = {
+const POST_KIND_TONE: Record<CalendarPost["kind"], "success" | "info" | "neutral" | "danger" | "warning"> = {
   published: "success",
   scheduled: "info",
   placeholder: "neutral",
   failed: "danger",
   held: "neutral",
-  draft: "neutral",
+  // NOT "neutral" (2026-09-21, CEO note: an unapproved item must never read
+  // as confusable with a ready one). It was, sharing the exact grey badge
+  // with "placeholder" and "held" — two kinds that are both already approved
+  // and dated, one step or more past what a draft has cleared. `warning` is
+  // not a new word for this state: it is the tone asset-card.tsx's own
+  // `statusTone` already gives "draft" for the exact same reason, so the day
+  // card and the library card now agree rather than drifting into a fourth
+  // vocabulary for "needs your review".
+  draft: "warning",
 };
 
 function PostChip({

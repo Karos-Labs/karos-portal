@@ -34,8 +34,10 @@ import { addLiDraftFeedbackAction } from "@/lib/actions/linkedin-agent-actions";
 import { laneLabel } from "@/lib/draft-lane-label";
 import { stripInlineMarkdown } from "@/lib/doc-render";
 import { normalizeDashes } from "@/lib/text-utils";
+import { assetFileStem } from "@/lib/asset-images";
 import type { LiParsedAccount, LiParsedDraft } from "@/lib/li-drafts";
 import { splitMetaLinks } from "@/lib/draft-meta";
+import { AwaitingReviewBadge, DownloadDraftButton, DraftMediaDownloads } from "@/components/draft-review-kit";
 
 type SentState = "posted" | "posted_with_edits" | "not_posted" | "edit_request";
 
@@ -177,7 +179,9 @@ function DraftCard({
                     ? "Change requested"
                     : "Skipped"}
             </Badge>
-          ) : null}
+          ) : (
+            <AwaitingReviewBadge />
+          )}
         </div>
       </div>
       {draft.laneNote ? (
@@ -190,29 +194,10 @@ function DraftCard({
         <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">{draft.text}</p>
       </div>
 
-      {media.length > 0 ? (
-        <div className="mt-2 rounded-md border border-border bg-background px-3 py-2">
-          <p className="text-[11px] font-medium text-muted">
-            Attach when posting (LinkedIn cannot prefill files):
-          </p>
-          <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
-            {media.map((m) => (
-              <li key={m.name}>
-                <a
-                  href={m.url}
-                  target="_blank"
-                  rel="noopener"
-                  download
-                  className="text-xs text-muted underline hover:text-foreground"
-                >
-                  <Icon name="Download" className="mr-1 inline h-3 w-3" />
-                  {m.name.split("/").pop()}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+      {/* LinkedIn cannot prefill files, so any media the run attached still has
+          to be attached by hand — the shared list (used by every reader) says
+          so once, here. */}
+      <DraftMediaDownloads media={media} />
 
       {draft.meta.length > 0 ? (
         <ul className="mt-2 space-y-0.5">
@@ -337,6 +322,13 @@ function DraftCard({
                 <Button size="sm" variant="ghost" onClick={() => setMode("skipping")}>
                   Skip
                 </Button>
+                {/* ALWAYS present, same as every other reader — the raw text,
+                    for a client who wants to post it themselves without going
+                    through LinkedIn's compose deep link at all. */}
+                <DownloadDraftButton
+                  text={draft.text}
+                  filename={`${assetFileStem(accountTitle)}-linkedin.txt`}
+                />
               </div>
               <p className="text-[11px] text-muted-2">
                 Picking copies the text and opens LinkedIn with the post ready
