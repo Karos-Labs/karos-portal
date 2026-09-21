@@ -45,13 +45,19 @@ export function ApprovePanel({
 }) {
   const router = useRouter();
   const compatiblePlatforms = PUBLISHABLE_PLATFORMS[asset.type] ?? [];
-  // The agent's declared channels narrow which platforms this asset targets; without
-  // any, fall back to every platform the asset type can publish to.
+  // The agent's declared channels are the DEFAULT pick, not the ceiling: a
+  // client can still check any other connected platform the asset type
+  // supports (e.g. an Instagram-agent carousel also going out to TikTok),
+  // so the offered list is every compatible+connected platform, full stop.
   const channelPlatforms =
     agentChannels && agentChannels.length
       ? agentChannels.filter((p) => compatiblePlatforms.includes(p))
       : compatiblePlatforms;
-  const availablePlatforms = connectedPlatforms.filter((p) => channelPlatforms.includes(p));
+  const availablePlatforms = connectedPlatforms.filter((p) => compatiblePlatforms.includes(p));
+  // Pre-checked on open: the agent's own channel(s), narrowed to what's
+  // actually connected — everything else in availablePlatforms is offered
+  // but starts unchecked.
+  const defaultPlatforms = connectedPlatforms.filter((p) => channelPlatforms.includes(p));
   const canAuto = availablePlatforms.length > 0;
 
   // eslint-disable-next-line react-hooks/purity -- initial values only; component mounts once per open
@@ -71,9 +77,11 @@ export function ApprovePanel({
   const [mode, setMode] = useState<PublishMode>(canAuto ? "auto" : "placeholder");
   // Multiple platforms may be checked at once — the asset then publishes to
   // every one of them (see publishAssetToPlatform's per-platform loop in
-  // asset-actions.ts / the auto-publish cron). Starts on just the first
-  // connected platform so the common single-platform case needs no extra click.
-  const [platforms, setPlatforms] = useState<string[]>(availablePlatforms[0] ? [availablePlatforms[0]] : []);
+  // asset-actions.ts / the auto-publish cron). Starts on the agent's own
+  // channel(s) (defaultPlatforms) so the common single-platform case needs no
+  // extra click; every other compatible+connected platform is still offered,
+  // just unchecked, for an explicit cross-post pick.
+  const [platforms, setPlatforms] = useState<string[]>(defaultPlatforms);
   function togglePlatform(p: string) {
     setPlatforms((prev) => (prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]));
   }
