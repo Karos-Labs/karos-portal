@@ -15,16 +15,18 @@
  * through a Facebook Page), but nothing here posts to, reads, or names a
  * Facebook Page as a product.
  *
- * TWO OF THE THREE READERS THIS FILE ONCE HELD WERE REMOVED 2026-09-21:
+ * THREE OF THE FOUR READERS THIS FILE ONCE HELD WERE REMOVED 2026-09-21:
  * `listRecentInstagramMedia` and `fetchInstagramMediaInsights` backed the
  * `instagram_insights` platform card (`platforms.ts`), which had no OAuth
  * flow, no automated setup, and — confirmed by grep — no caller anywhere in
  * `src/` outside this file and its own tests. Nothing ever read what that
  * card's stored `pageId` would have been used for, so the card and both
  * functions were retired together (their only reader was each other).
- * `resolveInstagramBusinessAccountId` and `fetchInstagramFollowerCount`
- * below are unrelated and stay: the follower sweep
- * (`src/app/api/followers/sync/route.ts`) calls `fetchInstagramFollowerCount`
+ * `resolveInstagramBusinessAccountId` was the id-resolver those two relied
+ * on to turn a client's Page id into the ids they needed — with both gone,
+ * it had no caller left either (confirmed by grep, same day), so it was
+ * removed too. `fetchInstagramFollowerCount` below is unrelated and stays:
+ * the follower sweep (`src/app/api/followers/sync/route.ts`) calls it
  * against a CLIENT'S OWN `instagram` integration token, never this module's
  * system-user token, and is live.
  *
@@ -72,24 +74,6 @@ async function assertGraphOk(res: Response): Promise<void> {
     throw new MetaAccessNotGrantedError(body.error?.message);
   }
   throw new Error(`Instagram insights request failed: ${body.error?.message ?? res.status}`);
-}
-
-/**
- * `pages_show_list` territory: which Instagram professional account is
- * linked to this client's Facebook Page. A client hands over their Page id
- * (what they actually have on hand); this turns it into the id every other
- * call here needs.
- */
-export async function resolveInstagramBusinessAccountId(
-  systemUserToken: string,
-  pageId: string,
-): Promise<string | null> {
-  const res = await fetch(
-    `${metaGraphUrl(encodeURIComponent(pageId))}?fields=instagram_business_account&access_token=${encodeURIComponent(systemUserToken)}`,
-  );
-  await assertGraphOk(res);
-  const body = (await res.json()) as { instagram_business_account?: { id?: string } };
-  return body.instagram_business_account?.id ?? null;
 }
 
 /**
