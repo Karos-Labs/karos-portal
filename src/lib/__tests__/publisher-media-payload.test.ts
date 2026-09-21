@@ -59,6 +59,7 @@ let calls: Array<{ url: string; body: any }>;
 /** Fake clip size for every test — well under TikTok's 64MB single-chunk ceiling. */
 const FAKE_VIDEO_SIZE = 5_242_880;
 const TIKTOK_UPLOAD_URL = "https://tiktok-upload.test/upload";
+const YOUTUBE_SESSION_URL = "https://youtube-upload.test/session";
 
 beforeEach(() => {
   calls = [];
@@ -83,6 +84,21 @@ beforeEach(() => {
 
       if (url.includes("tiktokapis")) {
         return jsonResponse({ data: { publish_id: "pub-1", upload_url: TIKTOK_UPLOAD_URL } });
+      }
+
+      // YouTube's resumable PUT — the session URL the init call handed back in
+      // its Location HEADER, not its JSON body (that is the protocol quirk
+      // publishToYouTube's own comment names).
+      if (url === YOUTUBE_SESSION_URL) {
+        return { ok: true, status: 200, headers: new Headers(), json: async () => ({ id: "yt-video-1" }) };
+      }
+      if (url.includes("googleapis.com/upload/youtube")) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ location: YOUTUBE_SESSION_URL }),
+          json: async () => ({}),
+        };
       }
 
       // A ranged GET straight off the clip's own URL — probeVideoSize/fetchVideoChunk
@@ -299,6 +315,123 @@ describe("#48 — Instagram sees the photos the rest of the product sees", () =>
       /Instagram posts require an image or video/,
     );
     expect(calls).toHaveLength(0);
+  });
+});
+
+/**
+ * YouTube — the real upload replacing the old dispatcher stub that threw
+ * unconditionally ("YouTube publishing is not automated yet"). Reuses
+ * `clipUrl`/`probeVideoSize`/`fetchVideoChunk` exactly as `publishToTikTok`
+ * does, but the protocol itself differs in the two ways these tests pin:
+ * the session URL comes back on the init response's `Location` HEADER, not
+ * in its JSON body, and the upload is a single PUT of the whole file rather
+ * than TikTok's chunk-count negotiation.
+ */
+describe("YouTube publishes the clip via the resumable upload protocol", () => {
+  it("uploads the clip's bytes to the session URL from the Location header", async () => {
+    const asset = bulkClip({ content: "A great clip.\n\nMore body copy below the first line." });
+
+    const result = await publishAssetToPlatform("youtube", integration, asset);
+
+    expect(result.postId).toBe("yt-video-1");
+
+    const initCall = calls.find((c) => typeof c.url === "string" && c.url.includes("googleapis.com/upload/youtube"))!;
+    expect(initCall.body.snippet.title).toBe("A great clip.");
+    expect(initCall.body.snippet.description).toBe(asset.content);
+    expect(initCall.body.status).toEqual({ privacyStatus: "private" });
+
+    // The session PUT, not the init call, is what actually carries the video.
+    const putCall = calls.find((c) => c.url === YOUTUBE_SESSION_URL)!;
+    expect(putCall).toBeTruthy();
+
+    // Still reads the clip's own bytes off the URL the asset actually carries,
+    // same as TikTok's read — the shared helper, not a second implementation.
+    expect(
+      calls.some((c) => c.url === "https://storage.googleapis.com/bucket/clip-3.mp4?X-Goog-Signature=abc"),
+    ).toBe(true);
+  });
+
+  it("falls back to a dated placeholder title for a caption-less clip", async () => {
+    // The bulk-upload shape: content is "" (see #48's bulkClip default).
+    const asset = bulkClip();
+    await publishAssetToPlatform("youtube", integration, asset);
+    const initCall = calls.find((c) => typeof c.url === "string" && c.url.includes("googleapis.com/upload/youtube"))!;
+    expect(initCall.body.snippet.title).toMatch(/^Karos Labs upload - \d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("refuses a caption-only post — YouTube posts require a video file", async () => {
+    const textOnly = bulkClip({ videoUrl: null, mimeType: null, imageUrl: null, content: "No video here" });
+    await expect(publishAssetToPlatform("youtube", integration, textOnly)).rejects.toThrow(
+      /require a video file/,
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  /** A ranged GET straight off the clip's own URL — probeVideoSize succeeding, so
+   *  every test below fails at the STEP it means to test rather than earlier. */
+  function videoRangeResponse() {
+    return { ok: true, status: 206, headers: new Headers({ "content-range": `bytes 0-0/${FAKE_VIDEO_SIZE}` }), arrayBuffer: async () => new ArrayBuffer(8) };
+  }
+
+  it("throws TokenExpiredError on a 401 from the init call", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+        if ((init?.headers as Record<string, string> | undefined)?.Range) return videoRangeResponse();
+        return { ok: false, status: 401, headers: new Headers(), json: async () => ({}) };
+      }),
+    );
+    await expect(publishAssetToPlatform("youtube", integration, bulkClip())).rejects.toMatchObject({
+      name: "TokenExpiredError",
+    });
+  });
+
+  it("throws TokenExpiredError on a 403 from the upload PUT", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+        if ((init?.headers as Record<string, string> | undefined)?.Range) return videoRangeResponse();
+        if (url.includes("googleapis.com/upload/youtube")) {
+          return { ok: true, status: 200, headers: new Headers({ location: YOUTUBE_SESSION_URL }), json: async () => ({}) };
+        }
+        if (url === YOUTUBE_SESSION_URL) {
+          return { ok: false, status: 403, headers: new Headers(), json: async () => ({}) };
+        }
+        return jsonResponse({});
+      }),
+    );
+    await expect(publishAssetToPlatform("youtube", integration, bulkClip())).rejects.toMatchObject({
+      name: "TokenExpiredError",
+    });
+  });
+
+  it("throws a clear error when the init call answers a non-2xx status", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+        if ((init?.headers as Record<string, string> | undefined)?.Range) return videoRangeResponse();
+        return {
+          ok: false,
+          status: 500,
+          headers: new Headers(),
+          json: async () => ({ error: { message: "quotaExceeded" } }),
+        };
+      }),
+    );
+    await expect(publishAssetToPlatform("youtube", integration, bulkClip())).rejects.toThrow(/quotaExceeded/);
+  });
+
+  it("throws a clear error when the init call has no Location header", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+        if ((init?.headers as Record<string, string> | undefined)?.Range) return videoRangeResponse();
+        return { ok: true, status: 200, headers: new Headers(), json: async () => ({}) };
+      }),
+    );
+    await expect(publishAssetToPlatform("youtube", integration, bulkClip())).rejects.toThrow(
+      /no upload session URL/,
+    );
   });
 });
 
@@ -561,6 +694,7 @@ describe("#48 — no publisher reads a media field for itself", () => {
       "publishToLinkedIn",
       "publishToTwitter",
       "publishToTikTok",
+      "publishToYouTube",
       DISPATCHER,
       "clipUrl",
       "photoUrl",
@@ -611,10 +745,11 @@ describe("#48 — no publisher reads a media field for itself", () => {
    * PUBLISHABLE_PLATFORMS is probed from then on without anyone editing this file.
    */
   const PROBE_IDS = [
+    // youtube is now a real target of social_post (PUBLISHABLE_PLATFORMS), so
+    // it comes along for free via the spread below — kept out of the literal
+    // list rather than duplicated in it. threads/bluesky are two ids nothing
+    // dispatches, so the not-found direction has something to prove too.
     ...new Set(Object.values(PUBLISHABLE_PLATFORMS).flat()),
-    // The switch answers youtube (with a refusal) though no asset type lists it,
-    // and two ids nothing dispatches, so both directions have something to prove.
-    "youtube",
     "threads",
     "bluesky",
   ];

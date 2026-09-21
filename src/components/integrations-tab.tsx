@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Badge, Input, Label } from "@/components/ui";
 import { Icon } from "@/components/icon";
@@ -1081,6 +1081,104 @@ function SubConnection({
   );
 }
 
+/* ── Swipeable pane switcher — Instagram/LinkedIn's two underlying
+ * connections, one visible at a time ───────────────────────────────────
+ * The merged cards used to stack both connections vertically in one card
+ * (SubConnection rendered twice, back to back), which the product owner saw
+ * live and called unclear + too long: a client could not tell at a glance
+ * what each block was for, and the card grew tall enough to dominate the
+ * grid. This swaps the CONTAINER only - same SubConnection content per
+ * connection, same required-first/fallback-second ordering - for a
+ * horizontally paged one: one pane on screen, swipe (touch/trackpad) or the
+ * dots/arrows below to move to the other.
+ *
+ * Plain CSS scroll-snap, no carousel library (none is in package.json and a
+ * two-pane swipe does not need one): each pane is a full-width flex child,
+ * `snap-x snap-mandatory` on the scroller and `snap-start` on each pane is
+ * the whole mechanism. `active` is read back off scroll position (rounded to
+ * the nearest pane) rather than driven only by the dot clicks, so a real
+ * finger-swipe updates the dots too.
+ */
+function SwipePanes({ panes }: { panes: { id: string; label: string; content: ReactNode }[] }) {
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const [active, setActive] = useState(0);
+
+  function scrollToIndex(i: number) {
+    const el = scrollerRef.current;
+    if (!el || i < 0 || i >= panes.length) return;
+    el.scrollTo({ left: i * el.clientWidth, behavior: "smooth" });
+    setActive(i);
+  }
+
+  function handleScroll() {
+    const el = scrollerRef.current;
+    if (!el || el.clientWidth === 0) return;
+    const i = Math.round(el.scrollLeft / el.clientWidth);
+    setActive(Math.max(0, Math.min(panes.length - 1, i)));
+  }
+
+  if (panes.length === 1) return <>{panes[0]!.content}</>;
+
+  return (
+    <div className="space-y-2">
+      <div
+        ref={scrollerRef}
+        onScroll={handleScroll}
+        className="flex snap-x snap-mandatory overflow-x-auto scroll-smooth [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        {panes.map((p, i) => (
+          <div
+            key={p.id}
+            role="tabpanel"
+            aria-hidden={i !== active}
+            className="w-full shrink-0 snap-start px-px"
+          >
+            {p.content}
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center justify-center gap-2">
+        <button
+          type="button"
+          onClick={() => scrollToIndex(active - 1)}
+          disabled={active === 0}
+          aria-label="Previous connection"
+          className="rounded p-0.5 text-muted-2 transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+        >
+          <Icon name="ChevronLeft" className="h-3.5 w-3.5" />
+        </button>
+        <div className="flex items-center gap-1.5" role="tablist">
+          {panes.map((p, i) => (
+            <button
+              key={p.id}
+              type="button"
+              role="tab"
+              aria-selected={i === active}
+              aria-label={`Show ${p.label}`}
+              onClick={() => scrollToIndex(i)}
+              className={cn(
+                "h-1.5 rounded-full transition-all",
+                i === active ? "w-4 bg-foreground/60" : "w-1.5 bg-foreground/20 hover:bg-foreground/35",
+              )}
+            />
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => scrollToIndex(active + 1)}
+          disabled={active === panes.length - 1}
+          aria-label="Next connection"
+          className="rounded p-0.5 text-muted-2 transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+        >
+          <Icon name="ChevronRight" className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <p className="text-center text-[10px] text-muted-2">{panes[active]!.label}</p>
+    </div>
+  );
+}
+
 /* ── Instagram — one card, two OAuth connections ────────────────────────
  * `instagram` (Facebook Login: requires the client's Instagram professional
  * account to be linked to a Facebook Page) and `instagram_business`
@@ -1138,11 +1236,6 @@ function InstagramUnifiedCard({
   const anyLive = businessLive || facebookLive;
   const anyConnected = !!igBusiness || !!igFacebook;
   const anyNeedsReconnect = anyConnected && !anyLive;
-
-  // The Facebook-Login option stays folded away until a client already has it
-  // connected, or asks for it - offering two Connect buttons up front is the
-  // exact "which one do I press" confusion this merge exists to remove.
-  const [showFacebookOption, setShowFacebookOption] = useState(!!igFacebook);
 
   const [businessInfoOpen, setBusinessInfoOpen] = useState(false);
   const [businessInfoLoading, setBusinessInfoLoading] = useState(false);
@@ -1221,60 +1314,66 @@ function InstagramUnifiedCard({
         </div>
       </div>
 
-      <div className="mt-auto px-4 pb-4 space-y-2.5">
-        <SubConnection
-          platform={businessPlatform}
-          integration={igBusiness}
-          clientId={clientId}
-          isOAuthEnabled={oauthEnabledPlatforms.includes("instagram_business")}
-          isConnecting={connectingPlatform === "instagram_business"}
-          isAdmin={isAdmin}
-          isClientViewer={isClientViewer}
-          onOAuthConnect={() => onOAuthConnect("instagram_business")}
-          onDisconnected={onDisconnected}
-          descriptor={INSTAGRAM_BUSINESS_DESCRIPTOR}
-          label="Direct login (no Facebook Page needed)"
-          connectLabel="Instagram"
+      <div className="mt-auto px-4 pb-4">
+        <SwipePanes
+          panes={[
+            {
+              id: "instagram_business",
+              label: "Direct login (no Facebook Page needed)",
+              content: (
+                <div className="space-y-2.5">
+                  <SubConnection
+                    platform={businessPlatform}
+                    integration={igBusiness}
+                    clientId={clientId}
+                    isOAuthEnabled={oauthEnabledPlatforms.includes("instagram_business")}
+                    isConnecting={connectingPlatform === "instagram_business"}
+                    isAdmin={isAdmin}
+                    isClientViewer={isClientViewer}
+                    onOAuthConnect={() => onOAuthConnect("instagram_business")}
+                    onDisconnected={onDisconnected}
+                    descriptor={INSTAGRAM_BUSINESS_DESCRIPTOR}
+                    label="Direct login (no Facebook Page needed)"
+                    connectLabel="Instagram"
+                  />
+                  {igBusiness && (
+                    <Button size="sm" variant="outline" className="w-full" onClick={handleOpenIgInsights}>
+                      <Icon name="TrendingUp" className="h-3.5 w-3.5" />
+                      View insights
+                    </Button>
+                  )}
+                </div>
+              ),
+            },
+            {
+              id: "instagram",
+              label: "Facebook Login (alternative)",
+              content: (
+                <div className="space-y-2.5">
+                  <SubConnection
+                    platform={facebookPlatform}
+                    integration={igFacebook}
+                    clientId={clientId}
+                    isOAuthEnabled={oauthEnabledPlatforms.includes("instagram")}
+                    isConnecting={connectingPlatform === "instagram"}
+                    isAdmin={isAdmin}
+                    isClientViewer={isClientViewer}
+                    onOAuthConnect={() => onOAuthConnect("instagram")}
+                    onDisconnected={onDisconnected}
+                    descriptor={INSTAGRAM_FACEBOOK_DESCRIPTOR}
+                    label="Facebook Login"
+                  />
+                  {igFacebook && (
+                    <Button size="sm" variant="outline" className="w-full" onClick={handleOpenBusinessInfo}>
+                      <Icon name="Building2" className="h-3.5 w-3.5" />
+                      View business info
+                    </Button>
+                  )}
+                </div>
+              ),
+            },
+          ]}
         />
-
-        {igBusiness && (
-          <Button size="sm" variant="outline" className="w-full" onClick={handleOpenIgInsights}>
-            <Icon name="TrendingUp" className="h-3.5 w-3.5" />
-            View insights
-          </Button>
-        )}
-
-        {!showFacebookOption ? (
-          <button
-            type="button"
-            onClick={() => setShowFacebookOption(true)}
-            className="flex w-full items-center gap-1.5 text-[11px] text-muted-2 transition-colors hover:text-foreground"
-          >
-            <Icon name="Plus" className="h-3 w-3" />
-            Have a Facebook Page linked to Instagram? Connect via Facebook Login instead
-          </button>
-        ) : (
-          <SubConnection
-            platform={facebookPlatform}
-            integration={igFacebook}
-            clientId={clientId}
-            isOAuthEnabled={oauthEnabledPlatforms.includes("instagram")}
-            isConnecting={connectingPlatform === "instagram"}
-            isAdmin={isAdmin}
-            isClientViewer={isClientViewer}
-            onOAuthConnect={() => onOAuthConnect("instagram")}
-            onDisconnected={onDisconnected}
-            descriptor={INSTAGRAM_FACEBOOK_DESCRIPTOR}
-            label="Facebook Login"
-          />
-        )}
-
-        {igFacebook && (
-          <Button size="sm" variant="outline" className="w-full" onClick={handleOpenBusinessInfo}>
-            <Icon name="Building2" className="h-3.5 w-3.5" />
-            View business info
-          </Button>
-        )}
       </div>
 
       <Modal
@@ -1418,10 +1517,6 @@ function LinkedInUnifiedCard({
   const anyNeedsReconnect = anyConnected && !anyLive;
 
   const [seatsOpen, setSeatsOpen] = useState(false);
-  // Additive, unlike Instagram's either/or: still folded away until connected
-  // or asked for, so the primary Sign In + Share button is not competing with
-  // a second Connect button on first look.
-  const [showCommunityOption, setShowCommunityOption] = useState(!!liCommunity);
 
   return (
     <div
@@ -1458,53 +1553,62 @@ function LinkedInUnifiedCard({
         </div>
       </div>
 
-      <div className="mt-auto px-4 pb-4 space-y-2.5">
-        <SubConnection
-          platform={liPlatform}
-          integration={li}
-          clientId={clientId}
-          isOAuthEnabled={oauthEnabledPlatforms.includes("linkedin")}
-          isConnecting={connectingPlatform === "linkedin"}
-          isAdmin={isAdmin}
-          isClientViewer={isClientViewer}
-          onOAuthConnect={() => onOAuthConnect("linkedin")}
-          onDisconnected={onDisconnected}
-          descriptor={LINKEDIN_DESCRIPTOR}
-          label="Sign In + Share"
+      <div className="mt-auto px-4 pb-4">
+        <SwipePanes
+          panes={[
+            {
+              id: "linkedin",
+              label: "Sign In + Share",
+              content: (
+                <div className="space-y-2.5">
+                  <SubConnection
+                    platform={liPlatform}
+                    integration={li}
+                    clientId={clientId}
+                    isOAuthEnabled={oauthEnabledPlatforms.includes("linkedin")}
+                    isConnecting={connectingPlatform === "linkedin"}
+                    isAdmin={isAdmin}
+                    isClientViewer={isClientViewer}
+                    onOAuthConnect={() => onOAuthConnect("linkedin")}
+                    onDisconnected={onDisconnected}
+                    descriptor={LINKEDIN_DESCRIPTOR}
+                    label="Sign In + Share"
+                  />
+                  {li && (
+                    <Button size="sm" variant="outline" className="w-full" onClick={() => setSeatsOpen(true)}>
+                      <Icon name="Users" className="h-3.5 w-3.5" />
+                      Manage employee seats
+                      {linkedinSeats && linkedinSeats.length > 0 && ` (${linkedinSeats.length}/${seatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT})`}
+                    </Button>
+                  )}
+                </div>
+              ),
+            },
+            {
+              id: "linkedin_community",
+              // ADDITIVE, not a replacement - unlike Instagram's either/or pane 2,
+              // connecting this does not stand in for Sign In + Share. Said in the
+              // pane label (read under the dots) and in SubConnection's own label
+              // and descriptor, so it is visible whichever one a client's eye lands on.
+              label: "Also connect: company page analytics",
+              content: (
+                <SubConnection
+                  platform={communityPlatform}
+                  integration={liCommunity}
+                  clientId={clientId}
+                  isOAuthEnabled={oauthEnabledPlatforms.includes("linkedin_community")}
+                  isConnecting={connectingPlatform === "linkedin_community"}
+                  isAdmin={isAdmin}
+                  isClientViewer={isClientViewer}
+                  onOAuthConnect={() => onOAuthConnect("linkedin_community")}
+                  onDisconnected={onDisconnected}
+                  descriptor={LINKEDIN_COMMUNITY_DESCRIPTOR}
+                  label="Also connect: company page analytics"
+                />
+              ),
+            },
+          ]}
         />
-
-        {li && (
-          <Button size="sm" variant="outline" className="w-full" onClick={() => setSeatsOpen(true)}>
-            <Icon name="Users" className="h-3.5 w-3.5" />
-            Manage employee seats
-            {linkedinSeats && linkedinSeats.length > 0 && ` (${linkedinSeats.length}/${seatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT})`}
-          </Button>
-        )}
-
-        {!showCommunityOption ? (
-          <button
-            type="button"
-            onClick={() => setShowCommunityOption(true)}
-            className="flex w-full items-center gap-1.5 text-[11px] text-muted-2 transition-colors hover:text-foreground"
-          >
-            <Icon name="Plus" className="h-3 w-3" />
-            Also connect for company page analytics (followers, demographics, post performance)
-          </button>
-        ) : (
-          <SubConnection
-            platform={communityPlatform}
-            integration={liCommunity}
-            clientId={clientId}
-            isOAuthEnabled={oauthEnabledPlatforms.includes("linkedin_community")}
-            isConnecting={connectingPlatform === "linkedin_community"}
-            isAdmin={isAdmin}
-            isClientViewer={isClientViewer}
-            onOAuthConnect={() => onOAuthConnect("linkedin_community")}
-            onDisconnected={onDisconnected}
-            descriptor={LINKEDIN_COMMUNITY_DESCRIPTOR}
-            label="Company page analytics"
-          />
-        )}
       </div>
 
       {li && (
