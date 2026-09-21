@@ -89,6 +89,7 @@ function DraftCard({
   accountTitle,
   draft,
   media,
+  suppressPickToPost,
 }: {
   clientId: string;
   jobId?: string;
@@ -96,6 +97,14 @@ function DraftCard({
   accountTitle: string;
   draft: LiParsedDraft;
   media: LiMediaFile[];
+  /**
+   * The auto-publish door (`ClientIntegration.agentAutoPublish`) is open for
+   * this exact draft — see `agentDraftAutoPublishSuppressesPicker`. Picking
+   * here would be a second, uncoordinated way to post the same content the
+   * generic Approve bar below is about to publish for real; Download stays,
+   * as the only hand-off any other asset type gets.
+   */
+  suppressPickToPost?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -227,7 +236,20 @@ function DraftCard({
         </ul>
       ) : null}
 
-      {sent === null ? (
+      {sent === null && suppressPickToPost ? (
+        // Auto-publish is armed for this exact draft (see the prop's own
+        // doc). No picking to do — approving it below is what posts it — so
+        // this stays a read-only card with the one hand-off every other
+        // asset type gets: Download.
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <DownloadDraftButton text={draft.text} filename={`${assetFileStem(accountTitle)}-linkedin.txt`} />
+          {/* Not "Approve it below" — a client reading this never has that
+              button (it is staff-only), and this card mounts for both. */}
+          <p className="text-[11px] text-muted-2">
+            Once your team approves it, Karos posts it automatically. Nothing to pick here.
+          </p>
+        </div>
+      ) : sent === null ? (
         <div className="mt-3 space-y-3">
           {mode === "editing" ? (
             <>
@@ -380,6 +402,7 @@ export function LiDraftsBatch({
   assetId,
   accounts,
   media,
+  suppressPickToPost,
 }: {
   clientId: string;
   jobId?: string;
@@ -387,6 +410,15 @@ export function LiDraftsBatch({
   accounts: LiParsedAccount[];
   /** The run's client-facing media artifacts (slides, PDFs) for manual attach. */
   media: LiMediaFile[];
+  /**
+   * The host already knows (once, for the whole asset — see
+   * `agentDraftAutoPublishSuppressesPicker`) whether the auto-publish door is
+   * armed for this batch. Eligibility itself requires exactly one account
+   * with exactly one draft, so this can only ever apply to that single card —
+   * but it is threaded per-draft rather than assumed, so a stale/legacy
+   * multi-draft batch (which the door never targets) is never affected.
+   */
+  suppressPickToPost?: boolean;
 }) {
   const totalDrafts = accounts.reduce((n, a) => n + a.drafts.length, 0);
   return (
@@ -424,6 +456,7 @@ export function LiDraftsBatch({
                   accountTitle={acc.title}
                   draft={draft}
                   media={mediaFor(draft, media, totalDrafts === 1)}
+                  {...(suppressPickToPost ? { suppressPickToPost } : {})}
                 />
               ))}
             </div>

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { agentDraftAutoPublishTarget } from "@/lib/agent-draft-auto-publish";
+import {
+  agentDraftAutoPublishSuppressesPicker,
+  agentDraftAutoPublishTarget,
+} from "@/lib/agent-draft-auto-publish";
 
 /**
  * The auto-publish opt-in (ClientIntegration.agentAutoPublish) only ever
@@ -147,5 +150,63 @@ describe("agentDraftAutoPublishTarget", () => {
 
   it("returns null for empty content", () => {
     expect(agentDraftAutoPublishTarget({ type: "note", content: "" })).toBeNull();
+  });
+});
+
+/**
+ * The follow-up fix to PR #174: the asset detail modal ALWAYS renders its own
+ * generic Approve bar for a draft, independently of whatever the LinkedIn/X
+ * drafts reader renders inside it — so with the auto-publish door open, a
+ * staff member (or a client; the modal is the only deliverable viewer they
+ * can reach) clicking BOTH "Pick & post" and "Approve" posted the same
+ * content twice. This is the ONE place that decision is made — it must fire
+ * only when BOTH the flag is on for the right platform AND the draft itself
+ * is the narrow shape the door actually targets.
+ */
+describe("agentDraftAutoPublishSuppressesPicker", () => {
+  it("suppresses the picker when the platform's flag is on and the draft is eligible", () => {
+    expect(
+      agentDraftAutoPublishSuppressesPicker({ type: "note", content: LI_COMPANY_SINGLE }, ["linkedin"]),
+    ).toBe(true);
+    expect(
+      agentDraftAutoPublishSuppressesPicker({ type: "note", content: X_COMPANY_SINGLE }, ["twitter"]),
+    ).toBe(true);
+  });
+
+  it("keeps the picker when no platform has the flag on", () => {
+    expect(
+      agentDraftAutoPublishSuppressesPicker({ type: "note", content: LI_COMPANY_SINGLE }, undefined),
+    ).toBe(false);
+    expect(
+      agentDraftAutoPublishSuppressesPicker({ type: "note", content: LI_COMPANY_SINGLE }, []),
+    ).toBe(false);
+  });
+
+  it("keeps the picker when the flag is on for a DIFFERENT platform than this draft targets", () => {
+    // A LinkedIn batch with only X's flag on - the wrong door is open, so this
+    // one stays manual.
+    expect(
+      agentDraftAutoPublishSuppressesPicker({ type: "note", content: LI_COMPANY_SINGLE }, ["twitter"]),
+    ).toBe(false);
+  });
+
+  it("keeps the picker for every shape agentDraftAutoPublishTarget itself refuses, flag or no flag", () => {
+    // Personal seat, multi-account batch, X thread, X reply, Reddit — none of
+    // these has a single post to auto-publish, so the flag being on changes
+    // nothing: agentDraftAutoPublishTarget returning null is what stops it.
+    for (const content of [LI_SEAT_SINGLE, LI_TWO_ACCOUNTS, X_COMPANY_THREAD, X_COMPANY_REPLY, REDDIT_V1]) {
+      expect(
+        agentDraftAutoPublishSuppressesPicker({ type: "note", content }, ["linkedin", "twitter"]),
+      ).toBe(false);
+    }
+  });
+
+  it("keeps the picker for a non-note asset even with every platform flagged on", () => {
+    expect(
+      agentDraftAutoPublishSuppressesPicker(
+        { type: "social_post", content: X_COMPANY_SINGLE },
+        ["linkedin", "twitter"],
+      ),
+    ).toBe(false);
   });
 });

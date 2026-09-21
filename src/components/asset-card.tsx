@@ -36,6 +36,7 @@ import { parseLiDrafts } from "@/lib/li-drafts";
 import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
 import { isRedditV2Envelope, parseRedditDrafts } from "@/lib/reddit-drafts";
 import { RedditDraftsBatch } from "@/components/reddit-drafts-review";
+import { agentDraftAutoPublishSuppressesPicker } from "@/lib/agent-draft-auto-publish";
 import { relativeTime, cn } from "@/lib/utils";
 import { normalizeDashes } from "@/lib/text-utils";
 import type { Asset, PublishMode } from "@/lib/types";
@@ -194,12 +195,21 @@ export function AssetCard({
   canApprove,
   connectedPlatforms,
   agentChannels,
+  agentAutoPublishPlatforms,
 }: {
   asset: Asset;
   canApprove?: boolean;
   connectedPlatforms?: string[];
   /** The generating agent's distribution channels - gate auto-publish to these platforms. */
   agentChannels?: string[];
+  /**
+   * Platforms this client has `ClientIntegration.agentAutoPublish` turned on
+   * for — same shape and source as `connectedPlatforms`. Feeds
+   * `agentDraftAutoPublishSuppressesPicker` so a LinkedIn/X drafts batch
+   * suppresses its own pick-to-post buttons when the generic Approve button
+   * below is the one that will actually post it (see that function's doc).
+   */
+  agentAutoPublishPlatforms?: string[];
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -255,6 +265,14 @@ export function AssetCard({
   const liMedia = useMemo<LiMediaFile[]>(
     () => (liBatch ? assetLiMedia(asset.meta) : []),
     [asset.meta, liBatch],
+  );
+  // Whether the auto-publish door is armed for this exact draft — see
+  // agentDraftAutoPublishSuppressesPicker's own doc for the double-publish
+  // bug this closes (a staff member picking-and-posting here, then also
+  // clicking Approve below).
+  const suppressPickToPost = useMemo(
+    () => agentDraftAutoPublishSuppressesPicker(asset, agentAutoPublishPlatforms),
+    [asset, agentAutoPublishPlatforms],
   );
 
   const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
@@ -495,6 +513,7 @@ export function AssetCard({
                   assetId={asset.id}
                   accounts={liBatch.accounts}
                   media={liMedia}
+                  {...(suppressPickToPost ? { suppressPickToPost } : {})}
                 />
               </div>
             ) : (
@@ -535,6 +554,7 @@ export function AssetCard({
                   assetId={asset.id}
                   accounts={xBatch.accounts}
                   {...(xThread.length > 0 ? { thread: xThread } : {})}
+                  {...(suppressPickToPost ? { suppressPickToPost } : {})}
                 />
               </div>
             ) : (

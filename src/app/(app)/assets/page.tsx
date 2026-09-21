@@ -9,7 +9,7 @@ import { AssetsView } from "@/components/assets-view";
 import { statusFilterFromParam } from "@/lib/content-status-links";
 import { MediaUploadButton } from "@/components/media-upload";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
-import { pushablePlatformsByClient } from "@/lib/publish-targets";
+import { agentAutoPublishPlatformsByClient, pushablePlatformsByClient } from "@/lib/publish-targets";
 import type { Client } from "@/lib/types";
 
 /**
@@ -123,6 +123,7 @@ export default async function AssetsPage({
     // render, and the approve panel's manual-push tier then names a control that
     // is not on the card. Scoped to this one client's assets.
     const clientPlatforms = await pushablePlatformsByClient(clientAssets);
+    const clientAutoPublishPlatforms = await agentAutoPublishPlatformsByClient(clientAssets);
     return (
       <>
         <PageHeader
@@ -157,6 +158,9 @@ export default async function AssetsPage({
           initialStatus={initialStatus}
           now={now}
           {...(clientPlatforms ? { connectedPlatformsByClient: clientPlatforms } : {})}
+          {...(clientAutoPublishPlatforms
+            ? { agentAutoPublishPlatformsByClient: clientAutoPublishPlatforms }
+            : {})}
         />
       </>
     );
@@ -168,6 +172,7 @@ export default async function AssetsPage({
   // orphaned assets of deleted clients used to leak into this cross-client view.
   const assets = allAssets.filter((a) => clientIds.has(a.clientId));
   const connectedPlatformsByClient = await pushablePlatformsByClient(assets);
+  const autoPublishPlatformsByClient = await agentAutoPublishPlatformsByClient(assets);
   return (
     <>
       <PageHeader
@@ -195,6 +200,9 @@ export default async function AssetsPage({
           now={now}
           clientNames={Object.fromEntries(clients.map((client) => [client.id, client.name]))}
           {...(connectedPlatformsByClient ? { connectedPlatformsByClient } : {})}
+          {...(autoPublishPlatformsByClient
+            ? { agentAutoPublishPlatformsByClient: autoPublishPlatformsByClient }
+            : {})}
         />
       )}
     </>

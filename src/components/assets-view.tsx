@@ -43,6 +43,7 @@ export function AssetsView({
   canApprove = false,
   clientNames,
   connectedPlatformsByClient,
+  agentAutoPublishPlatformsByClient,
   initialStatus = "all",
   now: nowProp,
 }: {
@@ -58,6 +59,13 @@ export function AssetsView({
    * Platform ids only - never integration records, which carry decrypted tokens.
    */
   connectedPlatformsByClient?: Record<string, string[]>;
+  /**
+   * Keyed by client: the platforms that client has `agentAutoPublish` turned
+   * on for. Threaded to AssetCard so a LinkedIn/X drafts batch suppresses its
+   * own pick-to-post buttons once the generic Approve button is the one that
+   * actually fires the real publish (see agent-draft-auto-publish.ts).
+   */
+  agentAutoPublishPlatformsByClient?: Record<string, string[]>;
   /**
    * The status this list opens on, seeded from `?status=` by the page (2026-09).
    *
@@ -280,6 +288,9 @@ export function AssetsView({
                   {...(connectedPlatformsByClient?.[asset.clientId]
                     ? { connectedPlatforms: connectedPlatformsByClient[asset.clientId] }
                     : {})}
+                  {...(agentAutoPublishPlatformsByClient?.[asset.clientId]
+                    ? { agentAutoPublishPlatforms: agentAutoPublishPlatformsByClient[asset.clientId] }
+                    : {})}
                 />
               </div>
             ))}
@@ -311,6 +322,9 @@ export function AssetsView({
                     canApprove={canApprove}
                     {...(connectedPlatformsByClient?.[asset.clientId]
                       ? { connectedPlatforms: connectedPlatformsByClient[asset.clientId] }
+                      : {})}
+                    {...(agentAutoPublishPlatformsByClient?.[asset.clientId]
+                      ? { agentAutoPublishPlatforms: agentAutoPublishPlatformsByClient[asset.clientId] }
                       : {})}
                   />
                 </div>

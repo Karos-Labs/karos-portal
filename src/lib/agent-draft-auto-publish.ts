@@ -66,6 +66,41 @@ export interface AgentDraftAutoPublishTarget {
  * company-page account apart from a seat the same way this does — by title —
  * so this stays exactly as reliable as what a human already sees on the card.
  */
+/**
+ * Whether the MANUAL pick-to-post button group (`li-drafts-review.tsx` /
+ * `x-drafts-review.tsx` — "Pick & post", "Pick with edits", "Request a
+ * change", "Skip") must stay OFF the screen for this asset, because the
+ * asset detail modal's own generic Approve bar (`ApproveInline`/
+ * `ApprovePanel`, `approveAssetAction`) is about to do the real posting for
+ * real the instant it is clicked (see `autoPublishApprovedAgentDraft` in
+ * asset-actions.ts).
+ *
+ * The double-publish bug this closes: the two button groups are otherwise
+ * entirely uncoordinated. Nothing stops a staff member (or a client — this
+ * modal is the only deliverable viewer they can reach) from clicking "Pick &
+ * post" AND, moments later, "Approve" on the very same card — and with the
+ * auto-publish door open, that is two real posts of the same content.
+ *
+ * BOTH of these must hold, same as the door itself:
+ *  - the client has opted this platform's connected integration in
+ *    (`ClientIntegration.agentAutoPublish === true`);
+ *  - `agentDraftAutoPublishTarget` recognises this asset as the narrow shape
+ *    the door actually fires for (single post, company page — never a
+ *    multi-draft batch, a personal seat, a thread, a reply/quote, or Reddit).
+ *
+ * When either is false, the picker is the ONLY way this content goes
+ * anywhere and stays exactly as it was — untouched by this function.
+ */
+export function agentDraftAutoPublishSuppressesPicker(
+  asset: Pick<Asset, "type" | "content">,
+  /** Platforms this client has `agentAutoPublish` turned on for. Platform ids only. */
+  autoPublishPlatforms: readonly string[] | undefined,
+): boolean {
+  if (!autoPublishPlatforms || autoPublishPlatforms.length === 0) return false;
+  const target = agentDraftAutoPublishTarget(asset);
+  return target !== null && autoPublishPlatforms.includes(target.platform);
+}
+
 export function agentDraftAutoPublishTarget(
   asset: Pick<Asset, "type" | "content">,
 ): AgentDraftAutoPublishTarget | null {

@@ -30,6 +30,7 @@ import { canMarkAssetPosted } from "@/lib/mark-posted";
 import { PostManagementRow } from "@/components/post-management-row";
 import { ApprovePanel } from "@/components/approve-panel";
 import { approveAssetAction, publishAssetNowAction, unscheduleAssetAction } from "@/lib/actions/asset-actions";
+import { agentDraftAutoPublishSuppressesPicker } from "@/lib/agent-draft-auto-publish";
 import { PLATFORM_LABELS, PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { isAssetPublishable } from "@/lib/asset-visibility";
 import {
@@ -139,6 +140,7 @@ export function AssetDetailModal({
   viewerIsClient,
   canPublish = false,
   connectedPlatforms,
+  agentAutoPublishPlatforms,
 }: {
   asset: Asset | null;
   open: boolean;
@@ -165,6 +167,15 @@ export function AssetDetailModal({
   canPublish?: boolean;
   /** The asset owner's usable publish integrations - staff payload only. */
   connectedPlatforms?: string[];
+  /**
+   * Platforms this client has `ClientIntegration.agentAutoPublish` turned on
+   * for — passed straight to `agentDraftAutoPublishSuppressesPicker` to
+   * decide whether the LinkedIn/X drafts reader below should suppress its
+   * own pick-to-post buttons in favor of the generic Approve bar (which is
+   * what actually fires the auto-publish door). Platform ids only, same
+   * shape and same server-side source as `connectedPlatforms`.
+   */
+  agentAutoPublishPlatforms?: string[];
 }) {
   const [tab, setTab] = useState<"details" | "simulation">("details");
 
@@ -199,6 +210,16 @@ export function AssetDetailModal({
         ? parseXDrafts(content)
         : null,
     [content, liBatch, redditBatch],
+  );
+  // Whether the auto-publish door is armed for this exact draft — see
+  // agentDraftAutoPublishSuppressesPicker's own doc for the double-publish
+  // bug this closes. `asset?.type` alongside `content` mirrors the same
+  // optional-chained read every memo above this line already uses (asset can
+  // still be null this early — hooks run before the null guard below).
+  const suppressPickToPost = useMemo(
+    () =>
+      asset ? agentDraftAutoPublishSuppressesPicker(asset, agentAutoPublishPlatforms) : false,
+    [asset, agentAutoPublishPlatforms],
   );
   // The run's attachable media for the LinkedIn reader (shared definition -
   // the asset card renders the same list).
@@ -487,6 +508,7 @@ export function AssetDetailModal({
               assetId={asset.id}
               accounts={liBatch.accounts}
               media={liMedia}
+              {...(suppressPickToPost ? { suppressPickToPost } : {})}
             />
           </div>
         ) : redditBatch ? (
@@ -511,6 +533,7 @@ export function AssetDetailModal({
               assetId={asset.id}
               accounts={xBatch.accounts}
               {...(xThread.length > 0 ? { thread: xThread } : {})}
+              {...(suppressPickToPost ? { suppressPickToPost } : {})}
             />
           </div>
         ) : emailHtml ? (
