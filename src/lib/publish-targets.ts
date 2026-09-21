@@ -43,3 +43,40 @@ export async function pushablePlatformsByClient(
   );
   return Object.fromEntries(perClient);
 }
+
+/**
+ * clientId → platforms this client has `ClientIntegration.agentAutoPublish`
+ * turned on for — the other half `li-drafts-review.tsx`/`x-drafts-review.tsx`
+ * need (alongside `agentDraftAutoPublishTarget`) to know whether to suppress
+ * their own pick-to-post buttons for a draft (see
+ * `agentDraftAutoPublishSuppressesPicker`, agent-draft-auto-publish.ts).
+ *
+ * Deliberately NOT `pushablePlatformsByClient`: that one filters assets down
+ * to `isAssetPublishable`, which an unapproved DRAFT — the exact status this
+ * question is asked about, before the human gate — never is. Scoped instead
+ * to clients owning at least one `note`, the only asset type
+ * `agentDraftAutoPublishTarget` will ever recognise.
+ *
+ * Also requires the integration to be usable, same as the real door
+ * (`autoPublishApprovedAgentDraft`'s own guard) — the flag alone does not
+ * mean the door will actually fire. Suppressing the picker for a client whose
+ * integration has since expired would leave the draft with no way out at
+ * all, which is worse than the double-publish risk this exists to close (see
+ * "Agents always deliver").
+ */
+export async function agentAutoPublishPlatformsByClient(
+  assets: Asset[],
+): Promise<Record<string, string[]> | undefined> {
+  const clientIds = [...new Set(assets.filter((a) => a.type === "note").map((a) => a.clientId))];
+  if (clientIds.length === 0) return undefined;
+  const perClient = await Promise.all(
+    clientIds.map(async (id) => {
+      const integrations = await listClientIntegrations(id);
+      return [
+        id,
+        integrations.filter((i) => i.agentAutoPublish === true && integrationIsUsable(i)).map((i) => i.platform),
+      ] as const;
+    }),
+  );
+  return Object.fromEntries(perClient);
+}

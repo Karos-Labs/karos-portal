@@ -1568,6 +1568,7 @@ export function RunCalendar({
   clients = [],
   agents = [],
   connectedPlatformsByClient,
+  agentAutoPublishPlatformsByClient,
   defaultClientId,
   archiveAssets,
   agentLabelByAssetId,
@@ -1616,6 +1617,15 @@ export function RunCalendar({
    * extra reaches a client's payload.
    */
   connectedPlatformsByClient?: Record<string, string[]>;
+  /**
+   * clientId → platforms that client has `agentAutoPublish` turned on for —
+   * threaded to the detail modal so a LinkedIn/X drafts batch suppresses its
+   * own pick-to-post buttons once the generic Approve button is the one that
+   * actually fires the real publish (see agent-draft-auto-publish.ts). Same
+   * staff-only sourcing as `connectedPlatformsByClient`: the page never
+   * builds it for a client viewer.
+   */
+  agentAutoPublishPlatformsByClient?: Record<string, string[]>;
   defaultClientId?: string;
   /**
    * Archive view (portal revamp, Surface 05) — the SAME reader ArchiveView
@@ -2753,6 +2763,7 @@ export function RunCalendar({
         viewerIsClient={viewerIsClient}
         canPublish={canSchedule}
         connectedPlatforms={openAsset ? connectedPlatformsByClient?.[openAsset.clientId] ?? [] : []}
+        agentAutoPublishPlatforms={openAsset ? agentAutoPublishPlatformsByClient?.[openAsset.clientId] ?? [] : []}
       />
 
       {scheduleOpen && (

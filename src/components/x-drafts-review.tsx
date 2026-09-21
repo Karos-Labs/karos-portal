@@ -69,6 +69,7 @@ function DraftCard({
   accountTitle,
   draft,
   thread,
+  suppressPickToPost,
 }: {
   clientId: string;
   jobId?: string;
@@ -77,6 +78,14 @@ function DraftCard({
   draft: XParsedDraft;
   /** The engine's own chain (asset meta.thread), for a draft written as one post. */
   thread?: readonly string[];
+  /**
+   * The auto-publish door (`ClientIntegration.agentAutoPublish`) is open for
+   * this exact draft — see `agentDraftAutoPublishSuppressesPicker`. Picking
+   * here would be a second, uncoordinated way to post the same content the
+   * generic Approve bar below is about to publish for real; Download stays,
+   * as the only hand-off any other asset type gets.
+   */
+  suppressPickToPost?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -279,7 +288,20 @@ function DraftCard({
         </div>
       ) : null}
 
-      {sent === null ? (
+      {sent === null && suppressPickToPost ? (
+        // Auto-publish is armed for this exact draft (see the prop's own
+        // doc). No picking to do — approving it below is what posts it — so
+        // this stays a read-only card with the one hand-off every other
+        // asset type gets: Download.
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <DownloadDraftButton text={fullText} filename={`${assetFileStem(accountTitle)}-x.txt`} />
+          {/* Not "Approve it below" — a client reading this never has that
+              button (it is staff-only), and this card mounts for both. */}
+          <p className="text-[11px] text-muted-2">
+            Once your team approves it, Karos posts it automatically. Nothing to pick here.
+          </p>
+        </div>
+      ) : sent === null ? (
         <div className="mt-3 space-y-3">
           {mode === "editing" ? (
             <>
@@ -393,6 +415,7 @@ export function XDraftsBatch({
   assetId,
   accounts,
   thread,
+  suppressPickToPost,
 }: {
   clientId: string;
   jobId?: string;
@@ -403,6 +426,16 @@ export function XDraftsBatch({
    * for a deliverable whose markdown holds the opener alone.
    */
   thread?: readonly string[];
+  /**
+   * The host already knows (once, for the whole asset — see
+   * `agentDraftAutoPublishSuppressesPicker`) whether the auto-publish door is
+   * armed for this batch. Eligibility itself requires exactly one account
+   * with exactly one single-post draft, so this can only ever apply to that
+   * single card — but it is threaded per-draft rather than assumed, so a
+   * stale/legacy multi-draft batch (which the door never targets) is never
+   * affected.
+   */
+  suppressPickToPost?: boolean;
 }) {
   const totalDrafts = accounts.reduce((n, a) => n + a.drafts.length, 0);
   // The chain belongs to ONE post, and the asset names no draft - so it is only
@@ -450,6 +483,7 @@ export function XDraftsBatch({
                   accountTitle={acc.title}
                   draft={draft}
                   {...(chain ? { thread: chain } : {})}
+                  {...(suppressPickToPost ? { suppressPickToPost } : {})}
                 />
               ))}
             </div>

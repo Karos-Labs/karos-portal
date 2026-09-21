@@ -23,7 +23,7 @@ import { AgentEngineRunPanel } from "@/components/agent-engine-run-panel";
 import { readAgentEngineRun } from "@/lib/agent-engine/read-run";
 import { expandJobInput, toRunInputRows } from "@/lib/agent-engine/run-input-display";
 import { isJobInProgress, scheduleAgentEngineJobStatusSync } from "@/lib/agent-engine/reconcile";
-import { pushablePlatformsByClient } from "@/lib/publish-targets";
+import { agentAutoPublishPlatformsByClient, pushablePlatformsByClient } from "@/lib/publish-targets";
 import { classifyJobError } from "@/lib/job-error-taxonomy";
 import { normalizeDashes } from "@/lib/text-utils";
 import type { Job } from "@/lib/types";
@@ -61,6 +61,9 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
   // predicate cannot drift; this page is already staff-only, and what crosses to
   // the client component is platform ids, never integration records.
   const connectedPlatforms = (await pushablePlatformsByClient(realAssets))?.[job.clientId];
+  // Same reasoning, for the LinkedIn/X drafts reader's own pick-to-post
+  // buttons — see agent-draft-auto-publish.ts.
+  const autoPublishPlatforms = (await agentAutoPublishPlatformsByClient(realAssets))?.[job.clientId];
 
   // The spec snapshot's step list, so the bar can also show steps a failed run
   // never reached — and, for an IN-FLIGHT run, every step at all (there is no
@@ -149,6 +152,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
                     asset={a}
                     canApprove
                     {...(connectedPlatforms ? { connectedPlatforms } : {})}
+                    {...(autoPublishPlatforms ? { agentAutoPublishPlatforms: autoPublishPlatforms } : {})}
                   />
                 ))}
               </div>
