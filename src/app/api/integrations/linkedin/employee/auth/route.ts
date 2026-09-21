@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { NextResponse, type NextRequest } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { canViewClient } from "@/lib/client-visibility";
@@ -65,6 +66,30 @@ export async function GET(req: NextRequest) {
 
   const cfg = OAUTH_CONFIGS.linkedin;
   const state = signOAuthState({ clientId, uid: user.uid, provider: "linkedin", seatId, returnTo });
+
+  // THE STATE ALSO GOES IN A COOKIE, so the callback can tell "the browser that
+  // started this flow came back" from "someone replayed a state they saw".
+  //
+  // The signature alone proves the token was minted here; it does not prove WHO
+  // is presenting it, and the token travels in a URL — browser history, the
+  // Referer header, proxy and provider logs, a shared screen. Within its
+  // ten-minute life anyone holding it could complete the flow with their OWN
+  // LinkedIn authorization code, and the callback would write THEIR access
+  // token onto this client's seat, after which the portal posts as them.
+  //
+  // This is the binding the social-connect flow has always had
+  // (`/api/auth/social/[provider]` sets the same cookie and its callback
+  // requires an exact match); the employee flow shipped without it. Same name,
+  // same options, different `path` — scoped to the route that reads it, so the
+  // two flows cannot consume each other's cookie.
+  const cookieStore = await cookies();
+  cookieStore.set("karos_oauth_state", state, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 600,
+    path: "/api/integrations/linkedin/employee",
+  });
 
   const authUrl = new URL(cfg.authUrl);
   authUrl.searchParams.set("response_type", "code");
