@@ -2138,6 +2138,35 @@ export interface ClientIntegration {
    * via a manual "Publish Now" click — the cron skips it.
    */
   autoPublish?: boolean;
+  /**
+   * When true, an X/LinkedIn agent-drafted asset (the "note" a human
+   * reviews on `client/DRAFTS.md`) is handed to `publishAssetToPlatform`
+   * — the same OAuth publisher every other platform uses — the moment a
+   * human approves it, instead of waiting on the manual "Pick & post"
+   * hand-off in the drafts review UI (li-drafts-review.tsx / x-drafts-
+   * review.tsx). Approval itself is unchanged and still required either
+   * way; this only decides what happens right after it.
+   *
+   * SAME PLACE AND SHAPE AS `autoPublish` ABOVE, DELIBERATELY A SEPARATE
+   * FIELD: `autoPublish` already defaults to enabled (absent ⇒ true) for
+   * the CRON's scheduled-content push, and reusing it here would flip
+   * every client who already has a working LinkedIn/X integration (which
+   * is most of them — the flag has had no effect on this content until
+   * now, since a "note" carries no PUBLISHABLE_PLATFORMS targets and is
+   * never cron-eligible) straight into auto-posting on the day this
+   * shipped. This flag defaults to OFF (absent ⇒ false) instead, matching
+   * the product decision that this is an explicit, per-client, per-
+   * platform opt-in — every existing client keeps today's pick-to-post
+   * behaviour until someone turns it on.
+   *
+   * Only ever takes effect for a draft `agentDraftAutoPublishTarget`
+   * (lib/agent-draft-auto-publish.ts) recognises as a SINGLE-post
+   * LinkedIn/X agent batch — "one run produces one post" is the current
+   * product rule for both agents, so that is what a live run looks like;
+   * an older or multi-draft batch has no one post to choose and is left
+   * for a human to pick, never guessed at.
+   */
+  agentAutoPublish?: boolean;
   /** Epoch millis when the cron first detected the token had expired. */
   expiredAt?: number;
   /**

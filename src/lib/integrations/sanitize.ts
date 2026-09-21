@@ -12,7 +12,7 @@ import type { SeatView } from "@/components/linkedin-seats-workspace";
  */
 export type IntegrationView = Pick<
   ClientIntegration,
-  "id" | "clientId" | "platform" | "accountName" | "autoPublish" | "status" | "method"
+  "id" | "clientId" | "platform" | "accountName" | "autoPublish" | "agentAutoPublish" | "status" | "method"
 > & {
   /** Non-secret (text) credential fields only, keyed as in PLATFORM_REGISTRY. */
   credentials: Record<string, string>;
@@ -41,6 +41,7 @@ export function sanitizeIntegrations(integrations: ClientIntegration[]): Integra
       platform: i.platform,
       accountName: i.accountName,
       autoPublish: i.autoPublish,
+      agentAutoPublish: i.agentAutoPublish,
       status: i.status,
       method: i.method,
       credentials: Object.fromEntries(

@@ -7,7 +7,8 @@ import { Badge, Button, TabButton } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ContextGroundingNotice } from "@/components/context-grounding-notice";
 import { AudienceSimulation } from "@/components/audience-simulation";
-import { CopyCaptionButton } from "@/components/copy-caption-button";
+import { CopyCaptionButton, captionText } from "@/components/copy-caption-button";
+import { downloadTextFile } from "@/components/draft-review-kit";
 import { EmailPreview } from "@/components/email-preview";
 import { parseLiDrafts } from "@/lib/li-drafts";
 import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
@@ -34,6 +35,7 @@ import { isAssetPublishable } from "@/lib/asset-visibility";
 import {
   type AssetImage,
   assetDownloadTargets,
+  assetFileStem,
   assetImages,
   assetLiMedia,
   assetVideoSrc,
@@ -54,6 +56,27 @@ function statusTone(status: Asset["status"]): "warning" | "neon" | "info" | "neu
   if (status === "approved") return "neon";
   if (status === "scheduled") return "info";
   return "neutral";
+}
+
+/**
+ * Download the caption (content + hashtags, same text `CopyCaptionButton`
+ * copies) as a `.txt` file — the CEO's "always a Download, so staff can post
+ * it themselves" ask, at the modal's own visual weight (a labeled button, not
+ * a hover-revealed icon — this modal is the phone's main way into a post, the
+ * same reasoning `CopyCaptionButton`'s own "full" variant already states).
+ */
+function DownloadCaptionButton({ asset }: { asset: Pick<Asset, "title" | "content" | "meta"> }) {
+  if (!asset.content) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => downloadTextFile(captionText(asset), `${assetFileStem(asset.title)}.txt`)}
+      className="inline-flex h-11 items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
+    >
+      <Icon name="Download" className="h-3.5 w-3.5" />
+      Download
+    </button>
+  );
 }
 
 function fmt(t: number): string {
@@ -502,8 +525,9 @@ export function AssetDetailModal({
               {...(typeof asset.meta?.htmlDark === "string" ? { htmlDark: asset.meta.htmlDark } : {})}
               textFallback={
                 <div>
-                  <div className="mb-1.5 flex items-center justify-end">
+                  <div className="mb-1.5 flex items-center justify-end gap-1.5">
                     <CopyCaptionButton asset={asset} variant="full" />
+                    <DownloadCaptionButton asset={asset} />
                   </div>
                   <AssetContentBody content={asset.content} />
                 </div>
@@ -518,8 +542,13 @@ export function AssetDetailModal({
               </p>
               {/* Posting happens by hand from a phone, and this modal is the
                   phone's way into a post - so copy is a primary action here, not
-                  the card's hover-revealed icon. */}
-              <CopyCaptionButton asset={asset} variant="full" />
+                  the card's hover-revealed icon. Download sits right beside it —
+                  the same "always there" affordance every drafts reader now
+                  offers, for the platforms we have no publish integration for. */}
+              <div className="flex items-center gap-1.5">
+                <CopyCaptionButton asset={asset} variant="full" />
+                <DownloadCaptionButton asset={asset} />
+              </div>
             </div>
             <AssetContentBody content={asset.content} />
             {hashtags.length > 0 && (

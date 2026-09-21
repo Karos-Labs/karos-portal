@@ -38,7 +38,9 @@ import {
 import { laneLabel } from "@/lib/draft-lane-label";
 import { stripInlineMarkdown } from "@/lib/doc-render";
 import { normalizeDashes } from "@/lib/text-utils";
+import { assetFileStem } from "@/lib/asset-images";
 import { splitMetaLinks } from "@/lib/draft-meta";
+import { AwaitingReviewBadge, DownloadDraftButton } from "@/components/draft-review-kit";
 
 type SentState = "posted" | "posted_with_edits" | "not_posted" | "edit_request";
 
@@ -235,7 +237,9 @@ function DraftCard({
                     ? "Change requested"
                     : "Not posted"}
             </Badge>
-          ) : null}
+          ) : (
+            <AwaitingReviewBadge />
+          )}
         </div>
       </div>
 
@@ -479,6 +483,13 @@ function DraftCard({
                 <Button size="sm" variant="ghost" onClick={() => setMode("skipping")}>
                   Didn&apos;t post
                 </Button>
+                {/* ALWAYS present, same as every other reader — Reddit has no
+                    publish integration at all (hard product rule), so this is
+                    the only hand-off it will ever have. */}
+                <DownloadDraftButton
+                  text={activeText}
+                  filename={`${assetFileStem(draft.subreddit ?? accountTitle)}-reddit.txt`}
+                />
               </div>
               <p className="text-[11px] text-muted-2">
                 {draft.threadUrl

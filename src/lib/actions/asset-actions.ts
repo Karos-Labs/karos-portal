@@ -42,6 +42,7 @@ import {
 } from "@/lib/asset-visibility";
 import { learningTargetForAsset } from "@/lib/agent-engine/learning-feedback";
 import { afterAssetPosted } from "@/lib/asset-posted";
+import { agentDraftAutoPublishTarget } from "@/lib/agent-draft-auto-publish";
 import type { Asset, PublishMode } from "@/lib/types";
 
 /** Load the asset and verify the caller may act on it. Shared guard for the actions below. */
@@ -417,6 +418,12 @@ export async function approveAssetAction(
 
   await updateAsset(id, approvalPatch);
   await closeProducingJobIfReviewed(asset);
+  // Opt-in per client per platform (ClientIntegration.agentAutoPublish,
+  // default OFF) — see the function's own doc comment. Approval above is
+  // already written and is NOT rolled back by anything that happens here.
+  await autoPublishApprovedAgentDraft({ ...asset, ...approvalPatch }).catch((error) => {
+    console.error("[approveAsset] agent-draft auto-publish failed", id, error);
+  });
   trackUserAction({
     clientId: asset.clientId,
     userId: staffUser.uid,
@@ -456,6 +463,71 @@ async function closeProducingJobIfReviewed(asset: Asset): Promise<void> {
     await updateJob(job.id, { status: "approved" });
   } catch (error) {
     console.error("[approveAsset] could not close producing job", asset.jobId, error);
+  }
+}
+
+/**
+ * OPT-IN per client per platform: hand an approved X/LinkedIn agent draft
+ * straight to the existing OAuth publisher (`publishAssetToPlatform` — the
+ * same call "Publish Now" and the auto-cron already use) instead of leaving
+ * it for a human to open the drafts review card and press "Pick & post".
+ *
+ * Approval is the one human gate and stays completely unchanged by this —
+ * `approveAssetAction` has already written `status: "approved"` by the time
+ * this runs, and a failure in here must never read as an approval failure
+ * (hence the caller wraps this in a `.catch` that only logs). A publish
+ * failure IS surfaced to staff, the same way a manual Publish Now failure
+ * is: on `asset.publishError`, which the asset card already renders.
+ *
+ * No-ops instantly, before touching Firestore again, unless BOTH:
+ *  - `agentDraftAutoPublishTarget` recognises this asset as a single-post
+ *    LinkedIn/X agent batch (see that function for the narrow match it
+ *    requires — never Reddit, never a multi-draft batch);
+ *  - this client has explicitly turned the flag on for that platform
+ *    (`ClientIntegration.agentAutoPublish === true` — absent/false is every
+ *    existing client, today, unchanged).
+ */
+async function autoPublishApprovedAgentDraft(asset: Asset): Promise<void> {
+  const target = agentDraftAutoPublishTarget(asset);
+  if (!target) return;
+
+  const integrations = await listClientIntegrations(asset.clientId);
+  const integration = integrations.find((i) => i.platform === target.platform);
+  if (!integration || integration.agentAutoPublish !== true) return;
+  if (!integrationIsUsable(integration) && !integrationMayBeRevivable(integration)) return;
+
+  // Same claim/release dance as publishAssetNowAction — an operator opening
+  // this same asset and pressing Publish Now in the instant after Approve
+  // must not race this call into a double post.
+  const claimed = await claimAssetForPublish(asset.id);
+  if (!claimed) return;
+
+  try {
+    // The extracted single-post text stands in for `asset.content` for THIS
+    // call only — the stored asset keeps its full DRAFTS.md batch as the
+    // record of what the agent actually drafted; only the outbound publish
+    // uses the one post that was picked.
+    const publishResult = await runWithFreshCredentials(integration, (fresh) =>
+      publishAssetToPlatform(target.platform, fresh, { ...asset, content: target.text }),
+    );
+    await markAssetPublished(asset.id, publishResult.postId);
+    await updateAsset(asset.id, {
+      scheduledPlatform: target.platform,
+      publishMode: asset.publishMode ?? "manual",
+      updatedAt: Date.now(),
+    });
+    // Same bookkeeping every publish door owes (slot stamp, X option row,
+    // learning feedback) - see src/lib/asset-posted.ts. No human pusher here
+    // (this IS the automatic door), so no `actor` — the same as the cron's
+    // door, which also posts unattended.
+    await afterAssetPosted(asset);
+  } catch (e) {
+    await releaseAssetPublishClaim(asset.id).catch(() => {});
+    const message = e instanceof Error ? e.message : "Unknown error";
+    if (isIntegrationDeadError(e)) {
+      await markIntegrationExpired(asset.clientId, target.platform).catch(() => {});
+    }
+    await updateAsset(asset.id, { publishError: message, updatedAt: Date.now() }).catch(() => {});
   }
 }
 

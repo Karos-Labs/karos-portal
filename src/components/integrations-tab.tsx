@@ -11,6 +11,7 @@ import {
   saveIntegrationAction,
   deleteIntegrationAction,
   setIntegrationAutoPublishAction,
+  setIntegrationAgentAutoPublishAction,
   fetchClientBusinessInfoAction,
   fetchClientInstagramBusinessInsightsAction,
 } from "@/lib/actions";
@@ -893,6 +894,118 @@ function PlatformCard({
   );
 }
 
+/* ── Agent draft auto-publish — ONE consolidated list ───────────────────
+ * Per-client, per-platform opt-in: when checked, an X/LinkedIn agent draft a
+ * human approves is handed straight to the OAuth publisher
+ * (publishAssetToPlatform) instead of waiting on the manual "Pick & post"
+ * hand-off in the drafts review UI. See ClientIntegration.agentAutoPublish
+ * for the full reasoning, including why this is a SEPARATE flag from the
+ * "Auto-publish scheduled content" toggle each card already carries (that
+ * one gates the CRON pushing SCHEDULED content; this one gates APPROVAL
+ * handing off an agent's DRAFT, a different trigger with a different default).
+ *
+ * ONE LIST rather than a second toggle bolted onto every card individually
+ * (product decision): every connected, publishable channel appears here
+ * uniformly, so the mechanism and the control are already in place for
+ * whichever platform next grows agent-drafted content — only LinkedIn and X
+ * have any today, so checking any other row is inert until one does, but
+ * nothing about the control itself is X/LinkedIn-specific. ──────────── */
+
+function AgentAutoPublishRow({
+  clientId,
+  platform,
+  integration,
+}: {
+  clientId: string;
+  platform: PlatformConfig;
+  integration: IntegrationView;
+}) {
+  const [enabled, setEnabled] = useState(integration.agentAutoPublish === true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- re-sync when integration prop changes
+    setEnabled(integration.agentAutoPublish === true);
+  }, [integration.agentAutoPublish]);
+
+  async function toggle() {
+    const next = !enabled;
+    setEnabled(next); // optimistic - reverted below if the write is refused
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await setIntegrationAgentAutoPublishAction(clientId, platform.id, next);
+      if (res.error) {
+        setEnabled(!next);
+        setError(res.error);
+      }
+    } catch {
+      setEnabled(!next);
+      setError("Couldn't change this setting. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
+      <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={toggle}
+          disabled={saving}
+          className="h-4 w-4 shrink-0 rounded border-border-strong accent-[var(--neon)] disabled:opacity-60"
+        />
+        <PlatformMark id={platform.id} className="h-4 w-4 shrink-0 text-muted-2" />
+        <span className="min-w-0 flex-1 truncate text-sm text-foreground">{platform.name}</span>
+      </label>
+      {error && <span className="shrink-0 text-[11px] text-danger">{error}</span>}
+    </div>
+  );
+}
+
+function AgentAutoPublishSection({
+  clientId,
+  integrations,
+}: {
+  clientId: string;
+  integrations: IntegrationView[];
+}) {
+  // Same "nothing to publish here" exclusion as the per-card toggle
+  // (READ_ONLY_PLATFORM_IDS) — Reddit is in that set, which is also how this
+  // list stays consistent with the hard product rule that Reddit never gets
+  // a posting path: it can never appear here to be checked.
+  const connected = PLATFORM_REGISTRY.filter(
+    (p) => !READ_ONLY_PLATFORM_IDS.has(p.id) && integrations.some((i) => i.platform === p.id),
+  );
+  if (connected.length === 0) return null;
+
+  return (
+    <section className="space-y-3">
+      <div>
+        <h3 className="text-sm font-semibold text-foreground">Agent draft auto-publish</h3>
+        <p className="text-xs text-muted-2">
+          When staff approve an agent-drafted post for a channel checked here, it publishes
+          immediately through that connection instead of waiting for someone to pick it by hand.
+          Off by default for every channel.
+        </p>
+      </div>
+      <div className="divide-y divide-border overflow-hidden rounded-[var(--radius)] border border-border">
+        {connected.map((p) => (
+          <AgentAutoPublishRow
+            key={p.id}
+            clientId={clientId}
+            platform={p}
+            integration={integrations.find((i) => i.platform === p.id)!}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 /* ── Tab root ────────────────────────────────────────────────────────── */
 
 export function IntegrationsTab({
@@ -1135,6 +1248,8 @@ export function IntegrationsTab({
         tagOf={platformTag}
         renderCard={renderPlatformCard}
       />
+
+      <AgentAutoPublishSection clientId={clientId} integrations={integrations} />
 
       {/* Footer note */}
       <p className="text-xs text-muted-2">

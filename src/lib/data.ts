@@ -2268,6 +2268,24 @@ export async function setIntegrationAutoPublish(
   );
 }
 
+/**
+ * Toggle whether this client's approved X/LinkedIn agent drafts auto-publish
+ * through the OAuth publisher (see ClientIntegration.agentAutoPublish for the
+ * full reasoning). Same shape as setIntegrationAutoPublish above, and a
+ * deliberately separate write for a deliberately separate, default-OFF flag.
+ */
+export async function setIntegrationAgentAutoPublish(
+  clientId: string,
+  platform: string,
+  enabled: boolean,
+): Promise<void> {
+  const docId = `${clientId}_${platform}`;
+  await col.clientIntegrations().doc(docId).set(
+    { agentAutoPublish: enabled, updatedAt: Date.now() },
+    { merge: true },
+  );
+}
+
 /** Remove a platform's credentials for a client. */
 export async function deleteClientIntegration(
   clientId: string,
