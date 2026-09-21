@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getClient, listClientIntegrations } from "@/lib/data";
-import { getOAuthEnabledPlatforms, googleBusinessProfileRequested } from "@/lib/integrations/oauth";
+import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
 import { sanitizeIntegrations, sanitizeLinkedinSeats } from "@/lib/integrations/sanitize";
 import { CREDIT_COSTS, DEFAULT_LINKEDIN_SEAT_LIMIT } from "@/lib/credits";
 import { OnboardingWizard } from "@/components/onboarding-wizard";
@@ -47,7 +47,6 @@ export default async function OnboardingPage({
       notice={notice}
       integrations={sanitizeIntegrations(rawIntegrations)}
       oauthEnabledPlatforms={getOAuthEnabledPlatforms()}
-      googleBusinessProfileRequested={googleBusinessProfileRequested()}
       linkedinSeats={linkedinSeats}
       seatLimit={client.linkedinSeatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT}
       seatCost={CREDIT_COSTS.employeeSeat}

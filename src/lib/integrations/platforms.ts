@@ -88,9 +88,6 @@ export const OAUTH_SUPPORTED_PLATFORM_IDS = new Set<string>([
   "youtube",
   "tiktok",
   "reddit",
-  "google_search_console",
-  "google_analytics",
-  "google_business_profile",
 ]);
 
 /**
@@ -101,27 +98,8 @@ export const OAUTH_SUPPORTED_PLATFORM_IDS = new Set<string>([
 export const READ_ONLY_PLATFORM_IDS = new Set<string>([
   "linkedin_community",
   "reddit",
-  "google_search_console",
-  "google_analytics",
-  "google_business_profile",
   "instagram_insights",
 ]);
-
-/**
- * The four real platform ids the "Connect All Google Services" unified OAuth
- * flow (provider id "google_unified" in oauth.ts) fans its single token pair
- * out into. "google_unified" itself is never a stored ClientIntegration or a
- * PLATFORM_REGISTRY card — it's a one-click convenience over these four.
- */
-export const GOOGLE_UNIFIED_SUB_PLATFORM_IDS = ["youtube", "google_search_console", "google_analytics", "google_business_profile"] as const;
-
-/**
- * The subset of the above that's read-only analytics (excludes YouTube, which
- * keeps its own standalone card since it's also a publish target). The
- * Integrations tab merges these three into a single "Google Services Suite"
- * card instead of three separate ones — this is the list that merge uses.
- */
-export const GOOGLE_READ_ONLY_SUB_PLATFORM_IDS = ["google_search_console", "google_analytics", "google_business_profile"] as const;
 
 /**
  * Platforms whose OAuth flow is fully built here but cannot yet be completed
@@ -189,9 +167,6 @@ export const PLATFORM_LABELS: Record<string, string> = {
   reddit: "Reddit",
   /** Legacy aggregate id for the Google OAuth connection (still in live data). */
   google: "Google",
-  google_search_console: "Google Search Console",
-  google_analytics: "Google Analytics",
-  google_business_profile: "Google Business Profile",
 };
 
 /**
@@ -472,96 +447,6 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
         label: "Refresh Token",
         type: "password",
         hint: "Captured automatically during the OAuth consent flow (duration=permanent)",
-      },
-    ],
-    category: "analytics",
-  },
-  {
-    id: "google_search_console",
-    name: "Google Search Console",
-    icon: "Search",
-    color: "#4285F4",
-    description: "Read search queries, clicks, impressions, and position for the client's site.",
-    fields: [
-      {
-        key: "accessToken",
-        label: "OAuth Access Token",
-        type: "password",
-        required: true,
-        hint: "Generate via Google Cloud Console (Search Console API enabled on this project)",
-      },
-      {
-        key: "refreshToken",
-        label: "Refresh Token",
-        type: "password",
-        hint: "Required for long-lived access - captured automatically during the OAuth consent flow",
-      },
-      {
-        key: "siteUrl",
-        label: "Search Console Property",
-        type: "text",
-        placeholder: "https://example.com/ or sc-domain:example.com",
-        hint: "Must match a property this Google account is verified on in Search Console",
-      },
-    ],
-    category: "analytics",
-  },
-  {
-    id: "google_analytics",
-    name: "Google Analytics",
-    icon: "ChartColumn",
-    color: "#E37400",
-    description: "Read sessions, conversions, and AI-referral traffic from the client's GA4 property.",
-    fields: [
-      {
-        key: "accessToken",
-        label: "OAuth Access Token",
-        type: "password",
-        required: true,
-        hint: "Generate via Google Cloud Console (Analytics Data API enabled on this project)",
-      },
-      {
-        key: "refreshToken",
-        label: "Refresh Token",
-        type: "password",
-        hint: "Required for long-lived access - captured automatically during the OAuth consent flow",
-      },
-      {
-        key: "propertyId",
-        label: "GA4 Property ID",
-        type: "text",
-        placeholder: "properties/123456789",
-        hint: "Found in GA4 Admin → Property Settings. This account needs Viewer access on it.",
-      },
-    ],
-    category: "analytics",
-  },
-  {
-    id: "google_business_profile",
-    name: "Google Business Profile",
-    icon: "MapPin",
-    color: "#4285F4",
-    description: "Read the client's local listing performance (local clients only).",
-    fields: [
-      {
-        key: "accessToken",
-        label: "OAuth Access Token",
-        type: "password",
-        required: true,
-        hint: "Requires Google's Business Profile API access request to be approved for this project first",
-      },
-      {
-        key: "refreshToken",
-        label: "Refresh Token",
-        type: "password",
-        hint: "Required for long-lived access - captured automatically during the OAuth consent flow",
-      },
-      {
-        key: "locationId",
-        label: "Business Profile Location ID",
-        type: "text",
-        placeholder: "locations/123456789",
-        hint: "Found via the Business Profile API accounts.locations.list call",
       },
     ],
     category: "analytics",

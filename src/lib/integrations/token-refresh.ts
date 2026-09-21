@@ -95,9 +95,6 @@ const POLICIES: Record<string, RefreshPolicy> = {
   tiktok: { kind: "refresh-token", defaultLifetimeMs: DAY_MS },
   reddit: { kind: "refresh-token", defaultLifetimeMs: HOUR_MS },
   youtube: { kind: "refresh-token", defaultLifetimeMs: HOUR_MS },
-  google_search_console: { kind: "refresh-token", defaultLifetimeMs: HOUR_MS },
-  google_analytics: { kind: "refresh-token", defaultLifetimeMs: HOUR_MS },
-  google_business_profile: { kind: "refresh-token", defaultLifetimeMs: HOUR_MS },
   facebook: { kind: "long-lived-exchange", defaultLifetimeMs: 60 * DAY_MS },
   instagram: { kind: "long-lived-exchange", defaultLifetimeMs: 60 * DAY_MS },
   // Instagram Login's long-lived token also lasts 60 days (same headline

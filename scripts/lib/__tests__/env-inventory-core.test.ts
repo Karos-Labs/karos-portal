@@ -86,7 +86,6 @@ describe("scanReadByCode — this repo, real tree", () => {
     "REDDIT_CLIENT_SECRET",
     "META_ADVANCED_ACCESS_APPROVED",
     "TIKTOK_RESEARCH_API_APPROVED",
-    "GOOGLE_BUSINESS_PROFILE_APPROVED",
     "FIREFLIES_WEBHOOK_SECRET",
     "CRON_SECRET",
   ];

@@ -7,14 +7,12 @@ import {
   verifyOAuthState,
   buildCallbackUrl,
   getAppOrigin,
-  getRequestedScopes,
 } from "@/lib/integrations/oauth";
 import {
   metaGraphUrl,
   metaInstagramGraphUrl,
   INSTAGRAM_BUSINESS_LONG_LIVED_URL,
 } from "@/lib/integrations/meta-graph";
-import { GOOGLE_UNIFIED_SUB_PLATFORM_IDS } from "@/lib/integrations/platforms";
 import {
   errorPage,
   successPage,
@@ -162,15 +160,8 @@ async function exchangeCode(
     return { accessToken: long.access_token, expiresIn: long.expires_in };
   }
 
-  if (
-    provider === "youtube" ||
-    provider === "google_search_console" ||
-    provider === "google_analytics" ||
-    provider === "google_business_profile" ||
-    provider === "google_unified"
-  ) {
-    // All five share one Google Cloud OAuth client (GOOGLE_CLIENT_ID/SECRET) —
-    // only the requested scope differs per provider (see oauth.ts).
+  if (provider === "youtube") {
+    // Google Cloud OAuth client (GOOGLE_CLIENT_ID/SECRET) — see oauth.ts.
     const res = await fetch(config.tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -347,32 +338,6 @@ async function fetchAccountName(provider: string, accessToken: string): Promise<
         return d.name ? `u/${d.name}` : "";
       }
     }
-    if (provider === "google_search_console") {
-      const res = await fetch("https://www.googleapis.com/webmasters/v3/sites", {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (res.ok) {
-        const d = (await res.json()) as { siteEntry?: Array<{ siteUrl?: string }> };
-        return d.siteEntry?.[0]?.siteUrl ?? "";
-      }
-    }
-    if (provider === "google_analytics" || provider === "google_business_profile") {
-      // Both need a client-picked property/location id (there's no single "the
-      // property" for a Google account) — captured in a follow-up settings step
-      // rather than guessed here from the token alone.
-      return "";
-    }
-    if (provider === "google_unified") {
-      // openid/userinfo.email were added to this flow's scopes specifically so
-      // we have something human-readable to show across all four sub-services.
-      const res = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (res.ok) {
-        const d = (await res.json()) as { email?: string };
-        return d.email ?? "";
-      }
-    }
   } catch {
     // Best-effort — don't block the callback
   }
@@ -473,60 +438,25 @@ export async function GET(
     const expiresAt = expiresAtFromExpiresIn(expiresIn, Date.now());
     if (expiresAt !== null) credentials.expiresAt = String(expiresAt);
 
-    // "google_unified" isn't a real platform doc — it's one consent screen
-    // covering four. Write the SAME token pair into each of the four real
-    // ClientIntegration docs so every existing per-service reader (youtube
-    // publisher/analytics, google-search-console.ts, google-analytics.ts,
-    // google-business-profile.ts) keeps working unchanged, unaware a unified
-    // flow was involved. A Google access token is scope-checked per API call,
-    // not per issuing flow, so one token pair is valid across all four.
-    //
-    // ...but only for the scopes the consent screen actually asked for. Business
-    // Profile's business.manage is gated behind GOOGLE_BUSINESS_PROFILE_APPROVED
-    // (see oauth.ts), so until Google approves it this token carries no Business
-    // Profile grant. Writing an "active" google_business_profile doc anyway would
-    // show the client a connected channel that 403s on every call — so drop it
-    // from the fan-out unless the scope was genuinely requested. Self-heals the
-    // day the flag flips; the standalone google_business_profile connector is
-    // unaffected and still requests the scope on its own.
-    const unifiedScopes = getRequestedScopes("google_unified");
-    const platformsToWrite =
-      provider === "google_unified"
-        ? GOOGLE_UNIFIED_SUB_PLATFORM_IDS.filter(
-            (p) =>
-              p !== "google_business_profile" ||
-              unifiedScopes.includes("https://www.googleapis.com/auth/business.manage"),
-          )
-        : [provider];
+    await upsertClientIntegration({
+      clientId: parsed.clientId,
+      platform: provider,
+      credentials,
+      accountName: accountName || undefined,
+      method: "oauth",
+      // Set status explicitly: consumers that filter `status === "active"`
+      // (analytics, copilot context, proactive assistant) drop status-less
+      // integrations, so a freshly-connected OAuth channel must be marked active
+      // — mirroring saveGoogleOAuthTokenAction.
+      status: "active",
+      connectedBy: parsed.uid,
+      connectedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
 
-    for (const platform of platformsToWrite) {
-      // Each sub-service has its own notion of "account" (e.g. the YouTube channel
-      // title vs. the Search Console site URL) — re-derive it per platform instead
-      // of stamping the unified flow's Google-account email onto all four, which
-      // would blow away a more specific name (e.g. a YouTube channel title) that a
-      // prior standalone connect had already captured.
-      const platformAccountName =
-        provider === "google_unified" ? await fetchAccountName(platform, accessToken) : accountName;
-      await upsertClientIntegration({
-        clientId: parsed.clientId,
-        platform,
-        credentials,
-        accountName: platformAccountName || accountName || undefined,
-        method: "oauth",
-        // Set status explicitly: consumers that filter `status === "active"`
-        // (analytics, copilot context, proactive assistant) drop status-less
-        // integrations, so a freshly-connected OAuth channel must be marked active
-        // — mirroring saveGoogleOAuthTokenAction.
-        status: "active",
-        connectedBy: parsed.uid,
-        connectedAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-
-      // Task Map sync: the client just did this work — flip any matching
-      // "Connect <platform>" onboarding task to Done automatically.
-      await autoCompleteTasksOnIntegrationConnect(parsed.clientId, platform).catch(() => {});
-    }
+    // Task Map sync: the client just did this work — flip any matching
+    // "Connect <platform>" onboarding task to Done automatically.
+    await autoCompleteTasksOnIntegrationConnect(parsed.clientId, provider).catch(() => {});
 
     return successPage(provider, accountName, origin);
   } catch (e) {
