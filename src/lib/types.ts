@@ -2139,13 +2139,34 @@ export interface ClientIntegration {
    */
   autoPublish?: boolean;
   /**
-   * When true, an X/LinkedIn agent-drafted asset (the "note" a human
-   * reviews on `client/DRAFTS.md`) is handed to `publishAssetToPlatform`
-   * — the same OAuth publisher every other platform uses — the moment a
-   * human approves it, instead of waiting on the manual "Pick & post"
-   * hand-off in the drafts review UI (li-drafts-review.tsx / x-drafts-
-   * review.tsx). Approval itself is unchanged and still required either
-   * way; this only decides what happens right after it.
+   * TIMING ONLY — not a visibility switch. When true, an X/LinkedIn
+   * agent-drafted asset (the "note" a human reviews on `client/DRAFTS.md`)
+   * is handed to `publishAssetToPlatform` — the same OAuth publisher every
+   * other platform uses, and the same one the "Publish Now" button on this
+   * draft calls — the MOMENT a human approves it, instead of leaving it
+   * approved-but-unpublished until a human clicks that button by hand.
+   * Approval itself is unchanged and still required either way; this only
+   * decides whether the publish that follows it is immediate or waits for
+   * a click.
+   *
+   * THE ONE THING THIS FLAG DOES NOT DO (product ruling, 2026-09-21, after
+   * two rounds of feedback on live screenshots): decide which buttons a
+   * staff member sees on the draft. Approve, Publish Now, the "Open in
+   * LinkedIn"/"Open in X" compose shortcut and Download are the same four
+   * controls on every draft regardless of this flag — Publish Now's own
+   * visibility comes from `agentDraftManualPublishTarget`
+   * (lib/agent-draft-auto-publish.ts), which asks only whether the content
+   * is technically eligible (a single company-page post) and connected (a
+   * usable integration exists), never this flag. An earlier version of this
+   * feature (PR #174/#175) DID gate a button group on this flag and that
+   * was the defect the CEO flagged: with the flag off — every client,
+   * today — staff saw two uncoordinated button groups on one card, and with
+   * it on the picker vanished only for the one narrow shape the flag
+   * covered. "If there's approval for auto-publish, the only change is
+   * that if they approve and at some point choose to publish, it'll
+   * publish automatically. If not, it won't auto-publish" (the CEO's own
+   * words) is exactly this: same buttons always, only the TIMING of the
+   * publish after Approve moves.
    *
    * SAME PLACE AND SHAPE AS `autoPublish` ABOVE, DELIBERATELY A SEPARATE
    * FIELD: `autoPublish` already defaults to enabled (absent ⇒ true) for
@@ -2156,15 +2177,15 @@ export interface ClientIntegration {
    * never cron-eligible) straight into auto-posting on the day this
    * shipped. This flag defaults to OFF (absent ⇒ false) instead, matching
    * the product decision that this is an explicit, per-client, per-
-   * platform opt-in — every existing client keeps today's pick-to-post
-   * behaviour until someone turns it on.
+   * platform opt-in — every existing client keeps today's "approve, then
+   * click Publish Now" behaviour until someone turns it on.
    *
    * Only ever takes effect for a draft `agentDraftAutoPublishTarget`
    * (lib/agent-draft-auto-publish.ts) recognises as a SINGLE-post
    * LinkedIn/X agent batch — "one run produces one post" is the current
    * product rule for both agents, so that is what a live run looks like;
-   * an older or multi-draft batch has no one post to choose and is left
-   * for a human to pick, never guessed at.
+   * an older or multi-draft batch has no one post to choose and stays on
+   * the compose shortcut, never guessed at.
    */
   agentAutoPublish?: boolean;
   /** Epoch millis when the cron first detected the token had expired. */

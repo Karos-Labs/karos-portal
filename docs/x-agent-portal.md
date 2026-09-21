@@ -13,7 +13,7 @@ How the X agent runs through this portal. Spec of record: the lab repo's
 | Stored data | Firestore: `clientSeats`, `agentIntake` (agent="x"), `xNewsUpdates`, `xTakes`, `xDraftFeedback` — flat collections keyed by clientId/seatId |
 | Run-time injection | `src/lib/agent-service/x-agent-context.ts` serializes the stored data to context files on every X run; they override any older repo copies |
 | Live X reads | `XAI_API_KEY` via the platform secret store only (see `agent-service/DEPLOY.md` "X agent live reads"); never in a file |
-| Review | Webhook → job status `review` + one library asset (type `note`, unpublishable — `PUBLISHABLE_PLATFORMS.note` has no targets, so nothing about the asset's own type changes). Draft-only is structural: a human always approves. See "Out of scope (parked)" below for the opt-in that can auto-publish an APPROVED single-post draft through the existing X integration |
+| Review | Webhook → job status `review` + one library asset (type `note`, unpublishable via `PUBLISHABLE_PLATFORMS` — its target platform lives inside the batch markdown, so it goes through its own Publish Now door, see below). Draft-only is structural: a human always approves. The card shows the same button set every platform gets (Approve / Publish Now / Download / Delete) plus an "Open in X" compose shortcut — see "Out of scope (parked)" below for the eligibility rule and the opt-in that can fire the automatic publish through the existing X integration |
 
 Voice, pillars, cadence, language, launch-vs-ongoing are BUILT by the agent
 (onboarding profile + the account's own posts + the edit loop) — the forms never
@@ -63,30 +63,40 @@ Auto-posting / X OAuth (`X_API_CLIENT_ID` etc.) as this agent's OWN posting
 mechanism — still parked, and still true that the "X (Twitter)" integration
 card was built for other content types.
 
-**PARTIALLY IMPLEMENTED 2026-09-21, opt-in, per client:** that same "X
-(Twitter)" integration card's existing OAuth connection (`publishers.ts`'s
-`publishAssetToPlatform`, the same call "Publish Now" and the auto-cron use
-for every other platform) can now carry this agent's drafts too, when a
-client has explicitly turned it on. `ClientIntegration.agentAutoPublish`
-(default OFF — see its doc comment in `src/lib/types.ts`) is a per-client,
-per-platform flag toggled from ONE consolidated checklist on the client
-settings Integrations tab ("Agent draft auto-publish" — `integrations-tab.tsx`),
-listing every connected, publishable channel uniformly rather than a
-one-off X control. Draft-only and the review step are UNCHANGED: a human
-still approves every post (`approveAssetAction`) exactly as before. What
-changes is only what happens the instant AFTER approval — with the flag on,
-`autoPublishApprovedAgentDraft` (`src/lib/actions/asset-actions.ts`) hands
-the approved draft to `publishAssetToPlatform` instead of leaving it for the
-"Pick & post on X" hand-off (`x-drafts-review.tsx`); with the flag off (every
-existing client, today), nothing changes at all.
+**IMPLEMENTED 2026-09-21, third design round — same buttons as every other
+network.** That same "X (Twitter)" integration card's existing OAuth
+connection (`publishers.ts`'s `publishAssetToPlatform`, the same call every
+other platform's Publish Now and the auto-cron use) now backs a dedicated
+manual door too — `publishAgentDraftNowAction`
+(`src/lib/actions/asset-actions.ts`), reached through the draft's own
+Publish Now button (`PublishNowInline`, the SAME component every other
+platform's Publish Now already used). Built because nothing previously let a
+human fire that publisher for a `note` asset at all — `PUBLISHABLE_PLATFORMS`
+has no entry for `note`, since the target platform lives inside the batch
+markdown rather than the asset's own type. Publish Now's visibility is pure
+technical eligibility (`agentDraftManualPublishTarget` — see below) and does
+NOT depend on the opt-in flag described next; the old bespoke "Pick & post on
+X / Pick with edits / Skip" row is gone from `x-drafts-review.tsx`, replaced
+by ONE "Open in X" compose shortcut (always available, whatever this
+draft's eligibility) plus editing/skipping as secondary text links.
 
-Only a SINGLE, COMPANY-PAGE, plain post qualifies for the automatic hand-off
+`ClientIntegration.agentAutoPublish` (default OFF — see its doc comment in
+`src/lib/types.ts`) is a per-client opt-in that reuses the SAME
+"Auto-publish…" switch already on the X card (no separate checklist UI).
+It controls TIMING ONLY: with the flag on, `autoPublishApprovedAgentDraft`
+(`src/lib/actions/asset-actions.ts`) hands the approved draft to
+`publishAssetToPlatform` the instant `approveAssetAction` runs; with the flag
+off (every existing client, today), the draft sits approved-but-unpublished
+until a human clicks its own Publish Now button. The button set on the card
+is identical either way.
+
+Only a SINGLE, COMPANY-PAGE, plain post qualifies for either publish door
 (`agentDraftAutoPublishTarget` in `src/lib/agent-draft-auto-publish.ts`):
  - a thread, a reply, or a quote-comment has no plain-tweet publish path
    today (`publishToTwitter` posts one bare 280-char tweet, no targeting, no
-   chaining) and stays on the manual "Pick & post" flow, where X's own
+   chaining) and stays on the "Open in X" compose shortcut, where X's own
    compose UI can actually address them;
- - a SEAT's draft stays manual too — the client's `twitter`
+ - a SEAT's draft stays on the shortcut too — the client's `twitter`
    `ClientIntegration` is one shared credential (the same one "Publish Now"
    already posts as), not one per seat, so a personal draft meant for that
    seat's own handle would otherwise risk going out under the wrong account.

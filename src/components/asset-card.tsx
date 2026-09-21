@@ -22,6 +22,7 @@ import {
   approveAssetAction,
   unscheduleAssetAction,
   publishAssetNowAction,
+  publishAgentDraftNowAction,
 } from "@/lib/actions";
 import { PUBLISHABLE_PLATFORMS, PLATFORM_LABELS, PLATFORM_REGISTRY } from "@/lib/integrations/platforms";
 import { isAssetPublishable } from "@/lib/asset-visibility";
@@ -36,7 +37,7 @@ import { parseLiDrafts } from "@/lib/li-drafts";
 import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
 import { isRedditV2Envelope, parseRedditDrafts } from "@/lib/reddit-drafts";
 import { RedditDraftsBatch } from "@/components/reddit-drafts-review";
-import { agentDraftAutoPublishSuppressesPicker } from "@/lib/agent-draft-auto-publish";
+import { agentDraftManualPublishTarget } from "@/lib/agent-draft-auto-publish";
 import { relativeTime, cn } from "@/lib/utils";
 import { normalizeDashes } from "@/lib/text-utils";
 import type { Asset, PublishMode } from "@/lib/types";
@@ -195,7 +196,7 @@ export function AssetCard({
   canApprove,
   connectedPlatforms,
   agentChannels,
-  agentAutoPublishPlatforms,
+  agentDraftPublishPlatforms,
 }: {
   asset: Asset;
   canApprove?: boolean;
@@ -203,13 +204,15 @@ export function AssetCard({
   /** The generating agent's distribution channels - gate auto-publish to these platforms. */
   agentChannels?: string[];
   /**
-   * Platforms this client has `ClientIntegration.agentAutoPublish` turned on
-   * for — same shape and source as `connectedPlatforms`. Feeds
-   * `agentDraftAutoPublishSuppressesPicker` so a LinkedIn/X drafts batch
-   * suppresses its own pick-to-post buttons when the generic Approve button
-   * below is the one that will actually post it (see that function's doc).
+   * Platforms this client has a CONNECTED, usable integration for, scoped to
+   * this client's `note` assets — feeds `agentDraftManualPublishTarget` so a
+   * LinkedIn/X agent draft's own "Publish Now" button renders exactly when
+   * the content is technically eligible (see that function's doc; it is
+   * blind to `ClientIntegration.agentAutoPublish`, which only decides
+   * whether Approve fires the publish immediately or waits for this
+   * button's click).
    */
-  agentAutoPublishPlatforms?: string[];
+  agentDraftPublishPlatforms?: string[];
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -266,14 +269,11 @@ export function AssetCard({
     () => (liBatch ? assetLiMedia(asset.meta) : []),
     [asset.meta, liBatch],
   );
-  // Whether the auto-publish door is armed for this exact draft — see
-  // agentDraftAutoPublishSuppressesPicker's own doc for the double-publish
-  // bug this closes (a staff member picking-and-posting here, then also
-  // clicking Approve below).
-  const suppressPickToPost = useMemo(
-    () => agentDraftAutoPublishSuppressesPicker(asset, agentAutoPublishPlatforms),
-    [asset, agentAutoPublishPlatforms],
-  );
+  // This note already went out for real (auto-publish on approval, or a
+  // staff click on Publish Now below) — threaded to the drafts readers so
+  // they show a plain "Karos posted this" confirmation instead of an action
+  // row that would otherwise suggest the draft is still pending.
+  const agentDraftPublished = asset.type === "note" && asset.status === "published";
 
   const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
   const imageConcept = asset.meta?.imageConcept as string | undefined;
@@ -292,6 +292,18 @@ export function AssetCard({
   );
   const canPublishNow =
     canApprove && compatibleConnected.length > 0 && isAssetPublishable(asset);
+  // The LinkedIn/X agent-draft twin of canPublishNow above — PUBLISHABLE_PLATFORMS
+  // has no entry for "note" (the target platform lives inside the batch
+  // markdown, not the asset's type), so canPublishNow can never be true for
+  // one. agentDraftManualPublishTarget asks the same two questions
+  // (technically eligible content, a connected integration for its
+  // platform) independently of ClientIntegration.agentAutoPublish — see that
+  // function's own doc for why the flag must not gate this button.
+  const agentDraftTarget = useMemo(
+    () => agentDraftManualPublishTarget(asset, agentDraftPublishPlatforms),
+    [asset, agentDraftPublishPlatforms],
+  );
+  const canPublishAgentDraftNow = canApprove && agentDraftTarget !== null && isAssetPublishable(asset);
 
   // "Mark as posted" is NOT decided here. This card used to carry its own
   // eligibility test, its own handler and its own copy of the error text — and
@@ -447,10 +459,17 @@ export function AssetCard({
     setBusy(true);
     setPublishError(null);
     try {
-      // No explicit platform: publishAssetNowAction reads asset.scheduledPlatforms
-      // (every platform this post was approved for) itself, falling back to
-      // scheduledPlatform for a legacy single-platform asset.
-      const res = await publishAssetNowAction(asset.id);
+      // A LinkedIn/X agent draft has no PUBLISHABLE_PLATFORMS entry (the
+      // target platform lives inside the batch markdown), so it goes through
+      // its own door; canPublishNow and canPublishAgentDraftNow are mutually
+      // exclusive by asset.type, so at most one of the two calls below ever
+      // applies. No explicit platform for the normal case:
+      // publishAssetNowAction reads asset.scheduledPlatforms (every platform
+      // this post was approved for) itself, falling back to scheduledPlatform
+      // for a legacy single-platform asset.
+      const res = agentDraftTarget
+        ? await publishAgentDraftNowAction(asset.id)
+        : await publishAssetNowAction(asset.id);
       if (res.ok) {
         router.refresh();
       } else {
@@ -513,7 +532,7 @@ export function AssetCard({
                   assetId={asset.id}
                   accounts={liBatch.accounts}
                   media={liMedia}
-                  {...(suppressPickToPost ? { suppressPickToPost } : {})}
+                  {...(agentDraftPublished ? { published: agentDraftPublished } : {})}
                 />
               </div>
             ) : (
@@ -554,7 +573,7 @@ export function AssetCard({
                   assetId={asset.id}
                   accounts={xBatch.accounts}
                   {...(xThread.length > 0 ? { thread: xThread } : {})}
-                  {...(suppressPickToPost ? { suppressPickToPost } : {})}
+                  {...(agentDraftPublished ? { published: agentDraftPublished } : {})}
                 />
               </div>
             ) : (
@@ -887,6 +906,18 @@ export function AssetCard({
                       .map((p) => PLATFORM_LABELS[p] ?? p)
                       .join(" + ") || "the connected platform"
                   }`}
+                >
+                  <Icon name="Send" className="h-3.5 w-3.5" />
+                  Publish Now
+                </Button>
+              )}
+              {canPublishAgentDraftNow && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handlePublishNow}
+                  loading={busy}
+                  title={`Push live now via ${PLATFORM_LABELS[agentDraftTarget!.platform] ?? agentDraftTarget!.platform}`}
                 >
                   <Icon name="Send" className="h-3.5 w-3.5" />
                   Publish Now

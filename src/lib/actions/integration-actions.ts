@@ -121,11 +121,12 @@ export async function setIntegrationAutoPublishAction(
 
 /**
  * Toggle whether this client's approved X/LinkedIn agent drafts publish
- * straight through the OAuth publisher instead of waiting for a human to
- * "Pick & post" by hand (see ClientIntegration.agentAutoPublish). Same
- * access rule and error-as-data shape as setIntegrationAutoPublishAction —
- * a client may opt their own channel in or out, same as they can for the
- * scheduled-content toggle.
+ * straight through the OAuth publisher THE INSTANT they are approved,
+ * instead of waiting for a human to click the draft's own Publish Now
+ * button (see ClientIntegration.agentAutoPublish — TIMING only, the button
+ * itself is on every draft either way). Same access rule and error-as-data
+ * shape as setIntegrationAutoPublishAction — a client may opt their own
+ * channel in or out, same as they can for the scheduled-content toggle.
  */
 export async function setIntegrationAgentAutoPublishAction(
   clientId: string,

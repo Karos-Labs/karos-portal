@@ -45,26 +45,27 @@ export async function pushablePlatformsByClient(
 }
 
 /**
- * clientId → platforms this client has `ClientIntegration.agentAutoPublish`
- * turned on for — the other half `li-drafts-review.tsx`/`x-drafts-review.tsx`
- * need (alongside `agentDraftAutoPublishTarget`) to know whether to suppress
- * their own pick-to-post buttons for a draft (see
- * `agentDraftAutoPublishSuppressesPicker`, agent-draft-auto-publish.ts).
+ * clientId → platforms this client has a CONNECTED, USABLE integration for,
+ * scoped to clients owning at least one `note` (the only asset type
+ * `agentDraftAutoPublishTarget` will ever recognise) — the other half
+ * `agentDraftManualPublishTarget` needs (alongside `agentDraftAutoPublishTarget`
+ * itself) to decide whether the host-level "Publish Now" button renders for
+ * a LinkedIn/X agent draft, the same button every other publishable asset
+ * type already has (see agent-draft-auto-publish.ts).
  *
- * Deliberately NOT `pushablePlatformsByClient`: that one filters assets down
- * to `isAssetPublishable`, which an unapproved DRAFT — the exact status this
- * question is asked about, before the human gate — never is. Scoped instead
- * to clients owning at least one `note`, the only asset type
- * `agentDraftAutoPublishTarget` will ever recognise.
+ * Deliberately NOT gated on `ClientIntegration.agentAutoPublish` — that flag
+ * only decides whether approving an eligible draft fires the publish
+ * immediately or waits for a manual click; it was never a visibility switch
+ * (see that field's doc comment in lib/types.ts). A button gated on the flag
+ * would have disappeared for every client who has NOT opted in, which is
+ * every client today — exactly backwards from "the same buttons... for all
+ * the networks the agents publish to" (the CEO's ask, 2026-09-21).
  *
- * Also requires the integration to be usable, same as the real door
- * (`autoPublishApprovedAgentDraft`'s own guard) — the flag alone does not
- * mean the door will actually fire. Suppressing the picker for a client whose
- * integration has since expired would leave the draft with no way out at
- * all, which is worse than the double-publish risk this exists to close (see
- * "Agents always deliver").
+ * Deliberately NOT `pushablePlatformsByClient` either: that one filters
+ * assets down to `isAssetPublishable`, which an unapproved DRAFT — the exact
+ * status this question is asked about, before the human gate — never is.
  */
-export async function agentAutoPublishPlatformsByClient(
+export async function agentDraftPublishPlatformsByClient(
   assets: Asset[],
 ): Promise<Record<string, string[]> | undefined> {
   const clientIds = [...new Set(assets.filter((a) => a.type === "note").map((a) => a.clientId))];
@@ -72,10 +73,7 @@ export async function agentAutoPublishPlatformsByClient(
   const perClient = await Promise.all(
     clientIds.map(async (id) => {
       const integrations = await listClientIntegrations(id);
-      return [
-        id,
-        integrations.filter((i) => i.agentAutoPublish === true && integrationIsUsable(i)).map((i) => i.platform),
-      ] as const;
+      return [id, integrations.filter(integrationIsUsable).map((i) => i.platform)] as const;
     }),
   );
   return Object.fromEntries(perClient);

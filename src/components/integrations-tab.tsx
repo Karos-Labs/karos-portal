@@ -26,6 +26,51 @@ import {
 } from "@/lib/integrations/platforms";
 import { SocialPlatformMark, platformForIntegrationId } from "@/components/agent-identity";
 import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
+import { AGENT_DRAFT_PLATFORM_IDS } from "@/lib/agent-draft-auto-publish";
+
+/**
+ * Whether the card's ONE publish-timing switch should bind to
+ * `ClientIntegration.agentAutoPublish` (agent-drafted "note" content —
+ * LinkedIn/X today) instead of `autoPublish` (the cron's scheduled-content
+ * flag, every other platform). Product ruling, 2026-09-21, third round: the
+ * product owner rejected a second, separate "Agent draft auto-publish"
+ * checklist section outright ("Integrations already has, on every card, a
+ * switch for whether there's approval to auto-publish or not") — ONE switch
+ * per card, same slot, same component, just pointed at whichever field is
+ * actually meaningful for that platform.
+ */
+function isAgentDraftSwitchPlatform(platformId: string): boolean {
+  return (AGENT_DRAFT_PLATFORM_IDS as readonly string[]).includes(platformId);
+}
+
+/**
+ * The switch's own label + tooltip, chosen by which field it is actually
+ * bound to (see `isAgentDraftSwitchPlatform`) — the generic "scheduled
+ * content" copy no longer describes what the switch does on a LinkedIn/X
+ * card, so it needed its own words rather than reusing the cron's.
+ */
+function autoPublishSwitchCopy(
+  agentDraftSwitch: boolean,
+  autoPublish: boolean,
+  isClientViewer: boolean,
+): { label: string; title: string } {
+  if (agentDraftSwitch) {
+    return {
+      label: "Auto-publish agent drafts once approved",
+      title: autoPublish
+        ? "An approved agent draft for this channel publishes immediately, through this connection"
+        : "Off. An approved agent draft waits here until someone presses that draft's own Publish Now",
+    };
+  }
+  return {
+    label: "Auto-publish scheduled content",
+    title: autoPublish
+      ? "Scheduled content posts automatically at its slot"
+      : isClientViewer
+        ? "Auto-posting is off. Scheduled content waits on your calendar for you to post it yourself, then mark it as posted"
+        : "Auto-posting is off. Scheduled content waits on the calendar until someone opens it and presses Publish Now",
+  };
+}
 import { LinkedInSeatsWorkspace, type SeatView } from "@/components/linkedin-seats-workspace";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import type { Role } from "@/lib/types";
@@ -295,8 +340,15 @@ function PlatformCard({
   // "Healthy" (fully connected, no reconnect needed) drives the subtle glow -
   // a reconnect-needed card should read as a warning, not a success state.
   const isHealthyConnected = isConnected && !integrationNeedsReconnect(integration!);
-  // Absent flag = enabled (pre-toggle integrations keep auto-publishing).
-  const [autoPublish, setAutoPublish] = useState(integration?.autoPublish !== false);
+  // LinkedIn/X: agentAutoPublish, absent/false ⇒ OFF (every existing client
+  // starts off — see the flag's own doc comment in lib/types.ts for why a
+  // safe default matters here specifically). Every other platform: the
+  // pre-existing autoPublish cron flag, absent ⇒ ON (pre-toggle integrations
+  // keep auto-publishing scheduled content, unchanged).
+  const agentDraftSwitch = isAgentDraftSwitchPlatform(platform.id);
+  const [autoPublish, setAutoPublish] = useState(
+    agentDraftSwitch ? integration?.agentAutoPublish === true : integration?.autoPublish !== false,
+  );
   const [togglingAuto, setTogglingAuto] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -322,13 +374,13 @@ function PlatformCard({
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional re-sync when integration prop changes
     setAccountName(integration?.accountName ?? "");
-    setAutoPublish(integration?.autoPublish !== false);
+    setAutoPublish(agentDraftSwitch ? integration?.agentAutoPublish === true : integration?.autoPublish !== false);
     const next: Record<string, string> = {};
     for (const f of platform.fields) {
       next[f.key] = f.type === "password" ? "" : (integration?.credentials[f.key] ?? "");
     }
     setFields(next);
-  }, [integration, platform.fields]);
+  }, [integration, platform.fields, agentDraftSwitch]);
 
   function setField(key: string, value: string) {
     setFields((prev) => ({ ...prev, [key]: value }));
@@ -362,7 +414,11 @@ function PlatformCard({
     setTogglingAuto(true);
     setActionError(null);
     try {
-      const res = await setIntegrationAutoPublishAction(clientId, platform.id, next);
+      // LinkedIn/X bind this same switch to agentAutoPublish instead of the
+      // cron's autoPublish flag — see isAgentDraftSwitchPlatform's own doc.
+      const res = agentDraftSwitch
+        ? await setIntegrationAgentAutoPublishAction(clientId, platform.id, next)
+        : await setIntegrationAutoPublishAction(clientId, platform.id, next);
       if (res.error) {
         // The revert stays; what was missing is the reason. A switch that moves
         // twice on its own is indistinguishable from a network blip.
@@ -533,17 +589,11 @@ function PlatformCard({
             onClick={handleAutoPublishToggle}
             disabled={togglingAuto}
             className="flex w-full items-center justify-between gap-2 rounded-md border border-border bg-foreground/[0.03] px-3 py-2 transition-colors hover:border-border-strong disabled:opacity-60"
-            title={
-              autoPublish
-                ? "Scheduled content posts automatically at its slot"
-                : isClientViewer
-                  ? "Auto-posting is off. Scheduled content waits on your calendar for you to post it yourself, then mark it as posted"
-                  : "Auto-posting is off. Scheduled content waits on the calendar until someone opens it and presses Publish Now"
-            }
+            title={autoPublishSwitchCopy(agentDraftSwitch, autoPublish, isClientViewer).title}
           >
             <span className="flex items-center gap-1.5 text-xs text-muted">
               <Icon name="Zap" className="h-3.5 w-3.5" />
-              Auto-publish scheduled content
+              {autoPublishSwitchCopy(agentDraftSwitch, autoPublish, isClientViewer).label}
             </span>
             <span
               className={cn(
@@ -737,7 +787,11 @@ function SubConnection({
   const pendingVerification = !isConnected && PENDING_VERIFICATION_PLATFORM_IDS.has(platform.id);
   const comingSoon = !isConnected && !isOAuthEnabled && !pendingVerification;
   const needsReconnect = isConnected && integrationNeedsReconnect(integration!);
-  const [autoPublish, setAutoPublish] = useState(integration?.autoPublish !== false);
+  // Same split as PlatformCard's identical block — see isAgentDraftSwitchPlatform.
+  const agentDraftSwitch = isAgentDraftSwitchPlatform(platform.id);
+  const [autoPublish, setAutoPublish] = useState(
+    agentDraftSwitch ? integration?.agentAutoPublish === true : integration?.autoPublish !== false,
+  );
   const [togglingAuto, setTogglingAuto] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -756,13 +810,13 @@ function SubConnection({
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional re-sync when integration prop changes
     setAccountName(integration?.accountName ?? "");
-    setAutoPublish(integration?.autoPublish !== false);
+    setAutoPublish(agentDraftSwitch ? integration?.agentAutoPublish === true : integration?.autoPublish !== false);
     const next: Record<string, string> = {};
     for (const f of platform.fields) {
       next[f.key] = f.type === "password" ? "" : (integration?.credentials[f.key] ?? "");
     }
     setFields(next);
-  }, [integration, platform.fields]);
+  }, [integration, platform.fields, agentDraftSwitch]);
 
   function setField(key: string, value: string) {
     setFields((prev) => ({ ...prev, [key]: value }));
@@ -794,7 +848,11 @@ function SubConnection({
     setTogglingAuto(true);
     setActionError(null);
     try {
-      const res = await setIntegrationAutoPublishAction(clientId, platform.id, next);
+      // LinkedIn/X bind this same switch to agentAutoPublish instead of the
+      // cron's autoPublish flag — see isAgentDraftSwitchPlatform's own doc.
+      const res = agentDraftSwitch
+        ? await setIntegrationAgentAutoPublishAction(clientId, platform.id, next)
+        : await setIntegrationAutoPublishAction(clientId, platform.id, next);
       if (res.error) {
         setAutoPublish(!next);
         setActionError(res.error);
@@ -901,17 +959,11 @@ function SubConnection({
           onClick={handleAutoPublishToggle}
           disabled={togglingAuto}
           className="flex w-full items-center justify-between gap-2 rounded-md border border-border bg-foreground/[0.03] px-2.5 py-1.5 transition-colors hover:border-border-strong disabled:opacity-60"
-          title={
-            autoPublish
-              ? "Scheduled content posts automatically at its slot"
-              : isClientViewer
-                ? "Auto-posting is off. Scheduled content waits on your calendar for you to post it yourself, then mark it as posted"
-                : "Auto-posting is off. Scheduled content waits on the calendar until someone opens it and presses Publish Now"
-          }
+          title={autoPublishSwitchCopy(agentDraftSwitch, autoPublish, isClientViewer).title}
         >
           <span className="flex items-center gap-1.5 text-[11px] text-muted">
             <Icon name="Zap" className="h-3.5 w-3.5" />
-            Auto-publish scheduled content
+            {autoPublishSwitchCopy(agentDraftSwitch, autoPublish, isClientViewer).label}
           </span>
           <span
             className={cn(
@@ -1475,116 +1527,6 @@ function LinkedInUnifiedCard({
   );
 }
 
-/* ── Agent draft auto-publish — ONE consolidated list ───────────────────
- * Per-client, per-platform opt-in: when checked, an X/LinkedIn agent draft a
- * human approves is handed straight to the OAuth publisher
- * (publishAssetToPlatform) instead of waiting on the manual "Pick & post"
- * hand-off in the drafts review UI. See ClientIntegration.agentAutoPublish
- * for the full reasoning, including why this is a SEPARATE flag from the
- * "Auto-publish scheduled content" toggle each card already carries (that
- * one gates the CRON pushing SCHEDULED content; this one gates APPROVAL
- * handing off an agent's DRAFT, a different trigger with a different default).
- *
- * ONE LIST rather than a second toggle bolted onto every card individually
- * (product decision): every connected, publishable channel appears here
- * uniformly, so the mechanism and the control are already in place for
- * whichever platform next grows agent-drafted content — only LinkedIn and X
- * have any today, so checking any other row is inert until one does, but
- * nothing about the control itself is X/LinkedIn-specific. ──────────── */
-
-function AgentAutoPublishRow({
-  clientId,
-  platform,
-  integration,
-}: {
-  clientId: string;
-  platform: PlatformConfig;
-  integration: IntegrationView;
-}) {
-  const [enabled, setEnabled] = useState(integration.agentAutoPublish === true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- re-sync when integration prop changes
-    setEnabled(integration.agentAutoPublish === true);
-  }, [integration.agentAutoPublish]);
-
-  async function toggle() {
-    const next = !enabled;
-    setEnabled(next); // optimistic - reverted below if the write is refused
-    setSaving(true);
-    setError(null);
-    try {
-      const res = await setIntegrationAgentAutoPublishAction(clientId, platform.id, next);
-      if (res.error) {
-        setEnabled(!next);
-        setError(res.error);
-      }
-    } catch {
-      setEnabled(!next);
-      setError("Couldn't change this setting. Please try again.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
-      <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={toggle}
-          disabled={saving}
-          className="h-4 w-4 shrink-0 rounded border-border-strong accent-[var(--neon)] disabled:opacity-60"
-        />
-        <PlatformMark id={platform.id} className="h-4 w-4 shrink-0 text-muted-2" />
-        <span className="min-w-0 flex-1 truncate text-sm text-foreground">{platform.name}</span>
-      </label>
-      {error && <span className="shrink-0 text-[11px] text-danger">{error}</span>}
-    </div>
-  );
-}
-
-function AgentAutoPublishSection({
-  clientId,
-  integrations,
-}: {
-  clientId: string;
-  integrations: IntegrationView[];
-}) {
-  // Same "nothing to publish here" exclusion as the per-card toggle
-  // (READ_ONLY_PLATFORM_IDS).
-  const connected = PLATFORM_REGISTRY.filter(
-    (p) => !READ_ONLY_PLATFORM_IDS.has(p.id) && integrations.some((i) => i.platform === p.id),
-  );
-  if (connected.length === 0) return null;
-
-  return (
-    <section className="space-y-3">
-      <div>
-        <h3 className="text-sm font-semibold text-foreground">Agent draft auto-publish</h3>
-        <p className="text-xs text-muted-2">
-          When staff approve an agent-drafted post for a channel checked here, it publishes
-          immediately through that connection instead of waiting for someone to pick it by hand.
-          Off by default for every channel.
-        </p>
-      </div>
-      <div className="divide-y divide-border overflow-hidden rounded-[var(--radius)] border border-border">
-        {connected.map((p) => (
-          <AgentAutoPublishRow
-            key={p.id}
-            clientId={clientId}
-            platform={p}
-            integration={integrations.find((i) => i.platform === p.id)!}
-          />
-        ))}
-      </div>
-    </section>
-  );
-}
-
 /* ── Tab root ────────────────────────────────────────────────────────── */
 
 export function IntegrationsTab({
@@ -1884,8 +1826,6 @@ export function IntegrationsTab({
         tagOf={platformTag}
         renderCard={renderPlatformCard}
       />
-
-      <AgentAutoPublishSection clientId={clientId} integrations={integrations} />
 
       {/* Footer note */}
       <p className="text-xs text-muted-2">

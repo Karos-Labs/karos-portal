@@ -2,13 +2,26 @@
 
 /**
  * The X drafts reader: a parsed draft batch rendered as readable cards -
- * grouped per account, one card per avenue, the post text large and scannable
- * - with pick / edit / skip actions wired into the per-account feedback loop.
+ * grouped per account, one card per avenue, the post text large and scannable.
  *
- * Picking is also the posting hand-off: the pick copies the final text to the
- * clipboard and opens X's compose window pre-filled (replies pre-addressed to
- * the target post, quote-comments carrying the quoted URL). Draft-only stays
- * true - the human presses Post on X.
+ * UNIFIED BUTTON SET (product ruling, 2026-09-21, third iteration) — same
+ * reasoning as li-drafts-review.tsx's own docstring: the host (asset-card.tsx
+ * / asset-detail-modal.tsx) already renders Approve / Publish Now / Download
+ * / Delete for every platform, so this reader offers exactly ONE primary
+ * control per draft, "Open in X" - a convenience shortcut, never a competing
+ * publish mechanism - plus the shared Download. Editing and skipping still
+ * exist (the learning loop reads them - see `send()`) but demoted to plain
+ * text links under the primary row.
+ *
+ * "Open in X" is also the posting hand-off for content the real OAuth
+ * publisher can't reach at all (a thread, a reply, a quote-comment, a
+ * personal seat's post): it copies the final text to the clipboard and opens
+ * X's compose window pre-filled (replies pre-addressed to the target post,
+ * quote-comments carrying the quoted URL). ALWAYS available, whatever this
+ * draft's Publish Now eligibility or the client's `agentAutoPublish` setting
+ * - it only opens a compose window with text in it, so it is harmless to
+ * offer even on an already-published draft. Draft-only stays true here - the
+ * human presses Post on X.
  *
  * Chrome-less by design: it embeds wherever outputs live (the asset card in
  * the archive and on the job page).
@@ -69,7 +82,7 @@ function DraftCard({
   accountTitle,
   draft,
   thread,
-  suppressPickToPost,
+  published,
 }: {
   clientId: string;
   jobId?: string;
@@ -79,13 +92,12 @@ function DraftCard({
   /** The engine's own chain (asset meta.thread), for a draft written as one post. */
   thread?: readonly string[];
   /**
-   * The auto-publish door (`ClientIntegration.agentAutoPublish`) is open for
-   * this exact draft — see `agentDraftAutoPublishSuppressesPicker`. Picking
-   * here would be a second, uncoordinated way to post the same content the
-   * generic Approve bar below is about to publish for real; Download stays,
-   * as the only hand-off any other asset type gets.
+   * This asset already went out for real through the OAuth publisher —
+   * either `ClientIntegration.agentAutoPublish` fired the instant it was
+   * approved, or a staff member pressed the host's own Publish Now. Same
+   * doc as `li-drafts-review.tsx`'s identical prop.
    */
-  suppressPickToPost?: boolean;
+  published?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -189,9 +201,11 @@ function DraftCard({
               <Badge>{charLabel(mainPost?.chars)}</Badge>
             </span>
           ) : null}
-          {sent ? (
+          {published ? (
+            <Badge tone="success">Posted</Badge>
+          ) : sent ? (
             <Badge tone="success">
-              {sent === "posted" ? "Picked" : sent === "posted_with_edits" ? "Picked with edits" : "Skipped"}
+              {sent === "posted" ? "Opened" : sent === "posted_with_edits" ? "Opened with edits" : "Skipped"}
             </Badge>
           ) : (
             <AwaitingReviewBadge />
@@ -288,21 +302,16 @@ function DraftCard({
         </div>
       ) : null}
 
-      {sent === null && suppressPickToPost ? (
-        // Auto-publish is armed for this exact draft (see the prop's own
-        // doc). No picking to do — approving it below is what posts it — so
-        // this stays a read-only card with the one hand-off every other
-        // asset type gets: Download.
+      {published ? (
+        // Already went out for real (auto-publish on approval, or a staff
+        // click on the host's own Publish Now) — see the `published` prop's
+        // own doc. Nothing left to do here but offer the text.
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <DownloadDraftButton text={fullText} filename={`${assetFileStem(accountTitle)}-x.txt`} />
-          {/* Not "Approve it below" — a client reading this never has that
-              button (it is staff-only), and this card mounts for both. */}
-          <p className="text-[11px] text-muted-2">
-            Once your team approves it, Karos posts it automatically. Nothing to pick here.
-          </p>
+          <p className="text-[11px] text-muted-2">Karos posted this to X.</p>
         </div>
       ) : sent === null ? (
-        <div className="mt-3 space-y-3">
+        <div className="mt-3 space-y-2">
           {mode === "editing" ? (
             <>
               <Textarea
@@ -317,7 +326,7 @@ function DraftCard({
                   onClick={() => send("posted_with_edits", finalText)}
                   disabled={pending || !finalText.trim()}
                 >
-                  {pending ? "Opening…" : "Save & post on X"}
+                  {pending ? "Opening…" : "Open in X"}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setMode("idle")}>
                   Cancel
@@ -348,34 +357,21 @@ function DraftCard({
             </>
           ) : (
             <>
+              {/* ONE primary control, plus the shared Download — see the
+                  file's own docstring for why "Open in X" is a convenience
+                  shortcut rather than a competing publish mechanism. */}
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="accent" onClick={() => send("posted")} disabled={pending}>
-                  <Icon name="Check" className="mr-1 h-3.5 w-3.5" />
-                  {pending ? "Opening…" : "Pick & post on X"}
+                  <Icon name="ExternalLink" className="mr-1 h-3.5 w-3.5" />
+                  {pending ? "Opening…" : "Open in X"}
                 </Button>
-                <Button
-                  size="sm"
-                  variant="subtle"
-                  onClick={() => {
-                    setFinalText(fullText);
-                    setMode("editing");
-                  }}
-                >
-                  Pick with edits
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setMode("skipping")}>
-                  Skip
-                </Button>
-                {/* ALWAYS present, same as every other reader — the full
-                    chain (post + any replies) as one text file, for a client
-                    who wants to post it themselves. */}
                 <DownloadDraftButton
                   text={fullText}
                   filename={`${assetFileStem(accountTitle)}-x.txt`}
                 />
               </div>
               <p className="text-[11px] text-muted-2">
-                Picking copies the text and opens X with the post ready
+                Copies the text and opens X with the post ready
                 {draft.replyToUrl ? ", already addressed to the post it answers" : ""}
                 {draft.quoteUrl ? ", with the quoted post attached" : ""}
                 {isThread
@@ -384,6 +380,28 @@ function DraftCard({
                     } on your clipboard to paste after it`
                   : ""}
                 . You press Post.
+              </p>
+              {/* Secondary — still feeds the learning loop (see `send()`),
+                  demoted to plain text links so they read as options, not
+                  three equal-weight buttons. */}
+              <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFinalText(fullText);
+                    setMode("editing");
+                  }}
+                  className="text-muted underline hover:text-foreground"
+                >
+                  Open with edited text
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("skipping")}
+                  className="text-muted underline hover:text-foreground"
+                >
+                  Skip this one
+                </button>
               </p>
             </>
           )}
@@ -415,7 +433,7 @@ export function XDraftsBatch({
   assetId,
   accounts,
   thread,
-  suppressPickToPost,
+  published,
 }: {
   clientId: string;
   jobId?: string;
@@ -427,15 +445,15 @@ export function XDraftsBatch({
    */
   thread?: readonly string[];
   /**
-   * The host already knows (once, for the whole asset — see
-   * `agentDraftAutoPublishSuppressesPicker`) whether the auto-publish door is
-   * armed for this batch. Eligibility itself requires exactly one account
-   * with exactly one single-post draft, so this can only ever apply to that
+   * The host already knows (once, for the whole asset) whether this note
+   * already went out for real — see `DraftCard`'s own `published` doc.
+   * Eligibility for the real publish door requires exactly one account with
+   * exactly one single-post draft, so this can only ever apply to that
    * single card — but it is threaded per-draft rather than assumed, so a
    * stale/legacy multi-draft batch (which the door never targets) is never
    * affected.
    */
-  suppressPickToPost?: boolean;
+  published?: boolean;
 }) {
   const totalDrafts = accounts.reduce((n, a) => n + a.drafts.length, 0);
   // The chain belongs to ONE post, and the asset names no draft - so it is only
@@ -451,9 +469,9 @@ export function XDraftsBatch({
           LinkedIn twin was scrubbed already; this is the same treatment, so the
           two reviews say the same thing about how the work arrives (nothing). */}
       <p className="text-sm text-muted">
-        {totalDrafts === 1 ? "The next post, ready to review." : "Drafts to choose from."} Picking
-        opens X with the post ready; edit freely, or skip with a reason. Every choice sharpens
-        that account&apos;s voice for the next run.
+        {totalDrafts === 1 ? "The next post, ready to review." : "Drafts to choose from."} Opening
+        it in X copies the text and gets the composer ready; edit freely, or skip with a reason.
+        Every choice sharpens that account&apos;s voice for the next run.
       </p>
       {accounts.map((acc) => {
         const isCompany = acc.title.toLowerCase().includes("company page");
@@ -483,7 +501,7 @@ export function XDraftsBatch({
                   accountTitle={acc.title}
                   draft={draft}
                   {...(chain ? { thread: chain } : {})}
-                  {...(suppressPickToPost ? { suppressPickToPost } : {})}
+                  {...(published ? { published } : {})}
                 />
               ))}
             </div>
