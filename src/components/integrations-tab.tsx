@@ -1714,10 +1714,13 @@ export function IntegrationsTab({
     (linkedinCardStatus === "needs-reconnect" ? 1 : 0);
   const totalCardCount = standalonePlatforms.length + 2;
 
-  // Two sections, driven by each platform's registry `category` - a new
-  // platform lands in the right section just by declaring one, no UI changes.
+  // One remaining section, driven by each platform's registry `category` - a
+  // new "publishing" platform lands in it just by declaring the category, no
+  // UI changes. The former "analytics" section (Google Search Console/
+  // Analytics/Business Profile, Reddit, Instagram performance) was removed
+  // 2026-09-21 once every category:"analytics" standalone platform had been
+  // retired, leaving it permanently empty.
   const publishingPlatforms = standalonePlatforms.filter((p) => p.category === "publishing");
-  const analyticsStandalonePlatforms = standalonePlatforms.filter((p) => p.category === "analytics");
 
   // Listen for postMessage from OAuth popup
   useEffect(() => {
@@ -1919,16 +1922,6 @@ export function IntegrationsTab({
             />
           </>
         }
-      />
-
-      {/* Analytics & Performance Intelligence — read-only sources. */}
-      <ChannelSection
-        title="Analytics &amp; performance intelligence"
-        blurb="Read-only sources agents pull performance data and content ideas from."
-        platforms={analyticsStandalonePlatforms}
-        statusOf={platformStatus}
-        tagOf={platformTag}
-        renderCard={renderPlatformCard}
       />
 
       {/* Footer note */}

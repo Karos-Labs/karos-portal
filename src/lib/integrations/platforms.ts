@@ -130,12 +130,20 @@ export const PENDING_VERIFICATION_PLATFORM_IDS = new Set<string>([]);
  * there. `publishToFacebook` still exists for anything already connected — it
  * is simply no longer inferable.
  *
- * `instagram_post` DROPPED "instagram" (classic Facebook-Login) the same way,
- * 2026-09-20: it fails outright for any account with no linked Facebook Page —
- * confirmed live against Karos Labs' own account — and "instagram_business"
- * (Instagram Login, no Page required) supersedes it for every case that
- * matters, so a target that only sometimes works has no reason to stay
- * inferable. `publishToInstagram` stays for anything already connected.
+ * `instagram_post` DROPPED "instagram" (classic Facebook-Login) on 2026-09-20
+ * for failing outright on any account with no linked Facebook Page, then
+ * RESTORED it on 2026-09-21 (product owner call): the drop over-corrected —
+ * it also made every client who connected through the OLD flow but DOES have
+ * a working, linked Page permanently ineligible for auto-publish, with the
+ * approve panel showing them a generic "connect this integration" message
+ * for an account that was, in fact, already connected. `instagram_business`
+ * (Instagram Login, no Page required) stays listed first and is still the
+ * one every new connection should use — this list also feeds `inferPlatform`
+ * for the rare unscheduled post nobody explicitly targeted, and putting
+ * "instagram" second keeps a blind guess landing on the more reliable target.
+ * A client's own no-Page "instagram" integration failing to publish is a real,
+ * visible per-attempt error either way; being silently excluded from
+ * auto-publish entirely, for an account that DOES work, was strictly worse.
  *
  * `social_post` APPENDED "youtube" last (2026-09-21, real upload landed in
  * `publishToYouTube`). Appended, not inserted ahead of "tiktok": a client
@@ -149,7 +157,7 @@ export const PENDING_VERIFICATION_PLATFORM_IDS = new Set<string>([]);
  * targeted at all.
  */
 export const PUBLISHABLE_PLATFORMS: Record<string, string[]> = {
-  instagram_post: ["instagram_business", "tiktok"],
+  instagram_post: ["instagram_business", "instagram", "tiktok"],
   social_post: ["twitter", "linkedin", "tiktok", "youtube"],
   article: ["linkedin"],
   email: [],
@@ -239,9 +247,13 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
    * exact same platform "instagram_business" below already covers with no
    * Page requirement, which is what actually prompted retiring it: a client
    * should not have to connect Instagram twice to get one working channel.
-   * Removed from `OAUTH_SUPPORTED_PLATFORM_IDS` and `PUBLISHABLE_PLATFORMS`
-   * too. `publishToInstagram`/`PLATFORM_LABELS.instagram` stay — an account
-   * already connected through it keeps working — it just is not offered again.
+   * Removed from `OAUTH_SUPPORTED_PLATFORM_IDS` — not offered as a NEW
+   * connection, ever, for the two-Connect-buttons reason above.
+   * `PUBLISHABLE_PLATFORMS.instagram_post` briefly dropped it too (2026-09-20)
+   * but got it back the next day (see that array's own comment): an account
+   * already connected through it keeps working, and cutting it from that list
+   * made auto-publish wrongly unavailable to an already-connected, working
+   * account, not just to new ones.
    */
   {
     id: "instagram",
