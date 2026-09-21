@@ -13,7 +13,7 @@ How the X agent runs through this portal. Spec of record: the lab repo's
 | Stored data | Firestore: `clientSeats`, `agentIntake` (agent="x"), `xNewsUpdates`, `xTakes`, `xDraftFeedback` — flat collections keyed by clientId/seatId |
 | Run-time injection | `src/lib/agent-service/x-agent-context.ts` serializes the stored data to context files on every X run; they override any older repo copies |
 | Live X reads | `XAI_API_KEY` via the platform secret store only (see `agent-service/DEPLOY.md` "X agent live reads"); never in a file |
-| Review | Webhook → job status `review` + one library asset (type `note`, unpublishable). Draft-only is structural; X OAuth posting stays parked |
+| Review | Webhook → job status `review` + one library asset (type `note`, unpublishable — `PUBLISHABLE_PLATFORMS.note` has no targets, so nothing about the asset's own type changes). Draft-only is structural: a human always approves. See "Out of scope (parked)" below for the opt-in that can auto-publish an APPROVED single-post draft through the existing X integration |
 
 Voice, pillars, cadence, language, launch-vs-ongoing are BUILT by the agent
 (onboarding profile + the account's own posts + the edit loop) — the forms never
@@ -59,6 +59,39 @@ backs the ruling is `X_V2_MAX_OUTPUTS_PER_RUN = 1` in
 
 ## Out of scope (parked)
 
-Auto-posting / X OAuth (`X_API_CLIENT_ID` etc.) — a later, consented per-client
-track. The existing "X (Twitter)" integration card serves other content types
-and is untouched by this hookup.
+Auto-posting / X OAuth (`X_API_CLIENT_ID` etc.) as this agent's OWN posting
+mechanism — still parked, and still true that the "X (Twitter)" integration
+card was built for other content types.
+
+**PARTIALLY IMPLEMENTED 2026-09-21, opt-in, per client:** that same "X
+(Twitter)" integration card's existing OAuth connection (`publishers.ts`'s
+`publishAssetToPlatform`, the same call "Publish Now" and the auto-cron use
+for every other platform) can now carry this agent's drafts too, when a
+client has explicitly turned it on. `ClientIntegration.agentAutoPublish`
+(default OFF — see its doc comment in `src/lib/types.ts`) is a per-client,
+per-platform flag toggled from ONE consolidated checklist on the client
+settings Integrations tab ("Agent draft auto-publish" — `integrations-tab.tsx`),
+listing every connected, publishable channel uniformly rather than a
+one-off X control. Draft-only and the review step are UNCHANGED: a human
+still approves every post (`approveAssetAction`) exactly as before. What
+changes is only what happens the instant AFTER approval — with the flag on,
+`autoPublishApprovedAgentDraft` (`src/lib/actions/asset-actions.ts`) hands
+the approved draft to `publishAssetToPlatform` instead of leaving it for the
+"Pick & post on X" hand-off (`x-drafts-review.tsx`); with the flag off (every
+existing client, today), nothing changes at all.
+
+Only a SINGLE, COMPANY-PAGE, plain post qualifies for the automatic hand-off
+(`agentDraftAutoPublishTarget` in `src/lib/agent-draft-auto-publish.ts`):
+ - a thread, a reply, or a quote-comment has no plain-tweet publish path
+   today (`publishToTwitter` posts one bare 280-char tweet, no targeting, no
+   chaining) and stays on the manual "Pick & post" flow, where X's own
+   compose UI can actually address them;
+ - a SEAT's draft stays manual too — the client's `twitter`
+   `ClientIntegration` is one shared credential (the same one "Publish Now"
+   already posts as), not one per seat, so a personal draft meant for that
+   seat's own handle would otherwise risk going out under the wrong account.
+
+This is still a narrower thing than "X OAuth posting" as a product feature:
+it is one client-scoped opt-in riding the existing integration, not a new
+auto-posting surface, new OAuth scopes, or a change to draft-only as this
+agent's default.

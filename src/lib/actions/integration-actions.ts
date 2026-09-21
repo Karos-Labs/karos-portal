@@ -6,6 +6,7 @@ import {
   listClientIntegrations,
   deleteClientIntegration,
   setIntegrationAutoPublish,
+  setIntegrationAgentAutoPublish,
   listAccessTokens,
   updateAccessToken,
 } from "@/lib/data";
@@ -115,6 +116,34 @@ export async function setIntegrationAutoPublishAction(
     return { ok: true };
   } catch {
     return { error: "Couldn't change auto-publish. Please try again." };
+  }
+}
+
+/**
+ * Toggle whether this client's approved X/LinkedIn agent drafts publish
+ * straight through the OAuth publisher instead of waiting for a human to
+ * "Pick & post" by hand (see ClientIntegration.agentAutoPublish). Same
+ * access rule and error-as-data shape as setIntegrationAutoPublishAction —
+ * a client may opt their own channel in or out, same as they can for the
+ * scheduled-content toggle.
+ */
+export async function setIntegrationAgentAutoPublishAction(
+  clientId: string,
+  platform: string,
+  enabled: boolean,
+): Promise<IntegrationActionResult> {
+  try {
+    const user = await getCurrentUser();
+    if (!user || user.disabled) return { error: "Please sign in again to change this setting." };
+    const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+    if (!isStaff && user.clientId !== clientId) {
+      return { error: "You don't have access to this channel." };
+    }
+    await setIntegrationAgentAutoPublish(clientId, platform, enabled);
+    revalidatePath(`/clients/${clientId}`);
+    return { ok: true };
+  } catch {
+    return { error: "Couldn't change agent auto-publish. Please try again." };
   }
 }
 
