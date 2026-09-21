@@ -29,8 +29,13 @@ import { MarkPostedRow } from "@/components/mark-posted-row";
 import { canMarkAssetPosted } from "@/lib/mark-posted";
 import { PostManagementRow } from "@/components/post-management-row";
 import { ApprovePanel } from "@/components/approve-panel";
-import { approveAssetAction, publishAssetNowAction, unscheduleAssetAction } from "@/lib/actions/asset-actions";
-import { agentDraftAutoPublishSuppressesPicker } from "@/lib/agent-draft-auto-publish";
+import {
+  approveAssetAction,
+  publishAssetNowAction,
+  publishAgentDraftNowAction,
+  unscheduleAssetAction,
+} from "@/lib/actions/asset-actions";
+import { agentDraftManualPublishTarget } from "@/lib/agent-draft-auto-publish";
 import { PLATFORM_LABELS, PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { isAssetPublishable } from "@/lib/asset-visibility";
 import {
@@ -140,7 +145,7 @@ export function AssetDetailModal({
   viewerIsClient,
   canPublish = false,
   connectedPlatforms,
-  agentAutoPublishPlatforms,
+  agentDraftPublishPlatforms,
 }: {
   asset: Asset | null;
   open: boolean;
@@ -168,14 +173,15 @@ export function AssetDetailModal({
   /** The asset owner's usable publish integrations - staff payload only. */
   connectedPlatforms?: string[];
   /**
-   * Platforms this client has `ClientIntegration.agentAutoPublish` turned on
-   * for — passed straight to `agentDraftAutoPublishSuppressesPicker` to
-   * decide whether the LinkedIn/X drafts reader below should suppress its
-   * own pick-to-post buttons in favor of the generic Approve bar (which is
-   * what actually fires the auto-publish door). Platform ids only, same
-   * shape and same server-side source as `connectedPlatforms`.
+   * Platforms this client has a CONNECTED, usable integration for, scoped to
+   * `note` assets — passed straight to `agentDraftManualPublishTarget` so a
+   * LinkedIn/X agent draft's own Publish Now (rendered by `PublishNowInline`
+   * below, same component every other platform uses) knows whether this
+   * draft is technically eligible. Platform ids only, same shape and same
+   * server-side source as `connectedPlatforms`; independent of
+   * `ClientIntegration.agentAutoPublish` (see that flag's doc comment).
    */
-  agentAutoPublishPlatforms?: string[];
+  agentDraftPublishPlatforms?: string[];
 }) {
   const [tab, setTab] = useState<"details" | "simulation">("details");
 
@@ -211,16 +217,14 @@ export function AssetDetailModal({
         : null,
     [content, liBatch, redditBatch],
   );
-  // Whether the auto-publish door is armed for this exact draft — see
-  // agentDraftAutoPublishSuppressesPicker's own doc for the double-publish
-  // bug this closes. `asset?.type` alongside `content` mirrors the same
-  // optional-chained read every memo above this line already uses (asset can
-  // still be null this early — hooks run before the null guard below).
-  const suppressPickToPost = useMemo(
-    () =>
-      asset ? agentDraftAutoPublishSuppressesPicker(asset, agentAutoPublishPlatforms) : false,
-    [asset, agentAutoPublishPlatforms],
-  );
+  // This note already went out for real (auto-publish on approval, or a
+  // staff click on Publish Now in the ActionFooter below) — threaded to the
+  // drafts readers so they show a plain "Karos posted this" confirmation
+  // instead of an action row that would otherwise suggest the draft is
+  // still pending. `asset?.type`/`asset?.status` mirror the same optional-
+  // chained read every memo above this line already uses (asset can still
+  // be null this early — hooks run before the null guard below).
+  const agentDraftPublished = asset?.type === "note" && asset?.status === "published";
   // The run's attachable media for the LinkedIn reader (shared definition -
   // the asset card renders the same list).
   const assetMeta = asset?.meta;
@@ -508,7 +512,7 @@ export function AssetDetailModal({
               assetId={asset.id}
               accounts={liBatch.accounts}
               media={liMedia}
-              {...(suppressPickToPost ? { suppressPickToPost } : {})}
+              {...(agentDraftPublished ? { published: agentDraftPublished } : {})}
             />
           </div>
         ) : redditBatch ? (
@@ -533,7 +537,7 @@ export function AssetDetailModal({
               assetId={asset.id}
               accounts={xBatch.accounts}
               {...(xThread.length > 0 ? { thread: xThread } : {})}
-              {...(suppressPickToPost ? { suppressPickToPost } : {})}
+              {...(agentDraftPublished ? { published: agentDraftPublished } : {})}
             />
           </div>
         ) : emailHtml ? (
@@ -663,7 +667,12 @@ export function AssetDetailModal({
           <PublishStateNotice publishError={asset.publishError} />
         )}
 
-        <ActionFooter asset={asset} canPublish={canPublish} connectedPlatforms={connectedPlatforms ?? []} />
+        <ActionFooter
+          asset={asset}
+          canPublish={canPublish}
+          connectedPlatforms={connectedPlatforms ?? []}
+          agentDraftPublishPlatforms={agentDraftPublishPlatforms ?? []}
+        />
       </div>
       )}
     </Modal>
@@ -902,10 +911,13 @@ function ActionFooter({
   asset,
   canPublish,
   connectedPlatforms,
+  agentDraftPublishPlatforms,
 }: {
   asset: Asset;
   canPublish: boolean;
   connectedPlatforms: string[];
+  /** See AssetDetailModal's own doc for this prop — threaded straight through to PublishNowInline. */
+  agentDraftPublishPlatforms: string[];
 }) {
   const [approving, setApproving] = useState(false);
 
@@ -937,7 +949,12 @@ function ActionFooter({
       <div className="flex flex-wrap items-start gap-2">
         {canPublish && isDraft && <ApproveInline asset={asset} onOpenPanel={() => setApproving(true)} />}
         {canPublish && isPlanned && (
-          <PublishNowInline asset={asset} canPublish={canPublish} connectedPlatforms={connectedPlatforms} />
+          <PublishNowInline
+            asset={asset}
+            canPublish={canPublish}
+            connectedPlatforms={connectedPlatforms}
+            agentDraftPublishPlatforms={agentDraftPublishPlatforms}
+          />
         )}
         {canPublish && isPlanned && <UnscheduleInline asset={asset} />}
         <MarkPostedRow asset={asset} variant="button" />
@@ -1049,10 +1066,21 @@ function PublishNowInline({
   asset,
   canPublish,
   connectedPlatforms,
+  agentDraftPublishPlatforms,
 }: {
   asset: Asset;
   canPublish: boolean;
   connectedPlatforms: string[];
+  /**
+   * A LinkedIn/X agent draft (a `note`) has no `PUBLISHABLE_PLATFORMS` entry
+   * — its target platform lives inside the batch markdown, not the asset's
+   * type — so `compatibleConnected` below can never be non-empty for one.
+   * This is that content's OWN eligibility list instead: platforms with a
+   * connected, usable integration, scoped to `note` assets (see
+   * `agentDraftManualPublishTarget`'s doc for why it is blind to
+   * `ClientIntegration.agentAutoPublish`).
+   */
+  agentDraftPublishPlatforms: string[];
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -1066,21 +1094,34 @@ function PublishNowInline({
   const compatibleConnected = (PUBLISHABLE_PLATFORMS[asset.type] ?? []).filter((p) =>
     connectedPlatforms.includes(p),
   );
-  const eligible = canPublish && compatibleConnected.length > 0 && isAssetPublishable(asset);
+  // The agent-draft twin of the above — see canPublishAgentDraftNow in
+  // asset-card.tsx for the identical split.
+  const agentDraftTarget = agentDraftManualPublishTarget(asset, agentDraftPublishPlatforms);
+  const eligible =
+    canPublish &&
+    isAssetPublishable(asset) &&
+    (compatibleConnected.length > 0 || agentDraftTarget !== null);
   if (!eligible) return null;
 
-  const targets = asset.scheduledPlatforms?.length
-    ? asset.scheduledPlatforms
-    : [asset.scheduledPlatform ?? compatibleConnected[0]];
+  const targets = agentDraftTarget
+    ? [agentDraftTarget.platform]
+    : asset.scheduledPlatforms?.length
+      ? asset.scheduledPlatforms
+      : [asset.scheduledPlatform ?? compatibleConnected[0]];
   const targetLabel = targets.map((t) => PLATFORM_LABELS[t] ?? t).join(" + ");
 
   async function publishNow() {
     setBusy(true);
     setError(null);
     try {
-      // No explicit platform: the action reads asset.scheduledPlatforms itself
-      // and publishes to every one of them.
-      const res = await publishAssetNowAction(asset.id);
+      // No explicit platform for the normal case: the action reads
+      // asset.scheduledPlatforms itself and publishes to every one of them.
+      // An agent draft goes through its own door instead — see
+      // canPublishAgentDraftNow in asset-card.tsx for why the two are
+      // mutually exclusive by asset.type.
+      const res = agentDraftTarget
+        ? await publishAgentDraftNowAction(asset.id)
+        : await publishAssetNowAction(asset.id);
       if (res.ok) router.refresh();
       else setError(res.error);
     } catch (e) {

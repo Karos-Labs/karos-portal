@@ -30,8 +30,8 @@ auto-posting, so a person posts every time.
 | Run-time injection | `src/lib/agent-service/linkedin-agent-context.ts` on every LinkedIn run (**both** submit cores). Per skill: setup gets the answers; the writer gets everything, including — now that the manager pass runs inside the same press — the state it audits |
 | State capture | `src/lib/agent-service/linkedin-state-capture.ts` + the delivery handler. Internal state artifacts are fetched for their TEXT only — never re-hosted, never on an asset — and upserted into `liAgentState`. `agent-service/runner/src/artifacts.ts` `outputRoots` was widened to reach `clients/<slug>/internal` and `clients/<slug>/linkedin-agent` or the memory file and the calendar were collected from nowhere |
 | Run gate | Two rungs above the injection, both refusing what the AGENT would refuse anyway, one press earlier: the company form must be SAVED (saving it empty satisfies it — the deliberate portal policy), and for a writer/manager run the client must have been SET UP (asked of the `foundation` row, the same file setup's own join check treats as the source of truth). A seat identity with no voice card is refused by name |
-| Review | Webhook → job status `review` + one library asset (type `note`, unpublishable — `PUBLISHABLE_PLATFORMS.note` has no targets). `client/DRAFTS.md` becomes the asset content; the reader (`src/components/li-drafts-review.tsx`) renders per-identity cards with Pick & post on LinkedIn / Pick with edits / Request a change / Skip. A human always approves the draft first (`approveAssetAction`) regardless of the opt-in below |
-| Pick-to-post | `linkedin.com/feed/?shareActive=true&text=<urlencoded>` — verified live 2026-07-24, and **identical to the URL the lab's own `assets/engine/share_link.py` builds**, so `publish-link.txt` and the reader agree by construction. Undocumented, so the pick copies the text to the clipboard FIRST (awaited before `window.open`). This is the default, and the only path for a client who hasn't opted into the auto-publish below |
+| Review | Webhook → job status `review` + one library asset (type `note`, unpublishable via `PUBLISHABLE_PLATFORMS` — its target platform lives inside the batch markdown, so it goes through its own Publish Now door, see below). `client/DRAFTS.md` becomes the asset content; the reader (`src/components/li-drafts-review.tsx`) renders per-identity cards with the same button set every platform gets (Approve / Publish Now / Download / Delete, on the host) plus an "Open in LinkedIn" compose shortcut, with editing/requesting-a-change/skipping as secondary text links. A human always approves the draft first (`approveAssetAction`) either way |
+| Compose shortcut | `linkedin.com/feed/?shareActive=true&text=<urlencoded>` — verified live 2026-07-24, and **identical to the URL the lab's own `assets/engine/share_link.py` builds**, so `publish-link.txt` and the reader agree by construction. Undocumented, so clicking it copies the text to the clipboard FIRST (awaited before `window.open`). Always available; it is the only path for content the real publisher can't reach (a personal seat's draft, an older multi-draft batch) and a convenience alternative to Publish Now otherwise |
 | Credentials | Nothing new. The manager needs `XAI_API_KEY`, already wired service → worker → runner, and `api.x.ai` + `www.reddit.com` are already in the `custom` task type's `research` egress group |
 
 Voice, pillars, lanes, cadence and language are **BUILT** by the agent (setup
@@ -276,28 +276,42 @@ the db, do not reintroduce; its instruction block used to live here.
   parked — nothing here adds a second posting path, new scopes, or bypasses
   the human approval step below.
 
-  **PARTIALLY IMPLEMENTED 2026-09-21, opt-in, per client:** the EXISTING
-  LinkedIn integration card's own OAuth connection (`publishers.ts`'s
-  `publishAssetToPlatform` — the same call "Publish Now" and the auto-cron
-  already use for every platform) can now carry the company-page writer's
-  drafts too, when a client has explicitly turned it on.
+  **IMPLEMENTED 2026-09-21, third design round — same buttons as every other
+  network.** A drafted post's card now shows exactly the same button set
+  Instagram/TikTok/Facebook already show: Approve (staff, the human gate,
+  unchanged), Publish Now (when the content is eligible — see below),
+  Download, Delete — plus, for LinkedIn/X content specifically, an "Open in
+  LinkedIn" compose shortcut that is ALWAYS present (it just prefills
+  linkedin.com's own composer; posting still happens on LinkedIn). The old
+  bespoke "Pick & post on LinkedIn / Pick with edits / Request a change /
+  Skip" four-button row is gone — editing/requesting-a-change/skipping still
+  exist and still feed the same feedback loop, just as secondary text links
+  under the primary row (`li-drafts-review.tsx`).
+
+  Publish Now hands the draft to the EXISTING LinkedIn integration card's own
+  OAuth connection (`publishers.ts`'s `publishAssetToPlatform` — the same
+  call every other platform's Publish Now and the auto-cron use), through a
+  dedicated manual door (`publishAgentDraftNowAction` in
+  `src/lib/actions/asset-actions.ts`) built because nothing previously let a
+  human fire that publisher for a `note` asset at all (`PUBLISHABLE_PLATFORMS`
+  has no entry for `note`). Publish Now's own visibility is TECHNICAL
+  eligibility only (`agentDraftManualPublishTarget` — a recognised
+  single-post target plus a connected, usable LinkedIn integration) and is
+  blind to the opt-in flag described next.
+
   `ClientIntegration.agentAutoPublish` (default OFF — see its doc comment in
-  `src/lib/types.ts`) is a per-client, per-platform flag toggled from ONE
-  consolidated checklist on the client settings Integrations tab ("Agent
-  draft auto-publish" — `integrations-tab.tsx`), listing every connected,
-  publishable channel uniformly rather than a one-off LinkedIn control.
+  `src/lib/types.ts`) is a per-client opt-in that now reuses the SAME
+  "Auto-publish…" switch already on the LinkedIn card (no separate checklist
+  UI — that existed briefly and was removed; see the switch's own label on
+  that card, which reads "Auto-publish agent drafts once approved" for
+  LinkedIn/X specifically). It controls TIMING ONLY: with the flag on,
+  `autoPublishApprovedAgentDraft` (`src/lib/actions/asset-actions.ts`) hands
+  the approved draft to `publishAssetToPlatform` the instant it is approved;
+  with the flag off (every existing client, today), the draft sits
+  approved-but-unpublished until a human clicks its own Publish Now button.
+  The button set is identical either way.
 
-  Draft-only and the approval gate are UNCHANGED: "a person posts every
-  time" above still means a person REVIEWS AND APPROVES every time
-  (`approveAssetAction`) — that step is staff-only and required either way.
-  What changes is only what happens the instant AFTER approval — with the
-  flag on, `autoPublishApprovedAgentDraft`
-  (`src/lib/actions/asset-actions.ts`) hands the approved draft to
-  `publishAssetToPlatform` instead of leaving it for the "Pick & post on
-  LinkedIn" hand-off; with the flag off (every existing client, today),
-  behaviour is byte-for-byte what it was before this shipped.
-
-  Only a SINGLE, COMPANY-PAGE post qualifies for the automatic hand-off
+  Only a SINGLE, COMPANY-PAGE post qualifies for either publish door
   (`agentDraftAutoPublishTarget` in `src/lib/agent-draft-auto-publish.ts`) —
   matching "one press produces one post" above, since that is what a live
   run's `DRAFTS.md` looks like, plus company-page-only: the client's
@@ -305,9 +319,9 @@ the db, do not reintroduce; its instruction block used to live here.
   "Publish Now" already posts as), not one per identity, so a PERSONAL
   SEAT's draft — meant to go out under that person's own handle, via their
   own `EmployeeSeat` credentials, which this publisher never reads — stays
-  on the manual pick-to-post flow rather than risking going out under the
-  wrong name. A multi-post batch (an older run, or a future brief asking for
-  more than the default) is left on the manual flow for the same
+  on the "Open in LinkedIn" compose shortcut rather than risking going out
+  under the wrong name. A multi-post batch (an older run, or a future brief
+  asking for more than the default) stays on the shortcut for the same
   never-guess reason.
 - **The standing point-of-view box** (the live section's §A sub-table). The
   injected file carries the empty table so the engine contract holds; a portal

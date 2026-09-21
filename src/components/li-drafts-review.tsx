@@ -2,18 +2,37 @@
 
 /**
  * The LinkedIn drafts reader: a parsed draft batch rendered as readable cards
- * - grouped per account, one card per post - with pick / edit / skip actions
- * wired into the per-account feedback loop.
+ * - grouped per account, one card per post.
  *
- * Picking is also the posting hand-off: the pick copies the final text to the
- * clipboard and opens LinkedIn's compose prefilled via
- * linkedin.com/feed/?shareActive=true&text=… (verified live 2026-07-24: full
- * prefill incl. newlines/emoji/links up to LinkedIn's 3,000-char cap; the
- * auth wall carries the link through login). The deep link is undocumented,
- * so the clipboard copy is always made first - if LinkedIn ever drops the
- * prefill, the text is already on the clipboard. Files cannot ride a URL: the
- * card lists them for download + manual attach. Draft-only stays true - the
- * human presses Post on LinkedIn.
+ * UNIFIED BUTTON SET (product ruling, 2026-09-21, third iteration): the host
+ * (asset-card.tsx / asset-detail-modal.tsx) already renders the same
+ * Approve / Publish Now / Download / Delete every other platform's draft
+ * gets. This reader used to ALSO render its own competing "Pick & post" /
+ * "Pick with edits" / "Request a change" / "Skip" decision tree beside that
+ * bar — two uncoordinated button groups on one card, which is exactly what
+ * the CEO flagged on a live screenshot ("you just left BOTH the Approve
+ * button AND the Pick & post buttons - that's just confusing"). Now this
+ * reader offers exactly ONE primary control per draft, "Open in LinkedIn" -
+ * a convenience shortcut, never a competing publish mechanism - plus the
+ * shared Download. Editing, requesting a change and skipping still exist
+ * (the learning loop reads them - see `send()` below) but demoted to plain
+ * text links under the primary row, matching how a secondary action reads
+ * everywhere else in this codebase (compare "Unschedule" on the scheduled-
+ * info strip in asset-card.tsx).
+ *
+ * "Open in LinkedIn" is also the posting hand-off for content the real
+ * OAuth publisher can't reach at all (a personal seat's post, or an older
+ * multi-draft batch) - it copies the final text to the clipboard and opens
+ * LinkedIn's compose prefilled via linkedin.com/feed/?shareActive=true&text=…
+ * (verified live 2026-07-24: full prefill incl. newlines/emoji/links up to
+ * LinkedIn's 3,000-char cap; the auth wall carries the link through login).
+ * The deep link is undocumented, so the clipboard copy is always made first -
+ * if LinkedIn ever drops the prefill, the text is already on the clipboard.
+ * Files cannot ride a URL: the card lists them for download + manual attach.
+ * ALWAYS available, whatever the draft's Publish Now eligibility or the
+ * client's `agentAutoPublish` setting - it only opens a compose window with
+ * text in it, so it is harmless to offer even on an already-published draft.
+ * Draft-only stays true here - the human presses Post on LinkedIn.
  *
  * v2 ships TEXT posts: no image, no document, no video is sourced for a post
  * (lab decision, 2026-08-03 - the reasoning and the route back are in the lab's
@@ -89,7 +108,7 @@ function DraftCard({
   accountTitle,
   draft,
   media,
-  suppressPickToPost,
+  published,
 }: {
   clientId: string;
   jobId?: string;
@@ -98,13 +117,17 @@ function DraftCard({
   draft: LiParsedDraft;
   media: LiMediaFile[];
   /**
-   * The auto-publish door (`ClientIntegration.agentAutoPublish`) is open for
-   * this exact draft — see `agentDraftAutoPublishSuppressesPicker`. Picking
-   * here would be a second, uncoordinated way to post the same content the
-   * generic Approve bar below is about to publish for real; Download stays,
-   * as the only hand-off any other asset type gets.
+   * This asset already went out for real through the OAuth publisher —
+   * either `ClientIntegration.agentAutoPublish` fired the instant it was
+   * approved, or a staff member pressed the host's own Publish Now. Either
+   * way there is nothing left to pick: the card shows a plain confirmation
+   * instead of an action row that would otherwise suggest this is still
+   * pending. Eligibility for Publish Now requires exactly one account with
+   * one draft (agentDraftAutoPublishTarget), so this can only ever be true
+   * for that single card — but it is threaded per-draft rather than
+   * assumed, same discipline as the old suppression prop it replaces.
    */
-  suppressPickToPost?: boolean;
+  published?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -178,12 +201,14 @@ function DraftCard({
               <Badge>{charLabel(draft.chars)}</Badge>
             </span>
           ) : null}
-          {sent ? (
+          {published ? (
+            <Badge tone="success">Posted</Badge>
+          ) : sent ? (
             <Badge tone="success">
               {sent === "posted"
-                ? "Picked"
+                ? "Opened"
                 : sent === "posted_with_edits"
-                  ? "Picked with edits"
+                  ? "Opened with edits"
                   : sent === "edit_request"
                     ? "Change requested"
                     : "Skipped"}
@@ -236,21 +261,16 @@ function DraftCard({
         </ul>
       ) : null}
 
-      {sent === null && suppressPickToPost ? (
-        // Auto-publish is armed for this exact draft (see the prop's own
-        // doc). No picking to do — approving it below is what posts it — so
-        // this stays a read-only card with the one hand-off every other
-        // asset type gets: Download.
+      {published ? (
+        // Already went out for real (auto-publish on approval, or a staff
+        // click on the host's own Publish Now) — see the `published` prop's
+        // own doc. Nothing left to do here but offer the text.
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <DownloadDraftButton text={draft.text} filename={`${assetFileStem(accountTitle)}-linkedin.txt`} />
-          {/* Not "Approve it below" — a client reading this never has that
-              button (it is staff-only), and this card mounts for both. */}
-          <p className="text-[11px] text-muted-2">
-            Once your team approves it, Karos posts it automatically. Nothing to pick here.
-          </p>
+          <p className="text-[11px] text-muted-2">Karos posted this to LinkedIn.</p>
         </div>
       ) : sent === null ? (
-        <div className="mt-3 space-y-3">
+        <div className="mt-3 space-y-2">
           {mode === "editing" ? (
             <>
               <Textarea
@@ -271,7 +291,7 @@ function DraftCard({
                   onClick={() => send("posted_with_edits", finalText)}
                   disabled={pending || !finalText.trim() || finalText.trim().length > LINKEDIN_POST_CAP}
                 >
-                  {pending ? "Opening…" : "Save & post on LinkedIn"}
+                  {pending ? "Opening…" : "Open in LinkedIn"}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setMode("idle")}>
                   Cancel
@@ -323,37 +343,23 @@ function DraftCard({
             </>
           ) : (
             <>
+              {/* ONE primary control, plus the shared Download — the same
+                  weight every other platform's drafts get. "Open in LinkedIn"
+                  is a convenience shortcut, not a competing publish
+                  mechanism: it just prefills the composer, so it is offered
+                  here whatever this draft's Publish Now eligibility is. */}
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="accent" onClick={() => send("posted")} disabled={pending}>
-                  <Icon name="Check" className="mr-1 h-3.5 w-3.5" />
-                  {pending ? "Opening…" : "Pick & post on LinkedIn"}
+                  <Icon name="ExternalLink" className="mr-1 h-3.5 w-3.5" />
+                  {pending ? "Opening…" : "Open in LinkedIn"}
                 </Button>
-                <Button
-                  size="sm"
-                  variant="subtle"
-                  onClick={() => {
-                    setFinalText(draft.text);
-                    setMode("editing");
-                  }}
-                >
-                  Pick with edits
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setMode("requesting")}>
-                  Request a change
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setMode("skipping")}>
-                  Skip
-                </Button>
-                {/* ALWAYS present, same as every other reader — the raw text,
-                    for a client who wants to post it themselves without going
-                    through LinkedIn's compose deep link at all. */}
                 <DownloadDraftButton
                   text={draft.text}
                   filename={`${assetFileStem(accountTitle)}-linkedin.txt`}
                 />
               </div>
               <p className="text-[11px] text-muted-2">
-                Picking copies the text and opens LinkedIn with the post ready
+                Copies the text and opens LinkedIn with the post ready
                 {media.length > 0 ? "; download the files above and attach them in the composer" : ""}
                 . You press Post.
                 {/* A suggestion, in the client's words as a suggestion: the agent
@@ -365,6 +371,35 @@ function DraftCard({
                   : draft.postWindow
                     ? ` Best window: ${normalizeDashes(stripInlineMarkdown(draft.postWindow))}.`
                     : ""}
+              </p>
+              {/* Secondary — still feeds the learning loop (see `send()`),
+                  demoted to plain text links so they read as options, not
+                  four equal-weight buttons. */}
+              <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFinalText(draft.text);
+                    setMode("editing");
+                  }}
+                  className="text-muted underline hover:text-foreground"
+                >
+                  Open with edited text
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("requesting")}
+                  className="text-muted underline hover:text-foreground"
+                >
+                  Request a change
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("skipping")}
+                  className="text-muted underline hover:text-foreground"
+                >
+                  Skip this one
+                </button>
               </p>
             </>
           )}
@@ -402,7 +437,7 @@ export function LiDraftsBatch({
   assetId,
   accounts,
   media,
-  suppressPickToPost,
+  published,
 }: {
   clientId: string;
   jobId?: string;
@@ -411,22 +446,22 @@ export function LiDraftsBatch({
   /** The run's client-facing media artifacts (slides, PDFs) for manual attach. */
   media: LiMediaFile[];
   /**
-   * The host already knows (once, for the whole asset — see
-   * `agentDraftAutoPublishSuppressesPicker`) whether the auto-publish door is
-   * armed for this batch. Eligibility itself requires exactly one account
-   * with exactly one draft, so this can only ever apply to that single card —
-   * but it is threaded per-draft rather than assumed, so a stale/legacy
+   * The host already knows (once, for the whole asset) whether this note
+   * already went out for real — see `DraftCard`'s own `published` doc.
+   * Eligibility for the real publish door requires exactly one account with
+   * exactly one draft, so this can only ever apply to that single card — but
+   * it is threaded per-draft rather than assumed, so a stale/legacy
    * multi-draft batch (which the door never targets) is never affected.
    */
-  suppressPickToPost?: boolean;
+  published?: boolean;
 }) {
   const totalDrafts = accounts.reduce((n, a) => n + a.drafts.length, 0);
   return (
     <div className="space-y-5">
       <p className="text-sm text-muted">
-        {totalDrafts === 1 ? "The next post, ready to review." : "Drafts to choose from."} Picking
-        opens LinkedIn with the post ready; edit freely, or skip with a reason. Every choice
-        sharpens that account&apos;s voice for the next run.
+        {totalDrafts === 1 ? "The next post, ready to review." : "Drafts to choose from."} Opening
+        it in LinkedIn copies the text and gets the composer ready; edit freely, or skip with a
+        reason. Every choice sharpens that account&apos;s voice for the next run.
       </p>
       {accounts.map((acc) => {
         const isCompany = acc.title.toLowerCase().includes("company page");
@@ -456,7 +491,7 @@ export function LiDraftsBatch({
                   accountTitle={acc.title}
                   draft={draft}
                   media={mediaFor(draft, media, totalDrafts === 1)}
-                  {...(suppressPickToPost ? { suppressPickToPost } : {})}
+                  {...(published ? { published } : {})}
                 />
               ))}
             </div>

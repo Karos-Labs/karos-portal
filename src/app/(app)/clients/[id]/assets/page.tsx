@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/ui";
 import { AssetsView } from "@/components/assets-view";
 import { statusFilterFromParam } from "@/lib/content-status-links";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
-import { agentAutoPublishPlatformsByClient, pushablePlatformsByClient } from "@/lib/publish-targets";
+import { agentDraftPublishPlatformsByClient, pushablePlatformsByClient } from "@/lib/publish-targets";
 
 /**
  * A single client's deliverables, for staff to review and approve. Approving a
@@ -48,11 +48,9 @@ export default async function ClientAssetsPage({
   // sibling `/assets?clientId=` branch's identical F107 note. Two routes for
   // one question, and this one silently dropped the push targets.
   const connectedPlatformsByClient = await pushablePlatformsByClient(assets);
-  // Same F107-style note: without this the LinkedIn/X drafts reader has no
-  // way to know the auto-publish door is armed and would keep offering its
-  // own pick-to-post buttons right beside the Approve button that actually
-  // posts (see agent-draft-auto-publish.ts).
-  const autoPublishPlatformsByClient = await agentAutoPublishPlatformsByClient(assets);
+  // Same F107-style note: without this a LinkedIn/X agent draft's own
+  // Publish Now button can never render (see agent-draft-auto-publish.ts).
+  const agentDraftPlatformsByClient = await agentDraftPublishPlatformsByClient(assets);
 
   const pendingCount = assets.filter((a) => a.status === "draft").length;
   /* The SERVER's clock, read once here rather than in the client component:
@@ -83,8 +81,8 @@ export default async function ClientAssetsPage({
         initialStatus={statusFilterFromParam(statusParam)}
         now={now}
         {...(connectedPlatformsByClient ? { connectedPlatformsByClient } : {})}
-        {...(autoPublishPlatformsByClient
-          ? { agentAutoPublishPlatformsByClient: autoPublishPlatformsByClient }
+        {...(agentDraftPlatformsByClient
+          ? { agentDraftPublishPlatformsByClient: agentDraftPlatformsByClient }
           : {})}
       />
     </>

@@ -30,7 +30,7 @@ import { stripInlineMarkdown, toPlainSummary } from "@/lib/doc-render";
 import { postKind } from "@/lib/calendar-kind";
 import { projectPastRuns } from "@/lib/calendar-past-runs";
 import { clientSafeRefusal } from "@/lib/custom-agent-launch";
-import { agentAutoPublishPlatformsByClient, pushablePlatformsByClient } from "@/lib/publish-targets";
+import { agentDraftPublishPlatformsByClient, pushablePlatformsByClient } from "@/lib/publish-targets";
 import { sameLocalDay } from "@/lib/scheduling";
 import { platformLabel } from "@/lib/integrations/platforms";
 import { ASSET_TYPE_LABEL } from "@/lib/asset-type-copy";
@@ -789,11 +789,11 @@ export async function CalendarBody({
   const connectedPlatformsByClient = isClient
     ? undefined
     : await pushablePlatformsByClient(assets);
-  // Same reasoning, for the LinkedIn/X drafts reader's own pick-to-post
-  // buttons in the detail modal — see agent-draft-auto-publish.ts.
-  const autoPublishPlatformsByClient = isClient
+  // Same reasoning, for a LinkedIn/X agent draft's own Publish Now button in
+  // the detail modal — see agent-draft-auto-publish.ts.
+  const agentDraftPublishPlatformsByClientMap = isClient
     ? undefined
-    : await agentAutoPublishPlatformsByClient(assets);
+    : await agentDraftPublishPlatformsByClient(assets);
 
   // ── Empty state ─────────────────────────────────────────────────────
   // A month of blank squares under a header promising "what your agents will
@@ -974,8 +974,8 @@ export async function CalendarBody({
         clients={clientOptions}
         agents={agentOptions}
         {...(connectedPlatformsByClient ? { connectedPlatformsByClient } : {})}
-        {...(autoPublishPlatformsByClient
-          ? { agentAutoPublishPlatformsByClient: autoPublishPlatformsByClient }
+        {...(agentDraftPublishPlatformsByClientMap
+          ? { agentDraftPublishPlatformsByClient: agentDraftPublishPlatformsByClientMap }
           : {})}
         defaultClientId={defaultClientId}
         {...(archiveAssets ? { archiveAssets } : {})}

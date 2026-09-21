@@ -1,17 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
-  agentDraftAutoPublishSuppressesPicker,
   agentDraftAutoPublishTarget,
+  agentDraftManualPublishTarget,
 } from "@/lib/agent-draft-auto-publish";
 
 /**
- * The auto-publish opt-in (ClientIntegration.agentAutoPublish) only ever
- * fires through this function's say-so, so its narrowness IS the safety
- * rail: company-page-only (the client's single shared OAuth credential is
- * one identity, not one per seat), single-post-only ("one run produces one
- * post" is the current rule for both agents, and a multi-draft batch has no
- * single post to choose), and never Reddit (hard product rule, no posting
- * path may ever exist for it).
+ * `agentDraftAutoPublishTarget` backs BOTH publish doors a LinkedIn/X agent
+ * draft can go out through today — the automatic one
+ * (`ClientIntegration.agentAutoPublish`) and the manual one
+ * (`publishAgentDraftNowAction`, the draft's own Publish Now button) — so
+ * its narrowness IS the safety rail for both: company-page-only (the
+ * client's single shared OAuth credential is one identity, not one per
+ * seat), single-post-only ("one run produces one post" is the current rule
+ * for both agents, and a multi-draft batch has no single post to choose),
+ * and never Reddit (hard product rule, no posting path may ever exist for
+ * it).
  */
 
 const LI_COMPANY_SINGLE = `# LinkedIn drafts — Karos Labs
@@ -106,11 +109,13 @@ const REDDIT_V1 = `# Reddit answer drafts
 `;
 
 describe("agentDraftAutoPublishTarget", () => {
-  it("returns the single post for a company-page LinkedIn batch", () => {
+  it("returns the single post for a company-page LinkedIn batch, with the account title and draftRef a caller needs to log feedback", () => {
     const target = agentDraftAutoPublishTarget({ type: "note", content: LI_COMPANY_SINGLE });
     expect(target).toEqual({
       platform: "linkedin",
       text: "Most founders do not need a $250K CMO.",
+      accountTitle: "Karos Labs — Company page",
+      draftRef: "Karos Labs — Company page · Post 1 · Thought-leadership",
     });
   });
 
@@ -122,11 +127,13 @@ describe("agentDraftAutoPublishTarget", () => {
     expect(agentDraftAutoPublishTarget({ type: "note", content: LI_TWO_ACCOUNTS })).toBeNull();
   });
 
-  it("returns the single post for a company-page X batch", () => {
+  it("returns the single post for a company-page X batch, with accountTitle/draftRef", () => {
     const target = agentDraftAutoPublishTarget({ type: "note", content: X_COMPANY_SINGLE });
     expect(target).toEqual({
       platform: "twitter",
       text: "We shipped the drafts reader today.",
+      accountTitle: "Company page @getkaros",
+      draftRef: "Company page @getkaros · Avenue 1 · Build-in-public",
     });
   });
 
@@ -154,59 +161,56 @@ describe("agentDraftAutoPublishTarget", () => {
 });
 
 /**
- * The follow-up fix to PR #174: the asset detail modal ALWAYS renders its own
- * generic Approve bar for a draft, independently of whatever the LinkedIn/X
- * drafts reader renders inside it — so with the auto-publish door open, a
- * staff member (or a client; the modal is the only deliverable viewer they
- * can reach) clicking BOTH "Pick & post" and "Approve" posted the same
- * content twice. This is the ONE place that decision is made — it must fire
- * only when BOTH the flag is on for the right platform AND the draft itself
- * is the narrow shape the door actually targets.
+ * The host's Publish Now button (asset-card.tsx / asset-detail-modal.tsx)
+ * asks THIS, never `ClientIntegration.agentAutoPublish` — button visibility
+ * is technical eligibility (a recognised single-post target) PLUS a
+ * connected, usable integration for its platform, full stop. The flag only
+ * decides whether Approve fires the publish immediately; it must never hide
+ * or show this button (product ruling, 2026-09-21 — see the flag's own doc
+ * comment in lib/types.ts).
  */
-describe("agentDraftAutoPublishSuppressesPicker", () => {
-  it("suppresses the picker when the platform's flag is on and the draft is eligible", () => {
+describe("agentDraftManualPublishTarget", () => {
+  it("returns the target when the platform has a connected integration — flag never asked", () => {
     expect(
-      agentDraftAutoPublishSuppressesPicker({ type: "note", content: LI_COMPANY_SINGLE }, ["linkedin"]),
-    ).toBe(true);
+      agentDraftManualPublishTarget({ type: "note", content: LI_COMPANY_SINGLE }, ["linkedin"]),
+    ).not.toBeNull();
     expect(
-      agentDraftAutoPublishSuppressesPicker({ type: "note", content: X_COMPANY_SINGLE }, ["twitter"]),
-    ).toBe(true);
+      agentDraftManualPublishTarget({ type: "note", content: X_COMPANY_SINGLE }, ["twitter"]),
+    ).not.toBeNull();
   });
 
-  it("keeps the picker when no platform has the flag on", () => {
+  it("returns null when no platform is connected", () => {
     expect(
-      agentDraftAutoPublishSuppressesPicker({ type: "note", content: LI_COMPANY_SINGLE }, undefined),
-    ).toBe(false);
+      agentDraftManualPublishTarget({ type: "note", content: LI_COMPANY_SINGLE }, undefined),
+    ).toBeNull();
     expect(
-      agentDraftAutoPublishSuppressesPicker({ type: "note", content: LI_COMPANY_SINGLE }, []),
-    ).toBe(false);
+      agentDraftManualPublishTarget({ type: "note", content: LI_COMPANY_SINGLE }, []),
+    ).toBeNull();
   });
 
-  it("keeps the picker when the flag is on for a DIFFERENT platform than this draft targets", () => {
-    // A LinkedIn batch with only X's flag on - the wrong door is open, so this
-    // one stays manual.
+  it("returns null when the connected platform is the WRONG one for this draft", () => {
+    // A LinkedIn batch with only X connected - the wrong door, so no button.
     expect(
-      agentDraftAutoPublishSuppressesPicker({ type: "note", content: LI_COMPANY_SINGLE }, ["twitter"]),
-    ).toBe(false);
+      agentDraftManualPublishTarget({ type: "note", content: LI_COMPANY_SINGLE }, ["twitter"]),
+    ).toBeNull();
   });
 
-  it("keeps the picker for every shape agentDraftAutoPublishTarget itself refuses, flag or no flag", () => {
+  it("returns null for every shape agentDraftAutoPublishTarget itself refuses, connected or not", () => {
     // Personal seat, multi-account batch, X thread, X reply, Reddit — none of
-    // these has a single post to auto-publish, so the flag being on changes
-    // nothing: agentDraftAutoPublishTarget returning null is what stops it.
+    // these has a single post to publish, so being connected changes nothing.
     for (const content of [LI_SEAT_SINGLE, LI_TWO_ACCOUNTS, X_COMPANY_THREAD, X_COMPANY_REPLY, REDDIT_V1]) {
       expect(
-        agentDraftAutoPublishSuppressesPicker({ type: "note", content }, ["linkedin", "twitter"]),
-      ).toBe(false);
+        agentDraftManualPublishTarget({ type: "note", content }, ["linkedin", "twitter"]),
+      ).toBeNull();
     }
   });
 
-  it("keeps the picker for a non-note asset even with every platform flagged on", () => {
+  it("returns null for a non-note asset even with every platform connected", () => {
     expect(
-      agentDraftAutoPublishSuppressesPicker(
+      agentDraftManualPublishTarget(
         { type: "social_post", content: X_COMPANY_SINGLE },
         ["linkedin", "twitter"],
       ),
-    ).toBe(false);
+    ).toBeNull();
   });
 });

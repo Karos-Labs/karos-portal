@@ -42,7 +42,12 @@ import {
 } from "@/lib/asset-visibility";
 import { learningTargetForAsset } from "@/lib/agent-engine/learning-feedback";
 import { afterAssetPosted } from "@/lib/asset-posted";
-import { agentDraftAutoPublishTarget } from "@/lib/agent-draft-auto-publish";
+import {
+  agentDraftAutoPublishTarget,
+  type AgentDraftAutoPublishTarget,
+} from "@/lib/agent-draft-auto-publish";
+import { addLiDraftFeedbackAction } from "@/lib/actions/linkedin-agent-actions";
+import { addXDraftFeedbackAction } from "@/lib/actions/x-agent-actions";
 import type { Asset, PublishMode } from "@/lib/types";
 
 /** Load the asset and verify the caller may act on it. Shared guard for the actions below. */
@@ -467,40 +472,80 @@ async function closeProducingJobIfReviewed(asset: Asset): Promise<void> {
 }
 
 /**
- * OPT-IN per client per platform: hand an approved X/LinkedIn agent draft
- * straight to the existing OAuth publisher (`publishAssetToPlatform` — the
- * same call "Publish Now" and the auto-cron already use) instead of leaving
- * it for a human to open the drafts review card and press "Pick & post".
+ * Best-effort: tell the LinkedIn/X-specific learning loop a draft went out
+ * for real, through the OAuth publisher — the same signal
+ * `addLiDraftFeedbackAction`/`addXDraftFeedbackAction` already record for
+ * the compose-shortcut hand-off (`li-drafts-review.tsx`/`x-drafts-
+ * review.tsx`'s `send("posted")`), so `linkedin-agent-context.ts`/
+ * `x-agent-context.ts` see the SAME "posted" row whichever door the draft
+ * actually left through (docs/linkedin-agent-portal.md,
+ * docs/x-agent-portal.md).
  *
- * Approval is the one human gate and stays completely unchanged by this —
- * `approveAssetAction` has already written `status: "approved"` by the time
- * this runs, and a failure in here must never read as an approval failure
- * (hence the caller wraps this in a `.catch` that only logs). A publish
- * failure IS surfaced to staff, the same way a manual Publish Now failure
- * is: on `asset.publishError`, which the asset card already renders.
+ * Deliberately omits `draftRef`/`assetId`: LinkedIn's version of this call
+ * ALSO materializes a brand-new `social_post` Asset when both are present
+ * (its only path to "published" for the compose hand-off, which has no
+ * server-side confirmation the post actually went out) — and a real OAuth
+ * publish already has its own confirmation, and already marks THIS asset
+ * (the note) `published` via `markAssetPublished` above. Passing
+ * `draftRef`/`assetId` here would materialize a second, duplicate
+ * "published" record for the same post. `accountTitle` alone still resolves
+ * the right seat/company row and still reaches
+ * `bridgeDraftFeedbackToLearning` — the actual next-run signal — with none
+ * of that risk.
  *
- * No-ops instantly, before touching Firestore again, unless BOTH:
- *  - `agentDraftAutoPublishTarget` recognises this asset as a single-post
- *    LinkedIn/X agent batch (see that function for the narrow match it
- *    requires — never Reddit, never a multi-draft batch);
- *  - this client has explicitly turned the flag on for that platform
- *    (`ClientIntegration.agentAutoPublish === true` — absent/false is every
- *    existing client, today, unchanged).
+ * Never allowed to fail the publish it is reporting on: the post is already
+ * live by the time this runs (same reasoning as `afterAssetPosted`, which
+ * this sits beside).
  */
-async function autoPublishApprovedAgentDraft(asset: Asset): Promise<void> {
-  const target = agentDraftAutoPublishTarget(asset);
-  if (!target) return;
+async function recordAgentDraftPublishedFeedback(
+  asset: Pick<Asset, "clientId">,
+  target: AgentDraftAutoPublishTarget,
+): Promise<void> {
+  try {
+    if (target.platform === "linkedin") {
+      await addLiDraftFeedbackAction({
+        clientId: asset.clientId,
+        accountTitle: target.accountTitle,
+        action: "posted",
+      });
+    } else {
+      await addXDraftFeedbackAction({
+        clientId: asset.clientId,
+        accountTitle: target.accountTitle,
+        action: "posted",
+      });
+    }
+  } catch (e) {
+    console.error("[agent-draft-publish] feedback recording failed", asset.clientId, target.platform, e);
+  }
+}
 
-  const integrations = await listClientIntegrations(asset.clientId);
-  const integration = integrations.find((i) => i.platform === target.platform);
-  if (!integration || integration.agentAutoPublish !== true) return;
-  if (!integrationIsUsable(integration) && !integrationMayBeRevivable(integration)) return;
-
-  // Same claim/release dance as publishAssetNowAction — an operator opening
-  // this same asset and pressing Publish Now in the instant after Approve
-  // must not race this call into a double post.
+/**
+ * THE actual publish, shared by both LinkedIn/X agent-draft doors — the
+ * automatic one (`autoPublishApprovedAgentDraft`, fired from inside
+ * `approveAssetAction` when `ClientIntegration.agentAutoPublish` is on) and
+ * the manual one (`publishAgentDraftNowAction`, the draft's own "Publish
+ * Now" button). Same claim/publish/bookkeeping either way — only WHO
+ * triggered it differs, carried through `opts.actor` for the learning feed.
+ *
+ * Not exported: both callers own their own eligibility checks first
+ * (approval status, integration health) because the two need different
+ * refusal messages — this function only does the publish once a caller has
+ * already decided it should happen.
+ */
+async function publishAgentDraftTarget(
+  asset: Asset,
+  target: AgentDraftAutoPublishTarget,
+  integration: Awaited<ReturnType<typeof listClientIntegrations>>[number],
+  opts?: { actor?: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  // Same claim/release dance as publishAssetNowAction — an operator pressing
+  // Publish Now in the instant after an auto-publish (or the reverse) must
+  // not race this call into a double post.
   const claimed = await claimAssetForPublish(asset.id);
-  if (!claimed) return;
+  if (!claimed) {
+    return { ok: false, error: "This asset is already being published. Give it a moment." };
+  }
 
   try {
     // The extracted single-post text stands in for `asset.content` for THIS
@@ -517,10 +562,12 @@ async function autoPublishApprovedAgentDraft(asset: Asset): Promise<void> {
       updatedAt: Date.now(),
     });
     // Same bookkeeping every publish door owes (slot stamp, X option row,
-    // learning feedback) - see src/lib/asset-posted.ts. No human pusher here
-    // (this IS the automatic door), so no `actor` — the same as the cron's
-    // door, which also posts unattended.
-    await afterAssetPosted(asset);
+    // learning feedback) - see src/lib/asset-posted.ts.
+    await afterAssetPosted(asset, opts);
+    // The LinkedIn/X-specific loop, separate from afterAssetPosted's own
+    // (agent-engine-only) learning bridge — see the function's own doc.
+    await recordAgentDraftPublishedFeedback(asset, target);
+    return { ok: true };
   } catch (e) {
     await releaseAssetPublishClaim(asset.id).catch(() => {});
     const message = e instanceof Error ? e.message : "Unknown error";
@@ -528,7 +575,108 @@ async function autoPublishApprovedAgentDraft(asset: Asset): Promise<void> {
       await markIntegrationExpired(asset.clientId, target.platform).catch(() => {});
     }
     await updateAsset(asset.id, { publishError: message, updatedAt: Date.now() }).catch(() => {});
+    return { ok: false, error: message };
   }
+}
+
+/**
+ * OPT-IN per client per platform: hand an approved X/LinkedIn agent draft
+ * straight to the existing OAuth publisher (`publishAssetToPlatform` — the
+ * same call "Publish Now" and the auto-cron already use) THE INSTANT it is
+ * approved, instead of leaving it approved-but-unpublished until a human
+ * presses that draft's own Publish Now button.
+ *
+ * Approval is the one human gate and stays completely unchanged by this —
+ * `approveAssetAction` has already written `status: "approved"` by the time
+ * this runs, and a failure in here must never read as an approval failure
+ * (hence the caller wraps this in a `.catch` that only logs). A publish
+ * failure IS surfaced to staff, the same way a manual Publish Now failure
+ * is: on `asset.publishError`, which the asset card already renders.
+ *
+ * No-ops instantly, before touching Firestore again, unless BOTH:
+ *  - `agentDraftAutoPublishTarget` recognises this asset as a single-post
+ *    LinkedIn/X agent batch (see that function for the narrow match it
+ *    requires — never Reddit, never a multi-draft batch);
+ *  - this client has explicitly turned the flag on for that platform
+ *    (`ClientIntegration.agentAutoPublish === true` — absent/false is every
+ *    existing client, today, unchanged). TIMING only — see the flag's own
+ *    doc comment; it is not what decides whether Publish Now itself exists
+ *    on the draft (that is `publishAgentDraftNowAction` below, which fires
+ *    on the same eligibility with no flag check at all).
+ */
+async function autoPublishApprovedAgentDraft(asset: Asset): Promise<void> {
+  const target = agentDraftAutoPublishTarget(asset);
+  if (!target) return;
+
+  const integrations = await listClientIntegrations(asset.clientId);
+  const integration = integrations.find((i) => i.platform === target.platform);
+  if (!integration || integration.agentAutoPublish !== true) return;
+  if (!integrationIsUsable(integration) && !integrationMayBeRevivable(integration)) return;
+
+  // No human pusher here (this IS the automatic door), so no `actor` — the
+  // same as the cron's own door, which also posts unattended.
+  await publishAgentDraftTarget(asset, target, integration);
+}
+
+/**
+ * The manual half of the SAME door: a staff member presses "Publish Now" on
+ * an eligible LinkedIn/X agent draft (asset-card.tsx / asset-detail-modal.tsx
+ * — the same button every other publishable asset type already has). Before
+ * this action existed NOTHING let a human fire this publisher for a "note"
+ * asset outside the automatic-on-approval path above — `PUBLISHABLE_PLATFORMS`
+ * has no entry for `note` (the target platform lives inside the batch
+ * markdown, not on the asset's type), so `publishAssetNowAction`'s own
+ * eligibility check could never pass for one.
+ *
+ * Same eligibility SHAPE as `publishAssetNowAction` (staff-only,
+ * `assetPublishBlock` for the approval/already-published/placeholder rule)
+ * plus the one extra fact only an agent draft needs: a recognised single-post
+ * target AND a connected integration for its platform
+ * (`agentDraftManualPublishTarget` — the same predicate that decides whether
+ * this button even renders, asked again here because a server action is a
+ * public endpoint and a hidden button is not a guard).
+ *
+ * Deliberately independent of `ClientIntegration.agentAutoPublish`: that flag
+ * only decides whether approval alone was enough to have already published
+ * this (in which case `assetPublishBlock` below refuses with "Already
+ * published" before this ever reaches the publisher a second time).
+ */
+export async function publishAgentDraftNowAction(
+  id: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const staffUser = await requireStaff();
+  const asset = await getAsset(id);
+  if (!asset) return { ok: false, error: "Asset not found" };
+
+  const block = assetPublishBlock(asset);
+  if (block) return { ok: false, error: PUBLISH_REFUSAL[block] };
+
+  const target = agentDraftAutoPublishTarget(asset);
+  if (!target) {
+    return {
+      ok: false,
+      error: "This draft isn't eligible for automatic publishing. Use the compose shortcut instead.",
+    };
+  }
+
+  const integrations = await listClientIntegrations(asset.clientId);
+  const integration = integrations.find(
+    (i) => i.platform === target.platform && (integrationIsUsable(i) || integrationMayBeRevivable(i)),
+  );
+  if (!integration) {
+    return {
+      ok: false,
+      error: `No active ${target.platform} integration. Connect or re-connect it first`,
+    };
+  }
+
+  const result = await publishAgentDraftTarget(asset, target, integration, {
+    ...(staffUser.email ? { actor: staffUser.email } : {}),
+  });
+  revalidatePath("/assets");
+  revalidatePath("/calendar");
+  revalidatePath(`/clients/${asset.clientId}`);
+  return result;
 }
 
 /**

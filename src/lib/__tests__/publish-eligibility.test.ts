@@ -291,8 +291,12 @@ describe("all three publish surfaces use the shared predicate", () => {
     expect(sources["components/asset-card.tsx"]).toMatch(
       /canPublishNow =\s*\n?\s*canApprove && compatibleConnected\.length > 0 && isAssetPublishable\(asset\)/,
     );
+    // The modal's PublishNowInline now also covers a LinkedIn/X agent draft
+    // (a `note`, which can never populate compatibleConnected — see
+    // agent-draft-auto-publish.ts) via agentDraftTarget, but isAssetPublishable
+    // is still asked unconditionally either way — same rule, one extra target.
     expect(sources["components/asset-detail-modal.tsx"]).toMatch(
-      /eligible = canPublish && compatibleConnected\.length > 0 && isAssetPublishable\(asset\)/,
+      /eligible =\s*\n?\s*canPublish &&\s*\n?\s*isAssetPublishable\(asset\) &&\s*\n?\s*\(compatibleConnected\.length > 0 \|\| agentDraftTarget !== null\)/,
     );
   });
 
