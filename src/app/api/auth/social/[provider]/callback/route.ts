@@ -186,32 +186,6 @@ async function exchangeCode(
     };
   }
 
-  if (provider === "reddit") {
-    // Reddit requires HTTP Basic auth with the app credentials (like Twitter).
-    const basicAuth = Buffer.from(`${appClientId}:${appClientSecret}`).toString("base64");
-    const res = await fetch(config.tokenUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${basicAuth}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-        // Reddit requires a descriptive, non-generic User-Agent on every call.
-        "User-Agent": "karoscmo:agent-connectors:v1 (by /u/karoslabs)",
-      },
-      body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: redirectUri }),
-    });
-    if (!res.ok) throw new Error(`Token exchange failed (${res.status})`);
-    const data = (await res.json()) as {
-      access_token: string;
-      refresh_token?: string;
-      expires_in?: unknown;
-    };
-    return {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token,
-      expiresIn: data.expires_in,
-    };
-  }
-
   if (provider === "tiktok") {
     // TikTok v2: credential is `client_key`, PKCE code_verifier is required, and
     // the response is a flat JSON object (access_token + refresh_token at top level).
@@ -324,18 +298,6 @@ async function fetchAccountName(provider: string, accessToken: string): Promise<
         const d = (await res.json()) as { data?: { user?: { display_name?: string } } };
         const name = d.data?.user?.display_name;
         return name ? `@${name}` : "";
-      }
-    }
-    if (provider === "reddit") {
-      const res = await fetch("https://oauth.reddit.com/api/v1/me", {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "User-Agent": "karoscmo:agent-connectors:v1 (by /u/karoslabs)",
-        },
-      });
-      if (res.ok) {
-        const d = (await res.json()) as { name?: string };
-        return d.name ? `u/${d.name}` : "";
       }
     }
   } catch {

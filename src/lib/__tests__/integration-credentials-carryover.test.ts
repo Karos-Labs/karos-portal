@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * fields the form rendered and then FULL-OVERWRITES the stored map. The OAuth
  * bookkeeping the callback writes is not in that registry: `expiresAt` is
  * declared by no platform at all, and `refreshToken` only by linkedin_community,
- * youtube, tiktok and reddit — X, Instagram and
+ * youtube and tiktok — X, Instagram and
  * LinkedIn declare `accessToken` alone. So editing an account name on an X
  * channel used to throw its refresh token away, and editing a Meta channel used
  * to throw away the `expiresAt` that schedules the long-lived re-exchange, which
@@ -94,17 +94,17 @@ describe("saveIntegrationAction keeps the OAuth bookkeeping no form renders", ()
 
   it("lets an operator replace a token by hand — carry-over fills blanks, it does not override", async () => {
     listMock.mockResolvedValue([
-      { platform: "reddit", credentials: { accessToken: "r-old", refreshToken: "r-old-refresh" } },
+      { platform: "tiktok", credentials: { accessToken: "tt-old", refreshToken: "tt-old-refresh" } },
     ]);
 
-    await saveIntegrationAction("c1", "reddit", {
-      accessToken: "r-pasted",
-      refreshToken: "r-pasted-refresh",
+    await saveIntegrationAction("c1", "tiktok", {
+      accessToken: "tt-pasted",
+      refreshToken: "tt-pasted-refresh",
     });
 
     expect(savedCredentials()).toEqual({
-      accessToken: "r-pasted",
-      refreshToken: "r-pasted-refresh",
+      accessToken: "tt-pasted",
+      refreshToken: "tt-pasted-refresh",
     });
   });
 });

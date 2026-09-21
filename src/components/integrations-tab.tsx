@@ -72,7 +72,6 @@ const CONNECT_STYLE: Record<string, { background: string; ring?: boolean }> = {
   twitter: { background: "#000000", ring: true },
   youtube: { background: "#FF0000" },
   tiktok: { background: "#000000", ring: true },
-  reddit: { background: "#FF4500" },
 };
 
 interface BrandButtonProps {
@@ -266,9 +265,6 @@ function PlatformCard({
   isClientViewer,
   onOAuthConnect,
   onDisconnected,
-  linkedinSeats,
-  seatLimit,
-  seatCost,
 }: {
   platform: PlatformConfig;
   integration: IntegrationView | undefined;
@@ -280,9 +276,6 @@ function PlatformCard({
   isClientViewer: boolean;
   onOAuthConnect: () => void;
   onDisconnected: () => void;
-  linkedinSeats?: SeatView[];
-  seatLimit?: number;
-  seatCost?: number;
 }) {
   // True when this platform has an automated OAuth flow defined (static config).
   // Decoupled from isOAuthEnabled (env-var check) so all users can see the
@@ -316,15 +309,6 @@ function PlatformCard({
    * these two controls are used.
    */
   const [actionError, setActionError] = useState<string | null>(null);
-  const [seatsOpen, setSeatsOpen] = useState(false);
-  const [businessInfoOpen, setBusinessInfoOpen] = useState(false);
-  const [businessInfoLoading, setBusinessInfoLoading] = useState(false);
-  const [businessInfoError, setBusinessInfoError] = useState<string | null>(null);
-  const [businessAccounts, setBusinessAccounts] = useState<MetaBusinessAccount[] | null>(null);
-  const [igInsightsOpen, setIgInsightsOpen] = useState(false);
-  const [igInsightsLoading, setIgInsightsLoading] = useState(false);
-  const [igInsightsError, setIgInsightsError] = useState<string | null>(null);
-  const [igInsights, setIgInsights] = useState<InstagramBusinessAccountInsights | null>(null);
   const [accountName, setAccountName] = useState(integration?.accountName ?? "");
   const [fields, setFields] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
@@ -369,40 +353,6 @@ function PlatformCard({
       setFormError(e instanceof Error ? e.message : "Save failed. Please try again.");
     } finally {
       setSaving(false);
-    }
-  }
-
-  /** Fetches on first open only — reopening the modal reuses what's already loaded. */
-  async function handleOpenBusinessInfo() {
-    setBusinessInfoOpen(true);
-    if (businessAccounts !== null || businessInfoLoading) return;
-    setBusinessInfoLoading(true);
-    setBusinessInfoError(null);
-    try {
-      const res = await fetchClientBusinessInfoAction(clientId);
-      if ("error" in res) setBusinessInfoError(res.error);
-      else setBusinessAccounts(res.accounts);
-    } catch {
-      setBusinessInfoError("Couldn't load business info. Please try again.");
-    } finally {
-      setBusinessInfoLoading(false);
-    }
-  }
-
-  /** Fetches on first open only — reopening the modal reuses what's already loaded. */
-  async function handleOpenIgInsights() {
-    setIgInsightsOpen(true);
-    if (igInsights !== null || igInsightsLoading) return;
-    setIgInsightsLoading(true);
-    setIgInsightsError(null);
-    try {
-      const res = await fetchClientInstagramBusinessInsightsAction(clientId);
-      if ("error" in res) setIgInsightsError(res.error);
-      else setIgInsights(res.insights);
-    } catch {
-      setIgInsightsError("Couldn't load insights. Please try again.");
-    } finally {
-      setIgInsightsLoading(false);
     }
   }
 
@@ -653,35 +603,6 @@ function PlatformCard({
           </p>
         )}
 
-        {/* LinkedIn employee-advocacy roster lives in a modal, not inline -
-            an unbounded seat list must never dictate this card's height. */}
-        {platform.id === "linkedin" && isConnected && (
-          <Button size="sm" variant="outline" className="w-full" onClick={() => setSeatsOpen(true)}>
-            <Icon name="Users" className="h-3.5 w-3.5" />
-            Manage employee seats
-            {linkedinSeats && linkedinSeats.length > 0 && ` (${linkedinSeats.length}/${seatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT})`}
-          </Button>
-        )}
-
-        {/* Business Manager accounts this connection can see (business_management) -
-            same modal-not-inline reasoning as the LinkedIn seats button above. */}
-        {platform.id === "instagram" && isConnected && (
-          <Button size="sm" variant="outline" className="w-full" onClick={handleOpenBusinessInfo}>
-            <Icon name="Building2" className="h-3.5 w-3.5" />
-            View business info
-          </Button>
-        )}
-
-        {/* instagram_business_manage_insights, via this card's own
-            Instagram-Login token (graph.instagram.com) - separate connection
-            from "instagram" above, same modal-not-inline reasoning. */}
-        {platform.id === "instagram_business" && isConnected && (
-          <Button size="sm" variant="outline" className="w-full" onClick={handleOpenIgInsights}>
-            <Icon name="TrendingUp" className="h-3.5 w-3.5" />
-            View insights
-          </Button>
-        )}
-
         {/* Admin-only: manual credentials toggle */}
         {isAdmin && (
           <button
@@ -769,14 +690,772 @@ function PlatformCard({
         </div>
       )}
 
-      {/* LinkedIn employee-advocacy multi-seat workspace — modal, not inline,
-          so an unbounded roster never resizes the card in the grid.
+    </div>
+  );
+}
 
-          Titled "Employee seats" and not "Company Employee Roster": this card is
-          on the client settings page AND inside the onboarding wizard, and the
-          button that opens it says "Manage employee seats" — a dialog must not
-          rename the thing its own trigger just named. */}
-      {platform.id === "linkedin" && isConnected && (
+/* ── Shared: one underlying OAuth connection's status + actions ────────
+ * Instagram and LinkedIn each merge TWO real, separately-connected
+ * ClientIntegration platforms into one card below (Instagram: `instagram` /
+ * `instagram_business`; LinkedIn: `linkedin` / `linkedin_community`) - see
+ * the two card components below for why. This is the connect/reconnect/
+ * disconnect/auto-publish/manual-credentials block PlatformCard renders
+ * once per card, factored out so it can be rendered once PER UNDERLYING
+ * PLATFORM inside a merged card instead of being written twice more.
+ */
+function SubConnection({
+  platform,
+  integration,
+  clientId,
+  isOAuthEnabled,
+  isConnecting,
+  isAdmin,
+  isClientViewer,
+  onOAuthConnect,
+  onDisconnected,
+  descriptor,
+  label,
+  connectLabel,
+}: {
+  platform: PlatformConfig;
+  integration: IntegrationView | undefined;
+  clientId: string;
+  isOAuthEnabled: boolean;
+  isConnecting: boolean;
+  isAdmin: boolean;
+  isClientViewer: boolean;
+  onOAuthConnect: () => void;
+  onDisconnected: () => void;
+  /** @clientCopy One line describing THIS specific connection (not the merged card's platform in general). */
+  descriptor: string;
+  /** @clientCopy Heading text for this row. Defaults to platform.name, which is not always specific enough once two rows share one card. */
+  label?: string;
+  /** @clientCopy Overrides "Connect with {name}" so the button can name the specific login product. */
+  connectLabel?: string;
+}) {
+  const isConnected = !!integration;
+  const pendingVerification = !isConnected && PENDING_VERIFICATION_PLATFORM_IDS.has(platform.id);
+  const comingSoon = !isConnected && !isOAuthEnabled && !pendingVerification;
+  const needsReconnect = isConnected && integrationNeedsReconnect(integration!);
+  const [autoPublish, setAutoPublish] = useState(integration?.autoPublish !== false);
+  const [togglingAuto, setTogglingAuto] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [accountName, setAccountName] = useState(integration?.accountName ?? "");
+  const [fields, setFields] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const f of platform.fields) {
+      init[f.key] = f.type === "password" ? "" : (integration?.credentials[f.key] ?? "");
+    }
+    return init;
+  });
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional re-sync when integration prop changes
+    setAccountName(integration?.accountName ?? "");
+    setAutoPublish(integration?.autoPublish !== false);
+    const next: Record<string, string> = {};
+    for (const f of platform.fields) {
+      next[f.key] = f.type === "password" ? "" : (integration?.credentials[f.key] ?? "");
+    }
+    setFields(next);
+  }, [integration, platform.fields]);
+
+  function setField(key: string, value: string) {
+    setFields((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function handleManualSave() {
+    const missing = platform.fields.filter(
+      (f) => f.required && !isConnected && !fields[f.key].trim(),
+    );
+    if (missing.length > 0) {
+      setFormError(`Required: ${missing.map((f) => f.label).join(", ")}`);
+      return;
+    }
+    setSaving(true);
+    setFormError(null);
+    try {
+      await saveIntegrationAction(clientId, platform.id, fields, accountName || undefined);
+      setAdvancedOpen(false);
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : "Save failed. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleAutoPublishToggle() {
+    const next = !autoPublish;
+    setAutoPublish(next);
+    setTogglingAuto(true);
+    setActionError(null);
+    try {
+      const res = await setIntegrationAutoPublishAction(clientId, platform.id, next);
+      if (res.error) {
+        setAutoPublish(!next);
+        setActionError(res.error);
+      }
+    } catch {
+      setAutoPublish(!next);
+      setActionError("Couldn't change auto-publish. Please try again.");
+    } finally {
+      setTogglingAuto(false);
+    }
+  }
+
+  async function handleDisconnect() {
+    setDisconnecting(true);
+    setActionError(null);
+    try {
+      const res = await deleteIntegrationAction(clientId, platform.id);
+      if (res.error) {
+        setActionError(res.error);
+        return;
+      }
+      setAdvancedOpen(false);
+      onDisconnected();
+    } catch {
+      setActionError("Couldn't disconnect this channel. Please try again.");
+    } finally {
+      setDisconnecting(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2.5 rounded-md border border-border/70 bg-foreground/[0.015] p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <PlatformMark id={platform.id} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+          <p className="truncate text-xs font-semibold text-foreground">{label ?? platform.name}</p>
+        </div>
+        {isConnected ? (
+          needsReconnect ? (
+            <Badge tone="warning">
+              <Icon name="TriangleAlert" className="h-3 w-3" />
+              Reconnect needed
+            </Badge>
+          ) : (
+            <Badge tone="neon">
+              <Icon name="CircleCheck" className="h-3 w-3" />
+              Connected
+            </Badge>
+          )
+        ) : pendingVerification ? (
+          <Badge tone="warning">
+            <Icon name="Clock" className="h-3 w-3" />
+            Pending verification
+          </Badge>
+        ) : comingSoon ? (
+          <Badge tone="neutral">
+            <Icon name="Clock" className="h-3 w-3" />
+            Coming soon
+          </Badge>
+        ) : (
+          <Badge tone="neutral">Not connected</Badge>
+        )}
+      </div>
+
+      {isConnected && integration?.accountName ? (
+        <p className="truncate text-[11px] text-muted">{integration.accountName}</p>
+      ) : (
+        <p className="text-[11px] text-muted-2">{descriptor}</p>
+      )}
+
+      {!isConnected && !pendingVerification && !comingSoon && (
+        <BrandedConnectButton
+          platform={connectLabel ? { ...platform, name: connectLabel } : platform}
+          loading={isConnecting}
+          onClick={onOAuthConnect}
+        />
+      )}
+
+      {pendingVerification && (
+        <p className="rounded-md border border-warning/25 bg-warning/10 px-3 py-2 text-[11px] leading-relaxed text-warning">
+          {platform.name} is reviewing our developer account. Connecting is not available yet.
+        </p>
+      )}
+
+      {comingSoon && (
+        <>
+          <button
+            disabled
+            className="flex w-full items-center justify-center gap-2 rounded-md border border-border bg-foreground/[0.03] px-3 py-2 text-xs font-semibold text-muted-2 opacity-70"
+          >
+            <Icon name="Clock" className="h-3.5 w-3.5" />
+            Coming soon
+          </button>
+          <p className="text-[11px] text-muted-2">
+            {isAdmin
+              ? "OAuth env vars not set for this connection. Add them to enable Connect."
+              : "This connection isn't set up yet. Ask your Karos team to finish setting it up."}
+          </p>
+        </>
+      )}
+
+      {isConnected && !READ_ONLY_PLATFORM_IDS.has(platform.id) && (
+        <button
+          onClick={handleAutoPublishToggle}
+          disabled={togglingAuto}
+          className="flex w-full items-center justify-between gap-2 rounded-md border border-border bg-foreground/[0.03] px-2.5 py-1.5 transition-colors hover:border-border-strong disabled:opacity-60"
+          title={
+            autoPublish
+              ? "Scheduled content posts automatically at its slot"
+              : isClientViewer
+                ? "Auto-posting is off. Scheduled content waits on your calendar for you to post it yourself, then mark it as posted"
+                : "Auto-posting is off. Scheduled content waits on the calendar until someone opens it and presses Publish Now"
+          }
+        >
+          <span className="flex items-center gap-1.5 text-[11px] text-muted">
+            <Icon name="Zap" className="h-3.5 w-3.5" />
+            Auto-publish scheduled content
+          </span>
+          <span
+            className={cn(
+              "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors",
+              autoPublish ? "bg-neon/80" : "bg-foreground/15",
+            )}
+            aria-checked={autoPublish}
+            role="switch"
+          >
+            <span
+              className={cn(
+                "inline-block h-3 w-3 transform rounded-full bg-surface transition-transform",
+                autoPublish ? "translate-x-3.5" : "translate-x-0.5",
+              )}
+            />
+          </span>
+        </button>
+      )}
+
+      {isConnected && (
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={onOAuthConnect} loading={isConnecting} className="flex-1">
+            <Icon name="RefreshCw" className="h-3.5 w-3.5" />
+            Reconnect
+          </Button>
+          {!isClientViewer && (
+            <Button size="sm" variant="danger" onClick={handleDisconnect} loading={disconnecting}>
+              <Icon name="Unplug" className="h-3.5 w-3.5" />
+              Disconnect
+            </Button>
+          )}
+        </div>
+      )}
+
+      {actionError && (
+        <p className="rounded-md border border-danger/30 bg-danger/10 px-2.5 py-2 text-[11px] text-danger">
+          {actionError}
+        </p>
+      )}
+
+      {isAdmin && (
+        <button
+          onClick={() => setAdvancedOpen((o) => !o)}
+          className="flex w-full items-center gap-1.5 text-[10px] text-muted-2 hover:text-muted transition-colors"
+        >
+          <Icon
+            name="ChevronDown"
+            className={cn("h-3 w-3 transition-transform duration-200", advancedOpen && "rotate-180")}
+          />
+          {isConnected ? "Edit credentials" : "Manual setup"}
+        </button>
+      )}
+
+      {isAdmin && (
+        <div
+          className={cn(
+            "grid transition-[grid-template-rows] duration-300 ease-in-out",
+            advancedOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+          )}
+        >
+          <div className="overflow-hidden">
+            <div className="space-y-2.5 border-t border-border pt-3">
+              <div>
+                <Label>Display name / handle <span className="text-muted-2">(optional)</span></Label>
+                <Input
+                  value={accountName}
+                  onChange={(e) => setAccountName(e.target.value)}
+                  placeholder="@yourbrand"
+                />
+              </div>
+              {platform.fields.map((f) => (
+                <div key={f.key}>
+                  <Label>
+                    {f.label}
+                    {f.required && <span className="ml-1 text-danger">*</span>}
+                  </Label>
+                  <Input
+                    type={f.type}
+                    value={fields[f.key] ?? ""}
+                    onChange={(e) => setField(f.key, e.target.value)}
+                    placeholder={
+                      f.type === "password" && integration?.secretsSet.includes(f.key)
+                        ? "Leave blank to keep existing"
+                        : f.placeholder
+                    }
+                    autoComplete="off"
+                  />
+                  {f.hint && <p className="mt-1 text-[11px] text-muted-2">{f.hint}</p>}
+                </div>
+              ))}
+              {formError && (
+                <p className="rounded-md border border-danger/30 bg-danger/10 px-2.5 py-2 text-xs text-danger">
+                  {formError}
+                </p>
+              )}
+              <div className="flex gap-2 pt-1">
+                <Button size="sm" onClick={handleManualSave} loading={saving}>
+                  <Icon name="Save" className="h-3.5 w-3.5" />
+                  {isConnected ? "Update" : "Save"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => { setAdvancedOpen(false); setFormError(null); }}
+                  disabled={saving}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Instagram — one card, two OAuth connections ────────────────────────
+ * `instagram` (Facebook Login: requires the client's Instagram professional
+ * account to be linked to a Facebook Page) and `instagram_business`
+ * ("Instagram API with Instagram Login": no Facebook Page needed) are two
+ * separate, independently-connectable ClientIntegration platforms and stay
+ * that way (oauth.ts, instagram-business-graph.ts and publishers.ts are
+ * unchanged) - this only merges how the TWO cards they used to be present.
+ *
+ * BOTH CAN PUBLISH. `instagram_business` gained its own publish path
+ * (`publishToInstagramBusiness`, publishers.ts) on 2026-09-20 - the day
+ * before this merge - and is now in fact the ONLY Instagram target the
+ * auto-publish cron can infer (`PUBLISHABLE_PLATFORMS.instagram_post`) and
+ * the channel a fresh image upload books by default (media-kinds.ts). A
+ * card that told a client this connection was "insights only" would be
+ * wrong, not merely out of date - so this card states what each connection
+ * can actually do rather than carrying that framing over.
+ *
+ * `instagram_business` is offered FIRST because it is the one every
+ * Instagram account can use; the Facebook-Login option is revealed by the
+ * link below it (or automatically, for a client who already has it
+ * connected) rather than requiring a client to know up front which one
+ * their account needs.
+ */
+const INSTAGRAM_BUSINESS_DESCRIPTOR =
+  "Works without a linked Facebook Page. Publishes posts and Reels, and reads account insights (reach, profile views).";
+const INSTAGRAM_FACEBOOK_DESCRIPTOR =
+  "Requires your Instagram professional account to be linked to a Facebook Page. Publishes posts and Reels, and shows which Business Manager accounts this connection can see.";
+
+function InstagramUnifiedCard({
+  clientId,
+  integrations,
+  oauthEnabledPlatforms,
+  connectingPlatform,
+  isAdmin,
+  isClientViewer,
+  onOAuthConnect,
+  onDisconnected,
+}: {
+  clientId: string;
+  integrations: IntegrationView[];
+  oauthEnabledPlatforms: string[];
+  connectingPlatform: string | null;
+  isAdmin: boolean;
+  isClientViewer: boolean;
+  onOAuthConnect: (provider: string) => void;
+  onDisconnected: () => void;
+}) {
+  const igBusiness = integrations.find((i) => i.platform === "instagram_business");
+  const igFacebook = integrations.find((i) => i.platform === "instagram");
+  const businessPlatform = PLATFORM_REGISTRY.find((p) => p.id === "instagram_business")!;
+  const facebookPlatform = PLATFORM_REGISTRY.find((p) => p.id === "instagram")!;
+
+  const businessLive = !!igBusiness && integrationIsUsable(igBusiness);
+  const facebookLive = !!igFacebook && integrationIsUsable(igFacebook);
+  const anyLive = businessLive || facebookLive;
+  const anyConnected = !!igBusiness || !!igFacebook;
+  const anyNeedsReconnect = anyConnected && !anyLive;
+
+  // The Facebook-Login option stays folded away until a client already has it
+  // connected, or asks for it - offering two Connect buttons up front is the
+  // exact "which one do I press" confusion this merge exists to remove.
+  const [showFacebookOption, setShowFacebookOption] = useState(!!igFacebook);
+
+  const [businessInfoOpen, setBusinessInfoOpen] = useState(false);
+  const [businessInfoLoading, setBusinessInfoLoading] = useState(false);
+  const [businessInfoError, setBusinessInfoError] = useState<string | null>(null);
+  const [businessAccounts, setBusinessAccounts] = useState<MetaBusinessAccount[] | null>(null);
+
+  async function handleOpenBusinessInfo() {
+    setBusinessInfoOpen(true);
+    if (businessAccounts !== null || businessInfoLoading) return;
+    setBusinessInfoLoading(true);
+    setBusinessInfoError(null);
+    try {
+      const res = await fetchClientBusinessInfoAction(clientId);
+      if ("error" in res) setBusinessInfoError(res.error);
+      else setBusinessAccounts(res.accounts);
+    } catch {
+      setBusinessInfoError("Couldn't load business info. Please try again.");
+    } finally {
+      setBusinessInfoLoading(false);
+    }
+  }
+
+  const [igInsightsOpen, setIgInsightsOpen] = useState(false);
+  const [igInsightsLoading, setIgInsightsLoading] = useState(false);
+  const [igInsightsError, setIgInsightsError] = useState<string | null>(null);
+  const [igInsights, setIgInsights] = useState<InstagramBusinessAccountInsights | null>(null);
+
+  async function handleOpenIgInsights() {
+    setIgInsightsOpen(true);
+    if (igInsights !== null || igInsightsLoading) return;
+    setIgInsightsLoading(true);
+    setIgInsightsError(null);
+    try {
+      const res = await fetchClientInstagramBusinessInsightsAction(clientId);
+      if ("error" in res) setIgInsightsError(res.error);
+      else setIgInsights(res.insights);
+    } catch {
+      setIgInsightsError("Couldn't load insights. Please try again.");
+    } finally {
+      setIgInsightsLoading(false);
+    }
+  }
+
+  return (
+    <div
+      className={cn(
+        "overflow-hidden rounded-[var(--radius)] border flex h-full flex-col transition-colors",
+        anyLive && !anyNeedsReconnect ? "border-success/30 shadow-lg shadow-success/10" : "border-border",
+      )}
+      style={{ background: "var(--surface)" }}
+    >
+      <div className="flex items-start gap-3 p-4">
+        <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+          <PlatformMark id="instagram" className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="font-semibold leading-none">Instagram</p>
+          <div className="flex flex-wrap items-center gap-2">
+            {anyLive ? (
+              <Badge tone="neon">
+                <Icon name="CircleCheck" className="h-3 w-3" />
+                Connected
+              </Badge>
+            ) : anyNeedsReconnect ? (
+              <Badge tone="warning">
+                <Icon name="TriangleAlert" className="h-3 w-3" />
+                Reconnect needed
+              </Badge>
+            ) : (
+              <Badge tone="neutral">Not connected</Badge>
+            )}
+          </div>
+          <p className="truncate text-xs text-muted-2">
+            Publish posts and Reels, and read account performance.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-auto px-4 pb-4 space-y-2.5">
+        <SubConnection
+          platform={businessPlatform}
+          integration={igBusiness}
+          clientId={clientId}
+          isOAuthEnabled={oauthEnabledPlatforms.includes("instagram_business")}
+          isConnecting={connectingPlatform === "instagram_business"}
+          isAdmin={isAdmin}
+          isClientViewer={isClientViewer}
+          onOAuthConnect={() => onOAuthConnect("instagram_business")}
+          onDisconnected={onDisconnected}
+          descriptor={INSTAGRAM_BUSINESS_DESCRIPTOR}
+          label="Direct login (no Facebook Page needed)"
+          connectLabel="Instagram"
+        />
+
+        {igBusiness && (
+          <Button size="sm" variant="outline" className="w-full" onClick={handleOpenIgInsights}>
+            <Icon name="TrendingUp" className="h-3.5 w-3.5" />
+            View insights
+          </Button>
+        )}
+
+        {!showFacebookOption ? (
+          <button
+            type="button"
+            onClick={() => setShowFacebookOption(true)}
+            className="flex w-full items-center gap-1.5 text-[11px] text-muted-2 transition-colors hover:text-foreground"
+          >
+            <Icon name="Plus" className="h-3 w-3" />
+            Have a Facebook Page linked to Instagram? Connect via Facebook Login instead
+          </button>
+        ) : (
+          <SubConnection
+            platform={facebookPlatform}
+            integration={igFacebook}
+            clientId={clientId}
+            isOAuthEnabled={oauthEnabledPlatforms.includes("instagram")}
+            isConnecting={connectingPlatform === "instagram"}
+            isAdmin={isAdmin}
+            isClientViewer={isClientViewer}
+            onOAuthConnect={() => onOAuthConnect("instagram")}
+            onDisconnected={onDisconnected}
+            descriptor={INSTAGRAM_FACEBOOK_DESCRIPTOR}
+            label="Facebook Login"
+          />
+        )}
+
+        {igFacebook && (
+          <Button size="sm" variant="outline" className="w-full" onClick={handleOpenBusinessInfo}>
+            <Icon name="Building2" className="h-3.5 w-3.5" />
+            View business info
+          </Button>
+        )}
+      </div>
+
+      <Modal
+        open={businessInfoOpen}
+        onClose={() => setBusinessInfoOpen(false)}
+        title="Business info"
+        description="Business Manager accounts your connected Instagram login has access to."
+        className="max-w-md"
+      >
+        <div className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-2">
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+            <PlatformMark id="instagram" className="h-3.5 w-3.5" />
+          </div>
+          Instagram
+        </div>
+        {businessInfoLoading && (
+          <p className="flex items-center gap-2 py-4 text-sm text-muted">
+            <Icon name="Loader" className="h-4 w-4 animate-spin" />
+            Loading...
+          </p>
+        )}
+        {!businessInfoLoading && businessInfoError && (
+          <p className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+            {businessInfoError}
+          </p>
+        )}
+        {!businessInfoLoading && !businessInfoError && businessAccounts && businessAccounts.length === 0 && (
+          <p className="py-4 text-sm text-muted-2">
+            No Business Manager accounts found for this connection.
+          </p>
+        )}
+        {!businessInfoLoading && !businessInfoError && businessAccounts && businessAccounts.length > 0 && (
+          <ul className="space-y-2">
+            {businessAccounts.map((b) => (
+              <li key={b.id} className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2.5">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+                  <Icon name="Building2" className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium leading-none">{b.name}</p>
+                  <p className="mt-1 truncate text-[11px] text-muted-2">{b.id}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Modal>
+
+      <Modal
+        open={igInsightsOpen}
+        onClose={() => setIgInsightsOpen(false)}
+        title="Account insights"
+        description="Reach and profile views for the connected Instagram account, last full day."
+        className="max-w-md"
+      >
+        <div className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-2">
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+            <PlatformMark id="instagram_business" className="h-3.5 w-3.5" />
+          </div>
+          Instagram
+        </div>
+        {igInsightsLoading && (
+          <p className="flex items-center gap-2 py-4 text-sm text-muted">
+            <Icon name="Loader" className="h-4 w-4 animate-spin" />
+            Loading...
+          </p>
+        )}
+        {!igInsightsLoading && igInsightsError && (
+          <p className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+            {igInsightsError}
+          </p>
+        )}
+        {!igInsightsLoading && !igInsightsError && igInsights && (
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-md border border-border px-3 py-2.5">
+              <p className="text-[11px] text-muted-2">Reach</p>
+              <p className="text-lg font-semibold leading-tight">{igInsights.reach ?? "-"}</p>
+            </div>
+            <div className="rounded-md border border-border px-3 py-2.5">
+              <p className="text-[11px] text-muted-2">Profile views</p>
+              <p className="text-lg font-semibold leading-tight">{igInsights.profileViews ?? "-"}</p>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+/* ── LinkedIn — one card, two OAuth connections ─────────────────────────
+ * `linkedin` (Sign In + Share, publish-capable, also backs employee-
+ * advocacy seats) and `linkedin_community` (LinkedIn's Community Management
+ * API - company-page follower/demographics/post-performance reads) stay two
+ * separate ClientIntegration platforms: LinkedIn requires the Community
+ * Management product on a SEPARATE developer app from Sign In/Share
+ * (oauth.ts), so there is no way to fold them into one OAuth flow. Unlike
+ * Instagram's either/or choice, these are ADDITIVE - a client can have both
+ * connected at once, since one publishes and the other only reads company
+ * analytics (`fetchLinkedInOrgFollowers`, wired into the daily follower-sync
+ * cron at src/app/api/followers/sync/route.ts).
+ */
+const LINKEDIN_DESCRIPTOR =
+  "Sign In + Share on LinkedIn. Publish as yourself or your company page, and back employee-advocacy seats.";
+const LINKEDIN_COMMUNITY_DESCRIPTOR =
+  "Read-only. LinkedIn requires this as a separate connection from posting: company-page follower counts, demographics, and post performance.";
+
+function LinkedInUnifiedCard({
+  clientId,
+  integrations,
+  oauthEnabledPlatforms,
+  connectingPlatform,
+  isAdmin,
+  isClientViewer,
+  onOAuthConnect,
+  onDisconnected,
+  linkedinSeats,
+  seatLimit,
+  seatCost,
+}: {
+  clientId: string;
+  integrations: IntegrationView[];
+  oauthEnabledPlatforms: string[];
+  connectingPlatform: string | null;
+  isAdmin: boolean;
+  isClientViewer: boolean;
+  onOAuthConnect: (provider: string) => void;
+  onDisconnected: () => void;
+  linkedinSeats?: SeatView[];
+  seatLimit?: number;
+  seatCost?: number;
+}) {
+  const li = integrations.find((i) => i.platform === "linkedin");
+  const liCommunity = integrations.find((i) => i.platform === "linkedin_community");
+  const liPlatform = PLATFORM_REGISTRY.find((p) => p.id === "linkedin")!;
+  const communityPlatform = PLATFORM_REGISTRY.find((p) => p.id === "linkedin_community")!;
+
+  const liLive = !!li && integrationIsUsable(li);
+  const communityLive = !!liCommunity && integrationIsUsable(liCommunity);
+  const anyLive = liLive || communityLive;
+  const anyConnected = !!li || !!liCommunity;
+  const anyNeedsReconnect = anyConnected && !anyLive;
+
+  const [seatsOpen, setSeatsOpen] = useState(false);
+  // Additive, unlike Instagram's either/or: still folded away until connected
+  // or asked for, so the primary Sign In + Share button is not competing with
+  // a second Connect button on first look.
+  const [showCommunityOption, setShowCommunityOption] = useState(!!liCommunity);
+
+  return (
+    <div
+      className={cn(
+        "overflow-hidden rounded-[var(--radius)] border flex h-full flex-col transition-colors",
+        anyLive && !anyNeedsReconnect ? "border-success/30 shadow-lg shadow-success/10" : "border-border",
+      )}
+      style={{ background: "var(--surface)" }}
+    >
+      <div className="flex items-start gap-3 p-4">
+        <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+          <PlatformMark id="linkedin" className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="font-semibold leading-none">LinkedIn</p>
+          <div className="flex flex-wrap items-center gap-2">
+            {anyLive ? (
+              <Badge tone="neon">
+                <Icon name="CircleCheck" className="h-3 w-3" />
+                Connected
+              </Badge>
+            ) : anyNeedsReconnect ? (
+              <Badge tone="warning">
+                <Icon name="TriangleAlert" className="h-3 w-3" />
+                Reconnect needed
+              </Badge>
+            ) : (
+              <Badge tone="neutral">Not connected</Badge>
+            )}
+          </div>
+          <p className="truncate text-xs text-muted-2">
+            Share posts, and optionally read company-page analytics.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-auto px-4 pb-4 space-y-2.5">
+        <SubConnection
+          platform={liPlatform}
+          integration={li}
+          clientId={clientId}
+          isOAuthEnabled={oauthEnabledPlatforms.includes("linkedin")}
+          isConnecting={connectingPlatform === "linkedin"}
+          isAdmin={isAdmin}
+          isClientViewer={isClientViewer}
+          onOAuthConnect={() => onOAuthConnect("linkedin")}
+          onDisconnected={onDisconnected}
+          descriptor={LINKEDIN_DESCRIPTOR}
+          label="Sign In + Share"
+        />
+
+        {li && (
+          <Button size="sm" variant="outline" className="w-full" onClick={() => setSeatsOpen(true)}>
+            <Icon name="Users" className="h-3.5 w-3.5" />
+            Manage employee seats
+            {linkedinSeats && linkedinSeats.length > 0 && ` (${linkedinSeats.length}/${seatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT})`}
+          </Button>
+        )}
+
+        {!showCommunityOption ? (
+          <button
+            type="button"
+            onClick={() => setShowCommunityOption(true)}
+            className="flex w-full items-center gap-1.5 text-[11px] text-muted-2 transition-colors hover:text-foreground"
+          >
+            <Icon name="Plus" className="h-3 w-3" />
+            Also connect for company page analytics (followers, demographics, post performance)
+          </button>
+        ) : (
+          <SubConnection
+            platform={communityPlatform}
+            integration={liCommunity}
+            clientId={clientId}
+            isOAuthEnabled={oauthEnabledPlatforms.includes("linkedin_community")}
+            isConnecting={connectingPlatform === "linkedin_community"}
+            isAdmin={isAdmin}
+            isClientViewer={isClientViewer}
+            onOAuthConnect={() => onOAuthConnect("linkedin_community")}
+            onDisconnected={onDisconnected}
+            descriptor={LINKEDIN_COMMUNITY_DESCRIPTOR}
+            label="Company page analytics"
+          />
+        )}
+      </div>
+
+      {li && (
         <Modal
           open={seatsOpen}
           onClose={() => setSeatsOpen(false)}
@@ -790,104 +1469,6 @@ function PlatformCard({
             seatLimit={seatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT}
             seatCost={seatCost ?? CREDIT_COSTS.employeeSeat}
           />
-        </Modal>
-      )}
-
-      {/* Business info modal - read-only, same card-height reasoning as the
-          LinkedIn seats modal above. Reuses the card's own Instagram mark in
-          the header rather than a generic icon, so it reads as part of this
-          connection and not a separate, unbranded feature. */}
-      {platform.id === "instagram" && isConnected && (
-        <Modal
-          open={businessInfoOpen}
-          onClose={() => setBusinessInfoOpen(false)}
-          title="Business info"
-          description="Business Manager accounts your connected Instagram login has access to."
-          className="max-w-md"
-        >
-          <div className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-2">
-            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
-              <PlatformMark id="instagram" className="h-3.5 w-3.5" />
-            </div>
-            Instagram
-          </div>
-          {businessInfoLoading && (
-            <p className="flex items-center gap-2 py-4 text-sm text-muted">
-              <Icon name="Loader" className="h-4 w-4 animate-spin" />
-              Loading...
-            </p>
-          )}
-          {!businessInfoLoading && businessInfoError && (
-            <p className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
-              {businessInfoError}
-            </p>
-          )}
-          {!businessInfoLoading && !businessInfoError && businessAccounts && businessAccounts.length === 0 && (
-            <p className="py-4 text-sm text-muted-2">
-              No Business Manager accounts found for this connection.
-            </p>
-          )}
-          {!businessInfoLoading && !businessInfoError && businessAccounts && businessAccounts.length > 0 && (
-            <ul className="space-y-2">
-              {businessAccounts.map((b) => (
-                <li
-                  key={b.id}
-                  className="flex items-center gap-2.5 rounded-md border border-border px-3 py-2.5"
-                >
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
-                    <Icon name="Building2" className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium leading-none">{b.name}</p>
-                    <p className="mt-1 truncate text-[11px] text-muted-2">{b.id}</p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Modal>
-      )}
-
-      {/* Insights modal for the Instagram-Login connection - reuses the same
-          Instagram mark as the business-info modal above: same brand, second
-          login product, no separate unbranded icon. */}
-      {platform.id === "instagram_business" && isConnected && (
-        <Modal
-          open={igInsightsOpen}
-          onClose={() => setIgInsightsOpen(false)}
-          title="Account insights"
-          description="Reach and profile views for the connected Instagram account, last full day."
-          className="max-w-md"
-        >
-          <div className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-2">
-            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
-              <PlatformMark id="instagram_business" className="h-3.5 w-3.5" />
-            </div>
-            Instagram
-          </div>
-          {igInsightsLoading && (
-            <p className="flex items-center gap-2 py-4 text-sm text-muted">
-              <Icon name="Loader" className="h-4 w-4 animate-spin" />
-              Loading...
-            </p>
-          )}
-          {!igInsightsLoading && igInsightsError && (
-            <p className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
-              {igInsightsError}
-            </p>
-          )}
-          {!igInsightsLoading && !igInsightsError && igInsights && (
-            <div className="grid grid-cols-2 gap-2">
-              <div className="rounded-md border border-border px-3 py-2.5">
-                <p className="text-[11px] text-muted-2">Reach</p>
-                <p className="text-lg font-semibold leading-tight">{igInsights.reach ?? "-"}</p>
-              </div>
-              <div className="rounded-md border border-border px-3 py-2.5">
-                <p className="text-[11px] text-muted-2">Profile views</p>
-                <p className="text-lg font-semibold leading-tight">{igInsights.profileViews ?? "-"}</p>
-              </div>
-            </div>
-          )}
         </Modal>
       )}
     </div>
@@ -974,9 +1555,7 @@ function AgentAutoPublishSection({
   integrations: IntegrationView[];
 }) {
   // Same "nothing to publish here" exclusion as the per-card toggle
-  // (READ_ONLY_PLATFORM_IDS) — Reddit is in that set, which is also how this
-  // list stays consistent with the hard product rule that Reddit never gets
-  // a posting path: it can never appear here to be checked.
+  // (READ_ONLY_PLATFORM_IDS).
   const connected = PLATFORM_REGISTRY.filter(
     (p) => !READ_ONLY_PLATFORM_IDS.has(p.id) && integrations.some((i) => i.platform === p.id),
   );
@@ -1046,23 +1625,48 @@ export function IntegrationsTab({
    */
   const oauthReportedRef = useRef<Record<string, boolean>>({});
 
+  // Instagram (`instagram` / `instagram_business`) and LinkedIn (`linkedin` /
+  // `linkedin_community`) each render as ONE merged card (InstagramUnifiedCard /
+  // LinkedInUnifiedCard, below) covering two real ClientIntegration platforms,
+  // so they're pulled out of the generic per-platform grid entirely — same
+  // pattern the removed GoogleUnifiedCard used for its three Google services.
+  const instagramMergedIds = new Set<string>(["instagram", "instagram_business"]);
+  const linkedinMergedIds = new Set<string>(["linkedin", "linkedin_community"]);
+  const mergedCardIds = new Set<string>([...instagramMergedIds, ...linkedinMergedIds]);
+
   // A `hidden` platform (see PlatformConfig.hidden) stays off the grid unless
   // this client already has an integration document for it — retired from new
   // connections, but a client already connected through it can still see and
   // manage that card.
   const standalonePlatforms = PLATFORM_REGISTRY.filter(
-    (p) => !p.hidden || integrations.some((i) => i.platform === p.id),
+    (p) => !mergedCardIds.has(p.id) && (!p.hidden || integrations.some((i) => i.platform === p.id)),
   );
+
+  /** "live" if ANY of the merged card's underlying platforms is usable, same rule the merged cards use for their own badge. */
+  function mergedCardStatus(ids: Set<string>): "live" | "needs-reconnect" | "absent" {
+    const matches = integrations.filter((i) => ids.has(i.platform));
+    if (matches.length === 0) return "absent";
+    return matches.some((i) => integrationIsUsable(i)) ? "live" : "needs-reconnect";
+  }
+  const instagramCardStatus = mergedCardStatus(instagramMergedIds);
+  const linkedinCardStatus = mergedCardStatus(linkedinMergedIds);
+
   // The badge used to count any integration DOC as connected, with no status
   // check, so an expired channel was tallied as working - the count and the
   // card contradicted each other. "Connected" now means usable; anything
   // needing a reconnect is reported separately rather than being quietly
-  // folded into a green number.
-  const connectedCount = standalonePlatforms.filter((p) => platformStatus(p) === "live").length;
-  const needsReconnectCount = standalonePlatforms.filter(
-    (p) => platformStatus(p) === "needs-reconnect",
-  ).length;
-  const totalCardCount = standalonePlatforms.length;
+  // folded into a green number. The two merged cards count as ONE slot each
+  // here too - otherwise this stat would disagree with what's visually on
+  // screen.
+  const connectedCount =
+    standalonePlatforms.filter((p) => platformStatus(p) === "live").length +
+    (instagramCardStatus === "live" ? 1 : 0) +
+    (linkedinCardStatus === "live" ? 1 : 0);
+  const needsReconnectCount =
+    standalonePlatforms.filter((p) => platformStatus(p) === "needs-reconnect").length +
+    (instagramCardStatus === "needs-reconnect" ? 1 : 0) +
+    (linkedinCardStatus === "needs-reconnect" ? 1 : 0);
+  const totalCardCount = standalonePlatforms.length + 2;
 
   // Two sections, driven by each platform's registry `category` - a new
   // platform lands in the right section just by declaring one, no UI changes.
@@ -1183,7 +1787,6 @@ export function IntegrationsTab({
         isClientViewer={isClientViewer}
         onOAuthConnect={() => openOAuthPopup(platform.id)}
         onDisconnected={() => router.refresh()}
-        {...(platform.id === "linkedin" ? { linkedinSeats, seatLimit, seatCost } : {})}
       />
     );
   }
@@ -1237,6 +1840,39 @@ export function IntegrationsTab({
         statusOf={platformStatus}
         tagOf={platformTag}
         renderCard={renderPlatformCard}
+        leadingCards={
+          // Instagram and LinkedIn each cover two real connections and carry
+          // their own internal connected/not state, so - like the removed
+          // GoogleUnifiedCard before them - they always render in full rather
+          // than partitioning with the standalone platforms.
+          <>
+            <InstagramUnifiedCard
+              key="instagram_unified"
+              clientId={clientId}
+              integrations={integrations}
+              oauthEnabledPlatforms={oauthEnabledPlatforms}
+              connectingPlatform={connectingPlatform}
+              isAdmin={isAdmin}
+              isClientViewer={isClientViewer}
+              onOAuthConnect={openOAuthPopup}
+              onDisconnected={() => router.refresh()}
+            />
+            <LinkedInUnifiedCard
+              key="linkedin_unified"
+              clientId={clientId}
+              integrations={integrations}
+              oauthEnabledPlatforms={oauthEnabledPlatforms}
+              connectingPlatform={connectingPlatform}
+              isAdmin={isAdmin}
+              isClientViewer={isClientViewer}
+              onOAuthConnect={openOAuthPopup}
+              onDisconnected={() => router.refresh()}
+              linkedinSeats={linkedinSeats}
+              seatLimit={seatLimit}
+              seatCost={seatCost}
+            />
+          </>
+        }
       />
 
       {/* Analytics & Performance Intelligence — read-only sources. */}

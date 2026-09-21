@@ -85,7 +85,15 @@ const PLATFORM_BRAND: Record<SocialPlatform, { fill?: string; knockout?: ReactNo
   tiktok: {},
   instagram: { fill: brandFill("instagram") },
   linkedin: { fill: brandFill("linkedin"), knockout: <rect x="2" y="2" width="20" height="20" fill="#fff" /> },
-  reddit: { fill: brandFill("reddit"), knockout: <circle cx="12" cy="12" r="10.5" fill="#fff" /> },
+  // Hardcoded, not `brandFill("reddit")`: the "connect Reddit" OAuth integration
+  // (and its PLATFORM_REGISTRY entry) was removed 2026-09-21 — it had no reader
+  // anywhere in this repo — but the Reddit content-drafting AGENT is a wholly
+  // separate, still-live feature that never went through that connector, and
+  // Albert's "always have the agents be of their color" rule still applies to
+  // it everywhere its mark is drawn (roster rows, run cards, the drafts review
+  // page). Losing the colour here would be silent collateral damage from a
+  // registry entry that agent never depended on functionally.
+  reddit: { fill: "#FF4500", knockout: <circle cx="12" cy="12" r="10.5" fill="#fff" /> },
   // Not a channel any more (the registry dropped it), so it draws in the ink.
   facebook: {},
   youtube: { fill: brandFill("youtube"), knockout: <rect x="8.5" y="7.5" width="8" height="9" fill="#fff" /> },

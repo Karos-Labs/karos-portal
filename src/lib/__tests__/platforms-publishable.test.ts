@@ -1,10 +1,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  PUBLISHABLE_PLATFORMS,
-  READ_ONLY_PLATFORM_IDS,
-} from "@/lib/integrations/platforms";
+import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { guessAssetType } from "@/lib/lab-outputs-shared";
 import {
   DRAFT_ONLY_ASSET_TYPE,
@@ -36,12 +33,6 @@ describe("Reddit stays unpublishable", () => {
     for (const [assetType, targets] of Object.entries(PUBLISHABLE_PLATFORMS)) {
       expect(targets, `${assetType} must not publish to reddit`).not.toContain("reddit");
     }
-  });
-
-  it("is registered as a read-only integration", () => {
-    // The Reddit connector exists for account health and own-history reads
-    // (karma, age, removal rate). There is deliberately no publisher.
-    expect(READ_ONLY_PLATFORM_IDS.has("reddit")).toBe(true);
   });
 
   it("maps a Reddit lab folder to an asset type with no publish targets", () => {

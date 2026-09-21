@@ -93,7 +93,6 @@ type RefreshPolicy =
 const POLICIES: Record<string, RefreshPolicy> = {
   twitter: { kind: "refresh-token", defaultLifetimeMs: 2 * HOUR_MS },
   tiktok: { kind: "refresh-token", defaultLifetimeMs: DAY_MS },
-  reddit: { kind: "refresh-token", defaultLifetimeMs: HOUR_MS },
   youtube: { kind: "refresh-token", defaultLifetimeMs: HOUR_MS },
   facebook: { kind: "long-lived-exchange", defaultLifetimeMs: 60 * DAY_MS },
   instagram: { kind: "long-lived-exchange", defaultLifetimeMs: 60 * DAY_MS },
@@ -103,9 +102,6 @@ const POLICIES: Record<string, RefreshPolicy> = {
   linkedin: { kind: "unsupported" },
   linkedin_community: { kind: "unsupported" },
 };
-
-/** Same descriptive User-Agent the callback sends — Reddit rejects generic ones. */
-const REDDIT_USER_AGENT = "karoscmo:agent-connectors:v1 (by /u/karoslabs)";
 
 const TOKEN_ENDPOINT_TIMEOUT_MS = 15_000;
 
@@ -380,11 +376,10 @@ export async function refreshIntegrationCredentials(
 
   const headers: Record<string, string> = { "Content-Type": "application/x-www-form-urlencoded" };
   const body = new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken });
-  if (platform === "twitter" || platform === "reddit") {
+  if (platform === "twitter") {
     // Confidential client: app credentials travel as HTTP Basic, exactly as in
-    // the callback's authorization_code exchange for these two.
+    // the callback's authorization_code exchange.
     headers.Authorization = `Basic ${Buffer.from(`${appClientId}:${appClientSecret}`).toString("base64")}`;
-    if (platform === "reddit") headers["User-Agent"] = REDDIT_USER_AGENT;
   } else if (platform === "tiktok") {
     body.set("client_key", appClientId);
     body.set("client_secret", appClientSecret);

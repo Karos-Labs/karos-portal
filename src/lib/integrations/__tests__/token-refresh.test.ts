@@ -7,11 +7,11 @@ import { INSTAGRAM_BUSINESS_REFRESH_URL } from "@/lib/integrations/meta-graph";
  *
  * The defect these cover is not "the refresh call is malformed": it is that
  * there was NO refresh call. A refresh token was captured at the callback and
- * never spent, so an X connection (2 h), a Google one (~1 h) or a Reddit one
- * (1 h) was live for a single cron tick and then told the client to reconnect.
+ * never spent, so an X connection (2 h) or a Google one (~1 h) was live for a
+ * single cron tick and then told the client to reconnect.
  *
  * So the assertions are about the wire and the clock: WHICH request each
- * provider gets (X and Reddit authenticate the app with HTTP Basic, TikTok
+ * provider gets (X authenticates the app with HTTP Basic, TikTok
  * calls its client id `client_key`, Meta re-exchanges a still-valid long-lived
  * token over GET), WHETHER the rotated refresh token is carried back out (X and
  * TikTok rotate; using the old one again is an instant `invalid_grant`), and
@@ -108,8 +108,6 @@ beforeEach(() => {
   vi.stubEnv("TIKTOK_CLIENT_SECRET", "tt-secret");
   vi.stubEnv("GOOGLE_CLIENT_ID", "g-app-id");
   vi.stubEnv("GOOGLE_CLIENT_SECRET", "g-app-secret");
-  vi.stubEnv("REDDIT_CLIENT_ID", "r-app-id");
-  vi.stubEnv("REDDIT_CLIENT_SECRET", "r-app-secret");
   vi.stubEnv("FACEBOOK_APP_ID", "fb-app-id");
   vi.stubEnv("FACEBOOK_APP_SECRET", "fb-app-secret");
   vi.stubEnv("INSTAGRAM_BUSINESS_APP_ID", "igb-app-id");
@@ -213,28 +211,6 @@ describe("refreshIntegrationCredentials — per provider", () => {
       });
     },
   );
-
-  it("Reddit: HTTP Basic app auth plus the descriptive User-Agent Reddit demands", async () => {
-    fetchMock.mockResolvedValue(tokenResponse({ access_token: "r-new", expires_in: 3600 }));
-
-    const result = await refreshIntegrationCredentials(
-      { platform: "reddit", credentials: { accessToken: "r-old", refreshToken: "r-refresh" } },
-      { now: NOW },
-    );
-
-    const [url, init] = lastCall();
-    expect(url).toBe("https://www.reddit.com/api/v1/access_token");
-    const headers = init.headers as Record<string, string>;
-    expect(headers.Authorization).toBe(
-      `Basic ${Buffer.from("r-app-id:r-app-secret").toString("base64")}`,
-    );
-    expect(headers["User-Agent"]).toMatch(/karoscmo/);
-    expect(formBody(init).get("refresh_token")).toBe("r-refresh");
-    expect(result).toEqual({
-      outcome: "refreshed",
-      credentials: { accessToken: "r-new", expiresAt: String(NOW + HOUR) },
-    });
-  });
 
   it.each(["facebook", "instagram"])(
     "%s: GETs graph oauth/access_token with fb_exchange_token and the CURRENT long-lived token",
@@ -341,7 +317,7 @@ describe("refreshIntegrationCredentials — per provider", () => {
   it("classifies a 400 as a dead token set and a 503 as try-again", async () => {
     fetchMock.mockResolvedValueOnce(refusal(400, "invalid_grant"));
     const rejected = await refreshIntegrationCredentials(
-      { platform: "reddit", credentials: { refreshToken: "r-refresh" } },
+      { platform: "tiktok", credentials: { refreshToken: "tt-refresh" } },
       { now: NOW },
     ).catch((e: unknown) => e as TokenRefreshError);
     expect(rejected).toBeInstanceOf(TokenRefreshError);
@@ -350,7 +326,7 @@ describe("refreshIntegrationCredentials — per provider", () => {
 
     fetchMock.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) });
     const down = await refreshIntegrationCredentials(
-      { platform: "reddit", credentials: { refreshToken: "r-refresh" } },
+      { platform: "tiktok", credentials: { refreshToken: "tt-refresh" } },
       { now: NOW },
     ).catch((e: unknown) => e as TokenRefreshError);
     expect((down as TokenRefreshError).code).toBe("unavailable");
@@ -369,8 +345,8 @@ describe("refreshIntegrationCredentials — per provider", () => {
     ["X rate-limits us", "twitter", 429, "rate_limit_exceeded"],
     ["Google's refresh-token quota", "youtube", 403, "rate_limit_exceeded"],
     ["this app's client secret is stale", "youtube", 401, "invalid_client"],
-    ["the endpoint asks us to slow down", "reddit", 429, undefined],
-    ["a request timeout", "reddit", 408, undefined],
+    ["the endpoint asks us to slow down", "tiktok", 429, undefined],
+    ["a request timeout", "tiktok", 408, undefined],
   ])("treats %s as try-again, not as a dead token", async (_case, platform, status, error) => {
     fetchMock.mockResolvedValueOnce({
       ok: false,
@@ -475,17 +451,17 @@ describe("the five-minute rule", () => {
   it("refreshes a short-lived provider that has no expiry on record at all", async () => {
     // Everything connected before CN1: a refresh token was stored, its lifetime
     // was not. Assuming it is still good is how the cron used to 401.
-    fetchMock.mockResolvedValue(tokenResponse({ access_token: "r-new", expires_in: 3600 }));
-    const creds = { accessToken: "r-old", refreshToken: "r-refresh" };
-    expect(needsRefresh({ platform: "reddit", credentials: creds }, NOW)).toBe(true);
+    fetchMock.mockResolvedValue(tokenResponse({ access_token: "tt-new", expires_in: 86400 }));
+    const creds = { accessToken: "tt-old", refreshToken: "tt-refresh" };
+    expect(needsRefresh({ platform: "tiktok", credentials: creds }, NOW)).toBe(true);
 
     const out = await getFreshIntegrationCredentials(
-      integration({ platform: "reddit", credentials: creds }),
+      integration({ platform: "tiktok", credentials: creds }),
       { now: NOW },
     );
 
-    expect(out.accessToken).toBe("r-new");
-    expect(credentialExpiresAt(out)).toBe(NOW + HOUR);
+    expect(out.accessToken).toBe("tt-new");
+    expect(credentialExpiresAt(out)).toBe(NOW + DAY);
   });
 
   it("never refreshes what it cannot refresh: no refresh token, or LinkedIn", () => {
@@ -567,13 +543,13 @@ describe("getFreshIntegrationCredentials", () => {
     fetchMock.mockResolvedValue(refusal());
 
     const error = await getFreshIntegrationCredentials(
-      integration({ platform: "reddit", credentials: { refreshToken: "r-refresh" } }),
+      integration({ platform: "tiktok", credentials: { refreshToken: "tt-refresh" } }),
       { now: NOW },
     ).catch((e: unknown) => e as TokenRefreshError);
 
     expect(error).toBeInstanceOf(TokenRefreshError);
     expect(isIntegrationDeadError(error)).toBe(true);
-    expect(markIntegrationExpiredMock).toHaveBeenCalledWith("c1", "reddit");
+    expect(markIntegrationExpiredMock).toHaveBeenCalledWith("c1", "tiktok");
     expect(updateCredentialsMock).not.toHaveBeenCalled();
   });
 
@@ -581,7 +557,7 @@ describe("getFreshIntegrationCredentials", () => {
     fetchMock.mockRejectedValue(new Error("ECONNRESET"));
 
     const error = await getFreshIntegrationCredentials(
-      integration({ platform: "reddit", credentials: { refreshToken: "r-refresh" } }),
+      integration({ platform: "tiktok", credentials: { refreshToken: "tt-refresh" } }),
       { now: NOW },
     ).catch((e: unknown) => e as TokenRefreshError);
 
@@ -674,21 +650,21 @@ describe("getFreshIntegrationCredentials", () => {
     // Before CN1 every short-lived channel 401'd into `expired` on its first
     // cron tick. Honouring that flag would mean this module never reaches the
     // connections it was written for.
-    fetchMock.mockResolvedValue(tokenResponse({ access_token: "r-new", expires_in: 3600 }));
+    fetchMock.mockResolvedValue(tokenResponse({ access_token: "tt-new", expires_in: 86400 }));
     const dead = integration({
-      platform: "reddit",
+      platform: "tiktok",
       status: "expired",
       credentials: {
-        accessToken: "r-old",
-        refreshToken: "r-refresh",
-        expiresAt: String(NOW + HOUR),
+        accessToken: "tt-old",
+        refreshToken: "tt-refresh",
+        expiresAt: String(NOW + DAY),
       },
     });
     expect(integrationMayBeRevivable(dead)).toBe(true);
 
     const out = await getFreshIntegrationCredentials(dead, { now: NOW });
 
-    expect(out.accessToken).toBe("r-new");
+    expect(out.accessToken).toBe("tt-new");
     // The persist clears status/expiredAt, so the flag does not survive.
     expect(updateCredentialsMock).toHaveBeenCalledTimes(1);
 
@@ -696,7 +672,7 @@ describe("getFreshIntegrationCredentials", () => {
     // caller's copy still says "expired", but this process knows better.
     const again = await getFreshIntegrationCredentials(dead, { now: NOW + MINUTE });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(again.accessToken).toBe("r-new");
+    expect(again.accessToken).toBe("tt-new");
   });
 
   it("does not re-test a flagged channel with nothing to refresh with", () => {
@@ -718,7 +694,7 @@ describe("getFreshIntegrationCredentials", () => {
     // And an integration nobody flagged is not "revivable" — it is just fine.
     expect(
       integrationMayBeRevivable(
-        integration({ platform: "reddit", credentials: { refreshToken: "r-refresh" } }),
+        integration({ platform: "tiktok", credentials: { refreshToken: "tt-refresh" } }),
       ),
     ).toBe(false);
   });
@@ -803,13 +779,13 @@ describe("getFreshIntegrationCredentials", () => {
     );
     fetchMock.mockResolvedValue(refusal());
     await getFreshIntegrationCredentials(
-      integration({ platform: "reddit", credentials: { refreshToken: "r-refresh" } }),
+      integration({ platform: "tiktok", credentials: { refreshToken: "tt-refresh" } }),
       { now: NOW },
     ).catch(() => {});
 
     expect(logMock).toHaveBeenCalled();
     const logged = JSON.stringify(logMock.mock.calls);
-    for (const secret of ["x-new", "x-rotated", "x-old", "x-refresh", "r-refresh"]) {
+    for (const secret of ["x-new", "x-rotated", "x-old", "x-refresh", "tt-refresh"]) {
       expect(logged).not.toContain(secret);
     }
   });
@@ -875,16 +851,16 @@ describe("runWithFreshCredentials", () => {
   it("reports the platform's own 401 when the forced refresh is refused as well", async () => {
     fetchMock.mockResolvedValue(refusal());
     const run = vi.fn(async () => {
-      throw new TokenExpiredError("reddit", 401);
+      throw new TokenExpiredError("tiktok", 401);
     });
 
     const error = await runWithFreshCredentials(
       integration({
-        platform: "reddit",
+        platform: "tiktok",
         credentials: {
-          accessToken: "r-old",
-          refreshToken: "r-refresh",
-          expiresAt: String(NOW + HOUR),
+          accessToken: "tt-old",
+          refreshToken: "tt-refresh",
+          expiresAt: String(NOW + DAY),
         },
       }),
       run,
@@ -893,7 +869,7 @@ describe("runWithFreshCredentials", () => {
 
     expect(run).toHaveBeenCalledTimes(1);
     expect(error).toBeInstanceOf(TokenExpiredError);
-    expect(markIntegrationExpiredMock).toHaveBeenCalledWith("c1", "reddit");
+    expect(markIntegrationExpiredMock).toHaveBeenCalledWith("c1", "tiktok");
   });
 
   it("does NOT condemn the channel when the forced refresh only found the endpoint down", async () => {
