@@ -516,6 +516,11 @@ async function autoPublishApprovedAgentDraft(asset: Asset): Promise<void> {
       publishMode: asset.publishMode ?? "manual",
       updatedAt: Date.now(),
     });
+    // Same bookkeeping every publish door owes (slot stamp, X option row,
+    // learning feedback) - see src/lib/asset-posted.ts. No human pusher here
+    // (this IS the automatic door), so no `actor` — the same as the cron's
+    // door, which also posts unattended.
+    await afterAssetPosted(asset);
   } catch (e) {
     await releaseAssetPublishClaim(asset.id).catch(() => {});
     const message = e instanceof Error ? e.message : "Unknown error";
