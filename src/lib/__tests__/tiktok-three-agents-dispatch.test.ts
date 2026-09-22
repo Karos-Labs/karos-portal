@@ -19,9 +19,12 @@ import { launchProfileFor, attachmentModeForEngineProduct, clientOnlyMediaIsRequ
 import { toEngineRunInput, resolveAgentEngineProductIdForCustomAgent, ENGINE_PRODUCTS_READING_MEDIA_ASSETS } from "@/lib/agent-engine/product-mapping";
 
 const CASES = [
-  { key: "karos-tiktok-clipping", name: "TikTok clipping", product: "tiktok-clipping-agent", eyebrow: "TikTok clipping" },
-  { key: "karos-tiktok-editing", name: "TikTok editing", product: "tiktok-editing-agent", eyebrow: "TikTok editing" },
-  { key: "karos-tiktok-content-design", name: "TikTok content design (beta)", product: "tiktok-content-design-agent", eyebrow: "TikTok content design" },
+  // Names as renamed 2026-09-22 (Clipper, Editor, Producer); the old D08 names
+  // are what a stored record may still carry until the roster sync runs, and
+  // the profile resolves by key either way.
+  { key: "karos-tiktok-clipping", name: "TikTok Clipper", product: "tiktok-clipping-agent", eyebrow: "TikTok Clipper" },
+  { key: "karos-tiktok-editing", name: "TikTok editing", product: "tiktok-editing-agent", eyebrow: "TikTok Editor" },
+  { key: "karos-tiktok-content-design", name: "TikTok content design (beta)", product: "tiktok-content-design-agent", eyebrow: "TikTok Producer" },
 ] as const;
 
 describe("D08 dispatch trace", () => {

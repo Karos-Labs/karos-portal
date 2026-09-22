@@ -153,8 +153,10 @@ describe("D09/D20: the band is a field, and the name is just the name", () => {
       expect(row.name, row.key).not.toMatch(/beta/i);
     }
     expect(seededRoster().find((r) => r.key === "karos-tiktok-content-design")?.name).toBe(
-      "TikTok content design",
+      "TikTok Producer",
     );
+    // D45: the other two carry their role names too.
+    expect(seededRoster().find((r) => r.key === "karos-tiktok-clipping")?.name).toBe("TikTok Clipper");
   });
 
   it("spends `coming_soon` on the word the portal already had", () => {
@@ -322,10 +324,10 @@ describe("SCRUM-498: the short-video card count", () => {
     expect(resolveAgentEngineProductIdForCustomAgent("karos-tiktok-editing")).toBe(
       "tiktok-editing-agent",
     );
-    // The surviving card carries the name D08 gives the product, with no trace
-    // of the old one.
+    // The surviving card carries the product's name (D08's "TikTok editing",
+    // renamed "TikTok Editor" on 2026-09-22), with no trace of the old one.
     expect(seededRoster().find((r) => r.key === "karos-tiktok-editing")?.name).toBe(
-      "TikTok editing",
+      "TikTok Editor",
     );
   });
 });

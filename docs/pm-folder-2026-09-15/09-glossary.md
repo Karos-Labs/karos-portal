@@ -5,7 +5,7 @@ Status: approved 2026-09-15 · Owner: Albert · Changes when: a term gains a sec
 - **Onboarding run**: the pipeline that studies a client's business and builds the profile. Formerly "Intel"; the code still says intel in places (D01).
 - **Profile**: the six client-visible documents (brand voice, market strategy, competitor analysis, product information, branding guidelines, target audience) plus internal documents.
 - **Agent**: a fully automated producer of an output (a post, a clip, an article). **Reporting system**: measurement the client sees (SEO/GEO, reputation, audience, post performance). Not the same thing (D07).
-- **TikTok editing**: the agent still called "Branded shorts" in the code and catalog (D08).
+- **TikTok Clipper / Editor / Producer**: the three TikTok agents, formerly TikTok clipping / editing / content design (D45). The Editor is the agent the code still calls "Branded shorts" in places (D08). On the landing page they are one TikTok Agent with three modes.
 - **Seat**: one person on the client's team the LinkedIn or X agent posts as, with their own voice.
 - **Goal of a post**: earn attention, show expertise, or help them decide; the funnel stage. On every delivered post (D11).
 - **Strategy map**: the client's problems × stages with post ideas; the topic pool.

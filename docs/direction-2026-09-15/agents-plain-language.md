@@ -7,7 +7,7 @@ Every post we deliver comes with **the goal of the post**. Internally, every cli
 **Cadence** is set by the client in their calendar, not per agent. Given that cadence, our sequencing decides which post goes when and why, from what performs and what is relevant now.
 
 **Up and running**: X · LinkedIn · Reddit
-**Beta**: Instagram · TikTok clipping · TikTok editing · TikTok content design
+**Beta**: Instagram · TikTok Clipper · TikTok Editor · TikTok Producer (renamed 2026-09-22, D45; formerly TikTok clipping · editing · content design)
 **Coming soon**: Rebrand · Newsletter · Blog · Landing page · Micro-influencers · Motion design · PR
 
 \newpage
@@ -161,7 +161,7 @@ Every post we deliver comes with **the goal of the post**. Internally, every cli
 
 \newpage
 
-## TikTok clipping (beta) (owner [Shlomi Gueta](mailto:shlomi@karoslabs.com))
+## TikTok Clipper (beta) (owner [Shlomi Gueta](mailto:shlomi@karoslabs.com))
 
 **What it does.** Turns a long recording into a short, captioned, on-brand clip with your commentary on it.
 
@@ -203,7 +203,7 @@ Basic version:
 
 \newpage
 
-## TikTok editing (beta) (owner [Shlomi Gueta](mailto:shlomi@karoslabs.com))
+## TikTok Editor (beta) (owner [Shlomi Gueta](mailto:shlomi@karoslabs.com))
 
 **What it does.** Turns one talking-head video you recorded into a finished vertical short: the gaps in your speech cut, the colour cleaned up, on-brand captions and graphics added.
 
@@ -235,7 +235,7 @@ Basic version:
 
 \newpage
 
-## TikTok content design (beta) (owner [Shlomi Gueta](mailto:shlomi@karoslabs.com))
+## TikTok Producer (beta) (owner [Shlomi Gueta](mailto:shlomi@karoslabs.com))
 
 **What it does.** Makes a video from nothing. You give no footage. It writes the script, builds the video from stock or AI-generated images and clips, adds a voice and sound.
 
