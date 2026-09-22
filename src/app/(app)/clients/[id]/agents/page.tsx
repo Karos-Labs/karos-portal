@@ -197,12 +197,23 @@ export default async function ClientAgentsPage({
     // a week of daily slots is the tell that the days are a presentation of a
     // batch. Staff rows are unchanged.
     //
-    // Still filtered on the STORED name (that is the join to the runnable set);
-    // what each row prints is its resolved §7.3 identity (F147).
-    const runnableNames = new Set(
-      liveEntries.filter((e) => !ownedAgentIds.has(e.customAgentId)).map((e) => e.agentName),
+    // The join to the runnable set is the job's `customAgentId` when it has one,
+    // and the STORED name only for an older job without it, the same rule
+    // `submit-custom.ts` and the scheduler use. Joining on the name alone
+    // dropped an agent's whole history the moment the agent was renamed (the
+    // TikTok agents became Clipper, Editor and Producer on 2026-09-22). What
+    // each row prints is still its resolved §7.3 identity (F147).
+    const runnable = liveEntries.filter((e) => !ownedAgentIds.has(e.customAgentId));
+    const runnableIds = new Set(runnable.map((e) => e.customAgentId));
+    const runnableNames = new Set(runnable.map((e) => e.agentName));
+    const runnableJobIds = new Set(
+      jobs
+        .filter((j) =>
+          j.customAgentId ? runnableIds.has(j.customAgentId) : runnableNames.has(j.agentName),
+        )
+        .map((j) => j.id),
     );
-    const runs = toRunRows(jobs, false, umbrellas).filter((r) => runnableNames.has(r.agentName));
+    const runs = toRunRows(jobs, false, umbrellas).filter((r) => runnableJobIds.has(r.id));
     // A client run takes 10–20 minutes and the client's rows carry no link, so
     // without this the page never moved again after "Start run". Mounted only
     // while something is actually in flight; it unmounts when the server

@@ -155,6 +155,8 @@ describe("D09/D20: the band is a field, and the name is just the name", () => {
     expect(seededRoster().find((r) => r.key === "karos-tiktok-content-design")?.name).toBe(
       "TikTok Producer",
     );
+    // D45: the other two carry their role names too.
+    expect(seededRoster().find((r) => r.key === "karos-tiktok-clipping")?.name).toBe("TikTok Clipper");
   });
 
   it("spends `coming_soon` on the word the portal already had", () => {

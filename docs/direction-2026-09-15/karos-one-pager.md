@@ -31,9 +31,9 @@ One home page with the full picture: how you rank in search and inside AI answer
 
 **Beta**
 - **Instagram**: a ready-to-post carousel in your brand, from your own photos or sourced imagery. Also usable for TikTok.
-- **TikTok clipping**: give it a podcast, or let it find podcasts in your niche. It cuts the best moment, adds captions, formats the clip.
-- **TikTok editing**: give it your own video. It cuts the gaps, adds on-brand captions and graphics.
-- **TikTok content design**: give it nothing. It writes the script and builds the video from stock or AI footage, with voice and sound.
+- **TikTok Clipper**: give it a podcast, or let it find podcasts in your niche. It cuts the best moment, adds captions, formats the clip.
+- **TikTok Editor**: give it your own video. It cuts the gaps, adds on-brand captions and graphics.
+- **TikTok Producer**: give it nothing. It writes the script and builds the video from stock or AI footage, with voice and sound.
 
 **Coming soon**
 - **Rebrand**, **Newsletter / Blog**, **Landing page**.

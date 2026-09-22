@@ -646,8 +646,14 @@ export default async function ClientAgentDetailPage({
   // each of these maps to a capability that used to live on that card: the run
   // dialog, the schedule dialog, the intake affordance, the review queue, the
   // run history, the curation pane and the economics card.
+  // A job belongs to this agent by its `customAgentId`, or by its stored name
+  // when an older job has no id (the rule submit-custom.ts uses). The name
+  // alone would lose the agent's history on a rename (TikTok, 2026-09-22).
+  const isThisAgentsJob = (job: (typeof jobs)[number]) =>
+    job.customAgentId ? job.customAgentId === agent.id : job.agentName === agent.name;
+  const agentJobIds = new Set(jobs.filter(isThisAgentsJob).map((job) => job.id));
   const agentRuns = isStaff
-    ? toRunRows(jobs, true, umbrellas).filter((run) => run.agentName === agent.name)
+    ? toRunRows(jobs, true, umbrellas).filter((run) => agentJobIds.has(run.id))
     : [];
   // Portal revamp, Surface 03 — "Run history shows the last three, and opens
   // to all of them." Same toRunRows() the staff rows above use, just with
@@ -661,8 +667,8 @@ export default async function ClientAgentDetailPage({
   // below the fold in a different shape. Staff get the client's card AND their
   // own; the rows here stay the client-safe ones (no prompt, no href, no raw
   // error), because this is the client's card and it must render identically.
-  const clientAgentRuns = toRunRows(jobs, false, umbrellas).filter(
-    (run) => run.agentName === agent.name,
+  const clientAgentRuns = toRunRows(jobs, false, umbrellas).filter((run) =>
+    agentJobIds.has(run.id),
   );
   const reviewCount = isStaff
     ? jobs
@@ -670,7 +676,7 @@ export default async function ClientAgentDetailPage({
           (job) =>
             job.external?.taskType === "custom" &&
             job.status === "review" &&
-            job.agentName === agent.name,
+            isThisAgentsJob(job),
         )
         .reduce((total, job) => total + job.assetIds.length, 0)
     : 0;
