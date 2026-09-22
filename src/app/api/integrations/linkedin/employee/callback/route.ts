@@ -1,4 +1,6 @@
+import { cookies } from "next/headers";
 import { NextResponse, type NextRequest } from "next/server";
+import { getCurrentUser } from "@/lib/auth";
 import { updateEmployeeSeat, getUser, upsertUser } from "@/lib/data";
 import {
   OAUTH_CONFIGS,
@@ -22,12 +24,44 @@ export async function GET(req: NextRequest) {
   const state = url.searchParams.get("state");
   const oauthError = url.searchParams.get("error");
 
+  // THREE THINGS HAVE TO AGREE before a LinkedIn access token is written onto
+  // somebody's seat, and this route used to check only the first.
+  //
+  //   1. the state is signed by us — proves the token was minted here;
+  //   2. it matches the cookie set when the flow STARTED — proves this browser
+  //      started it, rather than replaying a state seen in a URL, a Referer
+  //      header or a log within its ten-minute life;
+  //   3. the session presenting it is the user the state was minted for —
+  //      proves the person finishing is the person who was authorized.
+  //
+  // Without 2 and 3, anyone holding a live state could complete the flow with
+  // their OWN authorization code and leave their LinkedIn identity attached to
+  // this client's seat, after which the portal posts as them. The social
+  // connect flow has always required 2; this one shipped without either.
+  //
+  // The cookie is consumed BEFORE any refusal returns, so a failed attempt
+  // cannot be retried against the same nonce.
+  const cookieStore = await cookies();
+  const savedState = cookieStore.get("karos_oauth_state")?.value;
+  if (savedState) cookieStore.delete("karos_oauth_state");
+
   const verified = state ? verifyOAuthState(state) : null;
   // Without a valid state we don't trust any clientId in the URL — bounce home.
   if (!verified || verified.provider !== "linkedin" || !verified.seatId) {
     return NextResponse.redirect(`${origin}/dashboard?linkedin_seat=invalid_state`);
   }
+  if (!savedState || savedState !== state) {
+    return NextResponse.redirect(`${origin}/dashboard?linkedin_seat=invalid_state`);
+  }
   const { clientId, seatId, uid, returnTo } = verified;
+
+  // The session half. Same `invalid_state` answer as above on purpose: a
+  // refusal must not tell the caller which of the three checks it failed, and
+  // the copy behind that flag already says to start the connection again.
+  const session = await getCurrentUser();
+  if (!session || session.disabled || session.uid !== uid) {
+    return NextResponse.redirect(`${origin}/dashboard?linkedin_seat=invalid_state`);
+  }
   const returnUrl = returnTo === "onboarding" ? `${origin}/onboarding` : `${origin}/clients/${clientId}/settings`;
 
   if (oauthError || !code) {

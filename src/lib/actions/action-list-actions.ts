@@ -5,11 +5,13 @@ import { upsertClientActionState } from "@/lib/data";
 import { requireUser } from "@/lib/auth";
 import { ACTION_DEFINITIONS } from "@/lib/action-list";
 import { SETUP_LADDER_HIDDEN_ACTION_ID } from "@/lib/setup-ladder";
+import { staffAssignmentRefusal } from "./_shared";
 
 /**
  * Self-service, same auth shape as `updateClientProfileAction` — a CLIENT_USER
- * may act on their own client's action list, staff may act on any client's
- * (View as Client at onboarding, or clearing one up on a support call).
+ * may act on their own client's action list, staff on a client they are
+ * ASSIGNED TO (View as Client at onboarding, or clearing one up on a support
+ * call). "Any client's" is what this used to say and used to do.
  */
 async function authorize(clientId: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const user = await requireUser();
@@ -17,6 +19,8 @@ async function authorize(clientId: string): Promise<{ ok: true } | { ok: false; 
   if (!isStaff && !(user.role === "CLIENT_USER" && user.clientId === clientId)) {
     return { ok: false, error: "Not authorized to edit this client's actions." };
   }
+  const refusal = await staffAssignmentRefusal(user, clientId);
+  if (refusal) return { ok: false, error: refusal };
   return { ok: true };
 }
 

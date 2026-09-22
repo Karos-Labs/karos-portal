@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getCurrentUser } from "@/lib/auth";
+import { requireClientAccess } from "@/lib/actions/_shared";
 import {
   getClient,
   getClientCredits,
@@ -30,15 +30,17 @@ export type SeatActionResult =
   | { ok: true; seatId?: string; charged?: number }
   | { ok: false; error: string; gated?: boolean };
 
-/** Staff, or the client's own user, may manage that client's seats. */
+/**
+ * Staff ASSIGNED TO THIS CLIENT, or the client's own user, may manage its seats.
+ *
+ * Seats carry LinkedIn ACCESS TOKENS, so this is the narrowest thing in the
+ * file and used to be the widest: it rewrote the role half inline and stopped,
+ * which let any staff member add or rewrite a seat — credentials included —
+ * on a client they were never assigned to. It is exactly `requireClientAccess`,
+ * so it is that now rather than a second copy that can drift again.
+ */
 async function requireSeatAccess(clientId: string): Promise<AppUser> {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) throw new Error("Unauthorized");
-  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
-  if (!isStaff && !(user.role === "CLIENT_USER" && user.clientId === clientId)) {
-    throw new Error("Forbidden");
-  }
-  return user;
+  return requireClientAccess(clientId);
 }
 
 export interface AddSeatInput {

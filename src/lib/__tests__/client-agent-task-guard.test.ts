@@ -89,7 +89,9 @@ beforeEach(() => {
     enabled: true,
   });
   (data.getClientTask as any).mockResolvedValue(makeTask());
-  (data.getClient as any).mockResolvedValue({ id: "c1", name: "Acme" });
+  // `assignedEmployeeIds` because requireTaskAccess now asks the assignment
+  // half: a staff member has to be assigned to the client whose task they drive.
+  (data.getClient as any).mockResolvedValue({ id: "c1", name: "Acme", assignedEmployeeIds: ["u-staff"] });
 });
 
 describe("D1 — task-board dispatch honors the §2 guard rail", () => {

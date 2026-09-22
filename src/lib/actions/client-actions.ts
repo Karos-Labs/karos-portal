@@ -27,7 +27,7 @@ import { parseForbiddenTopics, validateForbiddenTopics } from "@/lib/dynamic-age
 import { parseForbiddenTerms, validateForbiddenTerms } from "@/lib/brand-compliance-terms";
 import { projectClientOnSaveInBackground } from "@/lib/agent-engine/project-on-save";
 import { isTopicApprovalMode } from "@/lib/agent-engine/topic-approval";
-import { requireStaff, logGenerationFailure } from "./_shared";
+import { requireStaff, logGenerationFailure, staffAssignmentRefusal } from "./_shared";
 
 export async function createClientAction(input: {
   name: string;
@@ -133,6 +133,12 @@ export async function regenerateClientKeyAction(clientId: string): Promise<{ cli
   const isOwnGroupAdmin =
     user.role === "CLIENT_USER" && user.isGroupAdmin === true && user.clientId === clientId;
   if (!isStaff && !isOwnGroupAdmin) throw new Error("Forbidden");
+  // THE JOIN TOKEN. Rotating it on a client you are not assigned to hands you a
+  // key that auto-approves a signup straight into that client's workspace, so
+  // this is the one in the file where the missing assignment half was an
+  // escalation path rather than an over-wide read.
+  const refusal = await staffAssignmentRefusal(user, clientId);
+  if (refusal) throw new Error(refusal);
   const clientKeyId = `ck_${randomBytes(16).toString("base64url")}`;
   await updateClient(clientId, { clientKeyId });
   revalidatePath(`/clients/${clientId}`);
@@ -158,6 +164,10 @@ export async function clientOwnerEmailAction(clientId: string): Promise<{ email:
   if (!isStaff && !(user.role === "CLIENT_USER" && user.clientId === clientId)) {
     return { email: "" };
   }
+  // Same empty answer for an unassigned employee, for the reason the comment
+  // above gives: the refusal sentence itself would be prose this response has
+  // no business carrying.
+  if (await staffAssignmentRefusal(user, clientId)) return { email: "" };
   return { email: await getClientOwnerEmail(clientId) };
 }
 
@@ -217,6 +227,11 @@ export async function updateClientProfileAction(
   if (!isStaff && !(user.role === "CLIENT_USER" && user.clientId === id)) {
     return { ok: false, error: "Not authorized to edit this profile." };
   }
+  // `website` is written here and is later FETCHED SERVER-SIDE by the branding
+  // capture, so an unassigned employee editing this profile is not only writing
+  // another client's record — it is the input to an outbound request.
+  const refusal = await staffAssignmentRefusal(user, id);
+  if (refusal) return { ok: false, error: refusal };
 
   const clean = (v?: string) => (typeof v === "string" ? v.trim() : undefined);
   const patch: Partial<Client> = {};

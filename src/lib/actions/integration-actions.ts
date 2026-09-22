@@ -20,7 +20,7 @@ import {
   fetchInstagramBusinessAccountInsights,
   type InstagramBusinessAccountInsights,
 } from "@/lib/integrations/instagram-business-graph";
-import { requireStaff } from "./_shared";
+import { requireStaff, staffAssignmentRefusal } from "./_shared";
 
 /**
  * Save (create or overwrite) a social platform integration for a client.
@@ -111,6 +111,9 @@ export async function setIntegrationAutoPublishAction(
     if (!isStaff && user.clientId !== clientId) {
       return { error: "You don't have access to this channel." };
     }
+    if (await staffAssignmentRefusal(user, clientId)) {
+      return { error: "You don't have access to this channel." };
+    }
     await setIntegrationAutoPublish(clientId, platform, enabled);
     revalidatePath(`/clients/${clientId}`);
     return { ok: true };
@@ -138,6 +141,9 @@ export async function setIntegrationAgentAutoPublishAction(
     if (!user || user.disabled) return { error: "Please sign in again to change this setting." };
     const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
     if (!isStaff && user.clientId !== clientId) {
+      return { error: "You don't have access to this channel." };
+    }
+    if (await staffAssignmentRefusal(user, clientId)) {
       return { error: "You don't have access to this channel." };
     }
     await setIntegrationAgentAutoPublish(clientId, platform, enabled);
@@ -215,6 +221,9 @@ export async function fetchClientBusinessInfoAction(clientId: string): Promise<B
     if (!isStaff && user.clientId !== clientId) {
       return { error: "You don't have access to this channel." };
     }
+    if (await staffAssignmentRefusal(user, clientId)) {
+      return { error: "You don't have access to this channel." };
+    }
     const integration = (await listClientIntegrations(clientId)).find((i) => i.platform === "instagram");
     const token = integration?.credentials?.accessToken;
     if (!token) return { error: "Connect Instagram first to see business info." };
@@ -243,6 +252,9 @@ export async function fetchClientInstagramBusinessInsightsAction(
     if (!user || user.disabled) return { error: "Please sign in again to view insights." };
     const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
     if (!isStaff && user.clientId !== clientId) {
+      return { error: "You don't have access to this channel." };
+    }
+    if (await staffAssignmentRefusal(user, clientId)) {
       return { error: "You don't have access to this channel." };
     }
     const integration = (await listClientIntegrations(clientId)).find((i) => i.platform === "instagram_business");
