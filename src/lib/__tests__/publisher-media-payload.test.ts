@@ -316,6 +316,71 @@ describe("#48 — Instagram sees the photos the rest of the product sees", () =>
     );
     expect(calls).toHaveLength(0);
   });
+
+  // 2026-09-22: `materializeInstagramCarousel` (agent-engine/materialize.ts)
+  // produces a multi-slide asset via meta.slides, but publishToInstagram/
+  // publishToInstagramBusiness read only assetImages(asset)[0] — every slide
+  // past the first was silently dropped, live against a real client account.
+  it("posts every slide as a real Instagram carousel, not just the first", async () => {
+    const carousel = bulkClip({
+      type: "instagram_post",
+      videoUrl: null,
+      mimeType: null,
+      content: "The real caption",
+      meta: {
+        slides: [
+          { n: 1, headline: "Slide one copy", imageUrl: "https://cdn.test/slide-1.png" },
+          { n: 2, headline: "Slide two copy", imageUrl: "https://cdn.test/slide-2.png" },
+          { n: 3, headline: "Slide three copy", imageUrl: "https://cdn.test/slide-3.png" },
+        ],
+      },
+    });
+
+    const result = await publishAssetToPlatform("instagram", integration, carousel);
+
+    expect(result.postId).toBe("ig-post-1");
+    const mediaCalls = calls.filter((c) => c.url.includes("/media") && !c.url.includes("status_code") && !c.url.includes("media_publish"));
+    // 3 child containers + 1 CAROUSEL parent container.
+    expect(mediaCalls).toHaveLength(4);
+
+    const children = mediaCalls.slice(0, 3);
+    expect(children.map((c) => c.body.image_url)).toEqual([
+      "https://cdn.test/slide-1.png",
+      "https://cdn.test/slide-2.png",
+      "https://cdn.test/slide-3.png",
+    ]);
+    // Every slide is posted, and none of them carries the caption — that
+    // belongs on the parent container alone.
+    for (const child of children) {
+      expect(child.body.is_carousel_item).toBe("true");
+      expect(child.body.caption).toBeUndefined();
+    }
+
+    const parent = mediaCalls[3]!;
+    expect(parent.body.media_type).toBe("CAROUSEL");
+    expect(parent.body.caption).toBe("The real caption");
+    // Real Meta creation ids, not the slide URLs — children references the
+    // PARENT's own container-creation calls, not the images directly.
+    expect(parent.body.children).toBe("container-1,container-1,container-1");
+  });
+
+  it("still posts a single-slide carousel asset as a plain photo, not a one-item carousel", async () => {
+    const single = bulkClip({
+      type: "instagram_post",
+      videoUrl: null,
+      mimeType: null,
+      content: "Caption",
+      meta: { slides: [{ n: 1, headline: "Only slide", imageUrl: "https://cdn.test/only.png" }] },
+    });
+
+    await publishAssetToPlatform("instagram", integration, single);
+
+    const mediaCalls = calls.filter((c) => c.url.includes("/media") && !c.url.includes("status_code") && !c.url.includes("media_publish"));
+    expect(mediaCalls).toHaveLength(1);
+    expect(mediaCalls[0]!.body.image_url).toBe("https://cdn.test/only.png");
+    expect(mediaCalls[0]!.body.media_type).toBeUndefined();
+    expect(mediaCalls[0]!.body.caption).toBe("Caption");
+  });
 });
 
 /**

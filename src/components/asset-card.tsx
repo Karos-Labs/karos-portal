@@ -774,22 +774,32 @@ export function AssetCard({
           )}
 
           {/* Last publish state (manual push or auto cron).
-              `publishError` carries TWO different facts — a real failure, and the
-              cron's benign ordering hold — so this asks the ONE shared predicate
-              rather than assuming the field means failure. It was the fourth
-              reader of that field and the only one still assuming, so a staff
-              operator read "Publish failed: This post is waiting for …", a
-              heading contradicting its own paragraph. Staff-only surface, so the
-              client half of ledger row 48 was already closed; this closes the
-              staff half. No staff word is reworded — "Publish failed" is simply
-              no longer applied to a fact that is not a failure. */}
-          {publishError && asset.status !== "published" && (
+              `publishError` carries THREE different facts now, not two: a real
+              failure, the cron's benign ordering hold, and — since multi-platform
+              publish (#164) — a PARTIAL failure on an asset that still reached
+              "published" because at least one of its checked platforms went out.
+              The old `asset.status !== "published"` gate here predates #164, back
+              when "published" and "has a publishError" could never both be true;
+              now they routinely are (Instagram out, TikTok failed), and that gate
+              was silently hiding the one thing #164 exists to surface — a staff
+              operator saw no indication at all that half a multi-platform publish
+              never went out. `publishError` is deleted by markAssetPublished on
+              every clean success and only ever re-set alongside a real hold/
+              failure/partial-failure (see its writers in asset-actions.ts and
+              /api/publish/route.ts), so a truthy value here is never stale —
+              dropping the status check is safe, not just a broader net. */}
+          {publishError && (
             isPublishHold(publishError) ? (
               <div className="mt-2 flex items-start gap-2 rounded-md border border-muted-2/30 bg-foreground/[0.03] px-2.5 py-1.5">
                 <Icon name="Clock" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-2" />
                 <p className="text-xs text-muted-2">
                   {PUBLISH_HOLD_HEADING}: {publishError}
                 </p>
+              </div>
+            ) : asset.status === "published" ? (
+              <div className="mt-2 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-2.5 py-1.5">
+                <Icon name="TriangleAlert" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+                <p className="text-xs text-warning">Partially published: {publishError}</p>
               </div>
             ) : (
               <div className="mt-2 flex items-start gap-2 rounded-md border border-danger/30 bg-danger/10 px-2.5 py-1.5">
