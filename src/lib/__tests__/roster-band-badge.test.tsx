@@ -24,8 +24,8 @@ type RowProps = Parameters<typeof ClientAgentRosterRow>[0];
 const row = (over: Partial<RowProps>) => {
   const props: RowProps = {
     href: "/clients/c1/agents/a1",
-    identity: "karos-tiktok-content-design TikTok content design",
-    displayName: "TikTok content design",
+    identity: "karos-tiktok-content-design TikTok Producer",
+    displayName: "TikTok Producer",
     blurb: "Give it nothing.",
     status: rosterStatus({ launchState: "live" }),
     now: 1_757_000_000_000,

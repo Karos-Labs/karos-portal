@@ -319,7 +319,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     // commentary on it (D08).
     matches: (identity) => identity.startsWith(`${TIKTOK_CLIPPING_KEY} `),
     profile: {
-      eyebrow: "TikTok clipping",
+      eyebrow: "TikTok Clipper",
       intro:
         "Finds the moment worth clipping in a long recording, writes the hook and the caption in your voice, and cuts a captioned vertical clip. Give it an episode, or leave the link empty and it works from the shows on your source list.",
       fields: [
@@ -366,7 +366,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     // the other.
     matches: (identity) => identity.startsWith(`${TIKTOK_EDITING_KEY} `),
     profile: {
-      eyebrow: "TikTok editing",
+      eyebrow: "TikTok Editor",
       intro:
         "Takes a video you recorded and returns a finished vertical short: the gaps cut, the colour cleaned up, your captions and graphics on it. A source video or a shareable link is required.",
       fields: [
@@ -437,7 +437,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     // Content design: a short from nothing. Beta (D20).
     matches: (identity) => identity.startsWith(`${TIKTOK_CONTENT_DESIGN_KEY} `),
     profile: {
-      eyebrow: "TikTok content design",
+      eyebrow: "TikTok Producer",
       intro:
         "Writes the script, builds the video from stock or AI footage, and adds a voice and sound. You give it nothing, or a topic if you have one in mind. The hardest of the three video agents with today's technology; it ships as beta and improves.",
       fields: [

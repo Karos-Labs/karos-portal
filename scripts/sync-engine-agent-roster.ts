@@ -249,7 +249,10 @@ const ROSTER: RosterDoc[] = [
     id: "karosTikTokClipping",
     key: "karos-tiktok-clipping",
     band: "beta",
-    name: "TikTok clipping",
+    // Renamed from "TikTok clipping" (Albert, 2026-09-22): the three TikTok
+    // agents are named as roles on a team, Clipper, Editor and Producer, the
+    // same words the landing page's TikTok Agent toggle uses.
+    name: "TikTok Clipper",
     description:
       "D08's clipping product: finds the moment worth clipping inside a long recording — the client's own or a show on their source list — writes the hook and caption in the client's voice, and cuts a captioned vertical clip. On the calendar; sequencing decides which clip goes when.",
     clientBlurb: "Give it a podcast, or let it find podcasts in your niche. It cuts the best moment, adds captions, formats the clip.",
@@ -261,9 +264,10 @@ const ROSTER: RosterDoc[] = [
     id: "karosTikTokEditing",
     key: "karos-tiktok-editing",
     band: "beta",
-    name: "TikTok editing",
+    name: "TikTok Editor",
     // D08 says this one is "today 'Branded shorts', to rename". This IS the
-    // rename: same workflow, the name the product decision gives it.
+    // rename: same workflow. D08 named it "TikTok editing"; Albert renamed it
+    // "TikTok Editor" on 2026-09-22 (see the clipping row).
     description:
       "D08's editing product, formerly Branded shorts: turns one video the client recorded into a finished vertical short — gaps cut, colour cleaned, on-brand captions and graphics. On demand, outside sequencing (D19): no topic planning and no calendar slot to fill.",
     clientBlurb: "Give it your own video. It cuts the gaps, adds on-brand captions and graphics.",
@@ -275,7 +279,8 @@ const ROSTER: RosterDoc[] = [
     id: "karosTikTokContentDesign",
     key: "karos-tiktok-content-design",
     band: "beta",
-    name: "TikTok content design",
+    // D08's "TikTok content design", renamed "TikTok Producer" on 2026-09-22.
+    name: "TikTok Producer",
     // D20: "Beta is a band, never part of an agent's name." The marker used to
     // ride in the name — "TikTok content design (beta)" — because the portal had
     // no band to put it in. It has one now (`band` above, lib/agent-bands.ts),
