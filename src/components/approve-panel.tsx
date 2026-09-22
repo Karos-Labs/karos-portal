@@ -65,12 +65,25 @@ export function ApprovePanel({
     agentChannels && agentChannels.length
       ? agentChannels.filter((p) => compatiblePlatforms.includes(p))
       : compatiblePlatforms;
-  const availablePlatforms = connectedPlatforms.filter((p) => compatiblePlatforms.includes(p));
+  // `instagram` (Facebook Login) and `instagram_business` (direct login) are
+  // two real, separately-connected integrations, but from this picker's POV
+  // they're one product: "Instagram". Whichever one the client actually
+  // connected is the one that works, and this panel should just say
+  // "Instagram" once, not make staff pick between two technical connection
+  // methods for the same platform. Collapse to the preferred member
+  // (instagram_business — works without a linked Facebook Page) whenever
+  // both happen to be present in a list; the other member is dropped from
+  // every list this component renders or submits from this point on.
+  const dedupeInstagram = (ids: string[]): string[] =>
+    ids.includes("instagram_business") ? ids.filter((p) => p !== "instagram") : ids;
+  const availablePlatforms = dedupeInstagram(connectedPlatforms.filter((p) => compatiblePlatforms.includes(p)));
   // Pre-checked on open: the agent's own channel(s), narrowed to what's
   // actually connected — everything else in availablePlatforms is offered
   // but starts unchecked.
-  const defaultPlatforms = connectedPlatforms.filter((p) => channelPlatforms.includes(p));
+  const defaultPlatforms = dedupeInstagram(connectedPlatforms.filter((p) => channelPlatforms.includes(p)));
   const canAuto = availablePlatforms.length > 0;
+  /** Display label for a picker entry — "Instagram" for BOTH underlying ids, never "Instagram (direct login)"; that distinction belongs on the Integrations tab, not here. */
+  const pickerLabel = (p: string): string => (p === "instagram" || p === "instagram_business" ? "Instagram" : PLATFORM_LABELS[p] ?? p);
 
   // eslint-disable-next-line react-hooks/purity -- initial values only; component mounts once per open
   const now = Date.now();
@@ -237,7 +250,7 @@ export function ApprovePanel({
                     name={platforms.includes(p) ? "SquareCheck" : "Square"}
                     className="h-3.5 w-3.5"
                   />
-                  {PLATFORM_LABELS[p] ?? p}
+                  {pickerLabel(p)}
                 </button>
               ))}
             </div>
@@ -280,7 +293,7 @@ export function ApprovePanel({
         <p className="text-[11px] text-muted-2">
           <Icon name="CircleAlert" className="mr-1 inline h-3 w-3 text-warning" />
           Connect{" "}
-          {channelPlatforms.map((p) => PLATFORM_LABELS[p] ?? p).join(" or ")}{" "}
+          {dedupeInstagram(channelPlatforms).map(pickerLabel).join(" or ")}{" "}
           in the Integrations tab to enable auto-publishing.
         </p>
       )}
