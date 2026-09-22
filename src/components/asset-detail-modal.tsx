@@ -662,9 +662,14 @@ export function AssetDetailModal({
         {/* Unconditional on eligibility - a viewer with no Publish Now button (a
             client, or staff with no compatible connected platform) is exactly
             who most needs to see WHY a scheduled post never went out; the
-            retry control below stays gated, the fact of the failure does not. */}
-        {asset.publishError && asset.status !== "published" && (
-          <PublishStateNotice publishError={asset.publishError} />
+            retry control below stays gated, the fact of the failure does not.
+            Also unconditional on asset.status === "published" now (#164): a
+            multi-platform publish can be "published" (one target succeeded)
+            AND carry a real publishError (another target didn't) at once -
+            PublishStateNotice's own `partial` flag is what tells those two
+            apart, not hiding the notice whenever status looks clean. */}
+        {asset.publishError && (
+          <PublishStateNotice publishError={asset.publishError} partial={asset.status === "published"} />
         )}
 
         <ActionFooter
@@ -844,8 +849,14 @@ function SlideGallery({ asset, images, slides }: { asset: Asset; images: AssetIm
  * A hold needs nothing from the reader — the cron releases it by itself on the
  * next tick once the predecessor is posted — so it gets the neutral treatment,
  * not a red one.
+ *
+ * `partial` (asset.status === "published") is the multi-platform publish
+ * (#164) case: at least one checked platform went out, but `publishError`
+ * still names one that didn't — a distinct, less alarming fact than "nothing
+ * was posted", so it gets its own amber treatment rather than reading as a
+ * full failure of a post that is, in fact, live somewhere.
  */
-function PublishStateNotice({ publishError }: { publishError: string }) {
+function PublishStateNotice({ publishError, partial }: { publishError: string; partial: boolean }) {
   if (isPublishHold(publishError)) {
     return (
       <div className="rounded-[var(--radius)] border border-border bg-surface-2 px-3 py-2.5">
@@ -854,6 +865,14 @@ function PublishStateNotice({ publishError }: { publishError: string }) {
           {PUBLISH_HOLD_HEADING}
         </p>
         <p className="mt-0.5 text-xs text-muted">{publishError}</p>
+      </div>
+    );
+  }
+  if (partial) {
+    return (
+      <div className="rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-3 py-2.5">
+        <p className="text-xs font-medium text-warning">Partially published</p>
+        <p className="mt-0.5 text-xs text-warning/90">{publishError}</p>
       </div>
     );
   }

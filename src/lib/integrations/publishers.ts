@@ -227,20 +227,156 @@ async function pollMediaContainerReady(statusUrl: string, platform: string): Pro
   );
 }
 
+/** Meta's own cap on a carousel's item count (Content Publishing API docs). */
+const INSTAGRAM_CAROUSEL_MAX_ITEMS = 10;
+
+/**
+ * Checked BEFORE either caller does any account-resolution network work —
+ * asset-images.ts is free, so an asset with nothing postable is refused
+ * without spending a page/`/me` lookup first. Same VIDEO_URL guard
+ * `publishInstagramPost` applies when it re-derives this list for the
+ * actual request bodies; duplicated here rather than shared as one mutable
+ * "peek" is deliberate since this is a pure precondition with no request to
+ * build yet.
+ */
+function assertInstagramHasMedia(asset: Asset): void {
+  const hasImage = assetImages(asset).some((img) => !VIDEO_URL.test(img.url));
+  if (!hasImage && !clipUrl(asset)) {
+    throw new Error("Instagram posts require an image or video");
+  }
+}
+
+/**
+ * One child of a carousel container — an image (this app's carousel agents
+ * only ever produce images, never a mixed image/video carousel, so this
+ * doesn't take a video branch). A child carries no caption of its own; the
+ * caption lives on the parent CAROUSEL container created after every child
+ * is ready.
+ */
+async function createInstagramCarouselItem(
+  graphUrl: (path: string) => string,
+  igUserId: string,
+  token: string,
+  imageUrl: string,
+  platform: string,
+): Promise<string> {
+  const params = new URLSearchParams({ image_url: imageUrl, is_carousel_item: "true", access_token: token });
+  const res = await fetch(graphUrl(`${igUserId}/media`), { method: "POST", body: params });
+  if (res.status === 401 || res.status === 403) throw new TokenExpiredError(platform, res.status);
+  if (!res.ok) {
+    const err = (await res.json()) as { error?: { message?: string } };
+    throw new Error(`Carousel item failed: ${err.error?.message ?? res.status}`);
+  }
+  const { id } = (await res.json()) as { id: string };
+  return id;
+}
+
+/**
+ * Shared by `publishToInstagram` and `publishToInstagramBusiness` — same
+ * container→publish flow against either Meta host, the only difference
+ * being which `graphUrl` builder and account/token pair the caller resolved.
+ * Kept in ONE place because a second copy is how the two drift (the same
+ * reasoning `fetchInstagramFollowerCount`'s doc comment already gives for
+ * not re-deriving its account-resolution elsewhere).
+ *
+ * THE BUG THIS FIXES (2026-09-22): both callers used to read only
+ * `assetImages(asset)[0]` (`photoUrl`), so a multi-slide carousel asset —
+ * exactly what `materializeInstagramCarousel` in agent-engine/materialize.ts
+ * produces — published just its first slide as a single-photo post, the
+ * rest silently dropped. More than one image now goes out as a real
+ * CAROUSEL container: each image becomes a captionless child item first,
+ * then one parent container (media_type=CAROUSEL, children=<id1,id2,...>,
+ * the actual caption) references all of them. A single image or a clip
+ * (Reels) still takes the original one-container path unchanged.
+ */
+async function publishInstagramPost(
+  graphUrl: (path: string) => string,
+  igUserId: string,
+  token: string,
+  asset: Asset,
+  platform: string,
+): Promise<PublishResult> {
+  // Same VIDEO_URL guard photoUrl() used: an asset can carry a clip's URL in
+  // an image-shaped slot (an ingest quirk, not a real photo), and handing
+  // Meta an .mp4 as image_url is a silent wrong-post, not a clean rejection.
+  const images = assetImages(asset).filter((img) => !VIDEO_URL.test(img.url));
+  const clip = images.length === 0 ? clipUrl(asset) : null;
+  if (images.length === 0 && !clip) {
+    throw new Error("Instagram posts require an image or video");
+  }
+
+  let creationId: string;
+  if (images.length > 1) {
+    // Meta caps a carousel at 10 items; a longer carousel this app ever
+    // produces posts its first 10 slides rather than failing outright.
+    const items = images.slice(0, INSTAGRAM_CAROUSEL_MAX_ITEMS);
+    // Sequential, not Promise.all: no documented requirement like TikTok's
+    // chunk order, but N container-creation calls landing on Meta's per-app
+    // rate limit at once is a self-inflicted failure this avoids for free.
+    const childIds: string[] = [];
+    for (const image of items) {
+      childIds.push(await createInstagramCarouselItem(graphUrl, igUserId, token, image.url, platform));
+    }
+    const containerParams = new URLSearchParams({
+      media_type: "CAROUSEL",
+      caption: asset.content,
+      children: childIds.join(","),
+      access_token: token,
+    });
+    const containerRes = await fetch(graphUrl(`${igUserId}/media`), { method: "POST", body: containerParams });
+    if (containerRes.status === 401 || containerRes.status === 403) throw new TokenExpiredError(platform, containerRes.status);
+    if (!containerRes.ok) {
+      const err = (await containerRes.json()) as { error?: { message?: string } };
+      throw new Error(`Carousel container failed: ${err.error?.message ?? containerRes.status}`);
+    }
+    creationId = ((await containerRes.json()) as { id: string }).id;
+  } else {
+    // Single photo, or a clip ⇒ Reels: a real video-processing container,
+    // not the image_url path. share_to_feed keeps a Reel's behavior
+    // matching a photo post's: it lands on the profile grid too, not only
+    // the Reels tab.
+    const photo = images[0]?.url ?? null;
+    const containerParams = new URLSearchParams({
+      caption: asset.content,
+      access_token: token,
+      ...(photo ? { image_url: photo } : { media_type: "REELS", video_url: clip!, share_to_feed: "true" }),
+    });
+    const containerRes = await fetch(graphUrl(`${igUserId}/media`), { method: "POST", body: containerParams });
+    if (containerRes.status === 401 || containerRes.status === 403) throw new TokenExpiredError(platform, containerRes.status);
+    if (!containerRes.ok) {
+      const err = (await containerRes.json()) as { error?: { message?: string } };
+      throw new Error(`Media container failed: ${err.error?.message ?? containerRes.status}`);
+    }
+    creationId = ((await containerRes.json()) as { id: string }).id;
+  }
+
+  // A container's `creation_id` existing is not the same as its media being
+  // ready to publish (a live "Media ID is not available" on a photo is what
+  // found this) — Meta's docs say to confirm status_code:FINISHED for every
+  // container kind, carousel parent included, before media_publish.
+  await pollMediaContainerReady(
+    graphUrl(`${creationId}?fields=status_code&access_token=${encodeURIComponent(token)}`),
+    platform,
+  );
+
+  const publishParams = new URLSearchParams({ creation_id: creationId, access_token: token });
+  const publishRes = await fetch(graphUrl(`${igUserId}/media_publish`), { method: "POST", body: publishParams });
+  if (publishRes.status === 401 || publishRes.status === 403) throw new TokenExpiredError(platform, publishRes.status);
+  if (!publishRes.ok) {
+    const err = (await publishRes.json()) as { error?: { message?: string } };
+    throw new Error(`Publish failed: ${err.error?.message ?? publishRes.status}`);
+  }
+  const published = (await publishRes.json().catch(() => ({}))) as { id?: string };
+  return { postId: published.id ?? null };
+}
+
 async function publishToInstagram(
   credentials: Record<string, string>,
   asset: Asset,
 ): Promise<PublishResult> {
   const token = credentials.accessToken;
   if (!token) throw new Error("No access token");
-  // The photo, from wherever this asset's ingest path put it (see photoUrl).
-  // No photo but a clip ⇒ Reels: a real video-processing container, not the
-  // image_url path below.
-  const photo = photoUrl(asset);
-  const clip = photo ? null : clipUrl(asset);
-  if (!photo && !clip) {
-    throw new Error("Instagram posts require an image or video");
-  }
+  assertInstagramHasMedia(asset);
 
   let igUserId: string | null = null;
   let pageToken: string | null = null;
@@ -276,48 +412,7 @@ async function publishToInstagram(
 
   if (!igUserId || !pageToken) throw new Error("No Instagram Business Account linked to any page");
 
-  // Create media container. A photo container (image_url) usually finishes
-  // within a poll or two; a Reels container (media_type=REELS, video_url)
-  // needs Meta to transcode the clip first — either way, pollMediaContainerReady
-  // below waits for it, since a container's `creation_id` existing is not the
-  // same as its media being ready to publish (a live "Media ID is not
-  // available" on a photo is what found this). share_to_feed keeps a Reel's
-  // behavior matching a photo post's: it lands on the profile grid too, not
-  // only the Reels tab.
-  const containerParams = new URLSearchParams({
-    caption: asset.content,
-    access_token: pageToken,
-    ...(photo ? { image_url: photo } : { media_type: "REELS", video_url: clip!, share_to_feed: "true" }),
-  });
-  const containerRes = await fetch(
-    metaGraphUrl(`${igUserId}/media`),
-    { method: "POST", body: containerParams },
-  );
-  if (containerRes.status === 401 || containerRes.status === 403) throw new TokenExpiredError("instagram", containerRes.status);
-  if (!containerRes.ok) {
-    const err = (await containerRes.json()) as { error?: { message?: string } };
-    throw new Error(`Media container failed: ${err.error?.message ?? containerRes.status}`);
-  }
-  const { id: creationId } = (await containerRes.json()) as { id: string };
-
-  await pollMediaContainerReady(
-    metaGraphUrl(`${creationId}?fields=status_code&access_token=${encodeURIComponent(pageToken)}`),
-    "instagram",
-  );
-
-  // Publish
-  const publishParams = new URLSearchParams({ creation_id: creationId, access_token: pageToken });
-  const publishRes = await fetch(
-    metaGraphUrl(`${igUserId}/media_publish`),
-    { method: "POST", body: publishParams },
-  );
-  if (publishRes.status === 401 || publishRes.status === 403) throw new TokenExpiredError("instagram", publishRes.status);
-  if (!publishRes.ok) {
-    const err = (await publishRes.json()) as { error?: { message?: string } };
-    throw new Error(`Publish failed: ${err.error?.message ?? publishRes.status}`);
-  }
-  const published = (await publishRes.json().catch(() => ({}))) as { id?: string };
-  return { postId: published.id ?? null };
+  return publishInstagramPost(metaGraphUrl, igUserId, pageToken, asset, "instagram");
 }
 
 /* ── Instagram (direct login) ───────────────────────────────────────── */
@@ -337,11 +432,7 @@ async function publishToInstagramBusiness(
 ): Promise<PublishResult> {
   const token = credentials.accessToken;
   if (!token) throw new Error("No access token");
-  const photo = photoUrl(asset);
-  const clip = photo ? null : clipUrl(asset);
-  if (!photo && !clip) {
-    throw new Error("Instagram posts require an image or video");
-  }
+  assertInstagramHasMedia(asset);
 
   const meRes = await fetch(
     metaInstagramGraphUrl(`me?fields=id&access_token=${encodeURIComponent(token)}`),
@@ -351,39 +442,7 @@ async function publishToInstagramBusiness(
   const { id: igUserId } = (await meRes.json()) as { id?: string };
   if (!igUserId) throw new Error("Could not resolve Instagram account id");
 
-  const containerParams = new URLSearchParams({
-    caption: asset.content,
-    access_token: token,
-    ...(photo ? { image_url: photo } : { media_type: "REELS", video_url: clip!, share_to_feed: "true" }),
-  });
-  const containerRes = await fetch(
-    metaInstagramGraphUrl(`${igUserId}/media`),
-    { method: "POST", body: containerParams },
-  );
-  if (containerRes.status === 401 || containerRes.status === 403) throw new TokenExpiredError("instagram_business", containerRes.status);
-  if (!containerRes.ok) {
-    const err = (await containerRes.json()) as { error?: { message?: string } };
-    throw new Error(`Media container failed: ${err.error?.message ?? containerRes.status}`);
-  }
-  const { id: creationId } = (await containerRes.json()) as { id: string };
-
-  await pollMediaContainerReady(
-    metaInstagramGraphUrl(`${creationId}?fields=status_code&access_token=${encodeURIComponent(token)}`),
-    "instagram_business",
-  );
-
-  const publishParams = new URLSearchParams({ creation_id: creationId, access_token: token });
-  const publishRes = await fetch(
-    metaInstagramGraphUrl(`${igUserId}/media_publish`),
-    { method: "POST", body: publishParams },
-  );
-  if (publishRes.status === 401 || publishRes.status === 403) throw new TokenExpiredError("instagram_business", publishRes.status);
-  if (!publishRes.ok) {
-    const err = (await publishRes.json()) as { error?: { message?: string } };
-    throw new Error(`Publish failed: ${err.error?.message ?? publishRes.status}`);
-  }
-  const published = (await publishRes.json().catch(() => ({}))) as { id?: string };
-  return { postId: published.id ?? null };
+  return publishInstagramPost(metaInstagramGraphUrl, igUserId, token, asset, "instagram_business");
 }
 
 /* ── Facebook ────────────────────────────────────────────────────────── */
