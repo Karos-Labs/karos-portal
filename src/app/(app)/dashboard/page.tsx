@@ -8,6 +8,8 @@ import { Icon } from "@/components/icon";
 import { AgentMark } from "@/components/agent-identity";
 import { JobStatusBadge } from "@/components/job-status";
 import { MyActionItems } from "@/components/my-action-items";
+import { WaitingOnYou } from "@/components/waiting-on-you";
+import { readRunsWaitingOnYou } from "@/lib/agent-engine/read-run";
 import { relativeTime } from "@/lib/utils";
 import { AGENT_SERVICE_AGENT_ID } from "@/lib/agent-service/products";
 
@@ -50,6 +52,11 @@ export default async function DashboardPage() {
   // is broken." A recent-failures banner surfaces that immediately.
   const recentFailedJobs = jobsThisWeek.filter((j) => j.status === "failed");
 
+  // Runs that stopped and are waiting for a person. Read from `jobs` AFTER the
+  // visibility fence above, never from a status query over every tenant's
+  // runs — a fence applied after the read is a fence somebody has to remember.
+  const { items: waitingOnYou, truncated: waitingTruncated } = await readRunsWaitingOnYou(jobs);
+
   return (
     <>
       <PageHeader
@@ -71,6 +78,18 @@ export default async function DashboardPage() {
         <StatCard label="Jobs this week" value={jobsThisWeek.length} icon={<Icon name="ListChecks" className="h-5 w-5" />} />
         <StatCard label="Delivered" value={delivered} icon={<Icon name="Send" className="h-5 w-5" />} />
       </div>
+
+      {/*
+        ABOVE the failures, deliberately. A failed run is something that has
+        already happened; a parked gate is something still waiting for you, and
+        in production the oldest had been waiting 734 hours because nothing
+        anywhere said so.
+      */}
+      {waitingOnYou.length > 0 && (
+        <div className="mt-6">
+          <WaitingOnYou items={waitingOnYou} clients={clients} truncated={waitingTruncated} />
+        </div>
+      )}
 
       {recentFailedJobs.length > 0 && (
         <Link
