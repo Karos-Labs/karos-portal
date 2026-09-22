@@ -102,13 +102,62 @@ export interface AgentEngineGateRecord {
   kind: string;
   payload: unknown;
   requiredRole: string;
-  response?: { decision: "approve" | "reject"; actor: string; at: string; notes?: string };
+  /**
+   * What happens if nobody decides — agent-engine's `GateTimeout`
+   * (`packages/core/src/types/gate.ts`): `duration` like `"1h"`/`"6h"`/`"24h"`,
+   * `onTimeout` `"auto_approve"` (the draft ships itself), `"hold"` or
+   * `"escalate"`. Absent on a gate from before timeouts existed.
+   */
+  timeout?: { duration: string; onTimeout: string; reason?: string; flags?: string[] };
+  /**
+   * The decision on this gate, once there is one — `decision` mirrors the
+   * engine's `GateResponseSchema` (`revise` was missing here until 2026-09-22,
+   * though the engine has accepted it since the review cycle existed).
+   * `actor` is `system:gate-timeout` when the timeout decided, never a person.
+   *
+   * PRESENT ON A GATE THE RUN IS STILL PARKED AT means the decision was
+   * recorded and the run has not yet moved past it — either the continuation
+   * is about to start (the engine hands it to its worker) or the run is
+   * wedged and the engine's sweep will apply it. Either way there is nothing
+   * left for a reviewer to decide, and the panel must not offer buttons that
+   * will meet a 409.
+   */
+  response?: { decision: "approve" | "revise" | "reject"; actor: string; at: string; notes?: string; reason?: string; feedback?: string };
 }
 
 export interface AgentEngineRunView {
   run: AgentEngineRunRecord;
   steps: AgentEngineStepRecord[];
+  /** The gate the run is parked at, resolved or not — see `AgentEngineGateRecord.response`. */
   pendingGate?: AgentEngineGateRecord;
+}
+
+/**
+ * When an `auto_approve` gate will decide itself, as epoch millis — or
+ * `undefined` for a gate that never does (a `hold`/`escalate` gate, an
+ * unparseable duration, no gate step to date it from).
+ *
+ * Dated from the gate STEP's `startedAt`, which the engine preserves across
+ * replays as the moment the gate opened (`gateStepStartedAt`) — the same
+ * clock its sweep uses to decide the gate is due. The step is looked up by
+ * the gate's workflow-local id (the part after `${runId}__`).
+ */
+export function autoApproveDeadlineMs(gate: AgentEngineGateRecord, steps: readonly AgentEngineStepRecord[]): number | undefined {
+  if (gate.timeout?.onTimeout !== "auto_approve") return undefined;
+  const durationMs = parseGateDurationMs(gate.timeout.duration);
+  if (durationMs === undefined) return undefined;
+  const localId = gate.gateId.startsWith(`${gate.runId}__`) ? gate.gateId.slice(gate.runId.length + 2) : gate.gateId;
+  const step = steps.find((s) => s.stepId === localId || s.stepId.endsWith(`::${localId}`));
+  if (!step) return undefined;
+  return step.startedAt + durationMs;
+}
+
+/** `"1h"`, `"30m"`, `"7d"`, `"45s"` → millis; a mirror of agent-engine's own `parseGateDurationMs`. */
+export function parseGateDurationMs(duration: string): number | undefined {
+  const match = /^(\d+)\s*(s|m|h|d)$/i.exec(duration.trim());
+  if (!match) return undefined;
+  const unit = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2]!.toLowerCase()];
+  return unit === undefined ? undefined : Number(match[1]) * unit;
 }
 
 function isArchivedOutput(output: unknown): output is { archived: true; gcsUri: string; sizeBytes: number } {

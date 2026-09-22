@@ -304,6 +304,8 @@ export function AgentEngineGateApproval({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  /** The engine said this gate is not the one to decide on any more (see `ResolveAgentEngineGateResult.stale`). Buttons off; note kept; reload is the reviewer's. */
+  const [stale, setStale] = useState(false);
   const [notes, setNotes] = useState("");
   /**
    * The reviewer's 1-to-5 stars (RFC-22 §3.2), or `undefined` for "they did
@@ -467,8 +469,18 @@ export function AgentEngineGateApproval({
         ...(templateFeedback.length > 0 ? { templateFeedback } : {}),
         ...(edits !== undefined ? { edits } : {}),
       });
-      if (result.error) setError(result.error);
-      else router.refresh();
+      if (result.error) {
+        setError(result.error);
+        // The gate on screen is not the one to decide on (already decided,
+        // a later round, or the run has moved on). The buttons are switched
+        // off — pressing again would meet the same answer — but the panel is
+        // NOT refreshed away from under the reviewer: the note they typed is
+        // still on screen to copy into the next round, and "Reload" is theirs
+        // to press when they have it.
+        if (result.stale) setStale(true);
+      } else {
+        router.refresh();
+      }
     });
   }
 
@@ -1225,9 +1237,22 @@ export function AgentEngineGateApproval({
           Rate it as a CMO would: would you post this as it is? This tunes the quality checks on future runs.
         </p>
       </div>
-      {error && <span className="text-xs text-danger">{error}</span>}
+      {error && (
+        <div className={`rounded-md border px-2.5 py-2 text-xs ${stale ? "border-warning/40 bg-warning/5 text-foreground" : "text-danger"}`}>
+          <span>{error}</span>
+          {stale && (
+            <>
+              {" "}
+              <button type="button" className="underline" onClick={() => router.refresh()}>
+                Reload this run
+              </button>
+              {notes.trim().length > 0 && <span className="text-muted-2"> — your note above is kept until you do.</span>}
+            </>
+          )}
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" disabled={pending || hasInvalidDesignInput} onClick={() => resolve("approve")}>
+        <Button variant="primary" disabled={pending || stale || hasInvalidDesignInput} onClick={() => resolve("approve")}>
           {pending ? <Spinner className="h-4 w-4" /> : "Approve"}
         </Button>
         {/* The middle path, and the reason this panel exists in this shape:
@@ -1235,14 +1260,14 @@ export function AgentEngineGateApproval({
             threw the whole run away. */}
         <Button
           variant="outline"
-          disabled={pending || notes.trim().length === 0 || hasInvalidDesignInput}
+          disabled={pending || stale || notes.trim().length === 0 || hasInvalidDesignInput}
           onClick={() => resolve("revise")}
         >
           {pending ? <Spinner className="h-4 w-4" /> : "Request changes"}
         </Button>
         <Button
           variant="danger"
-          disabled={pending || notes.trim().length === 0 || hasInvalidDesignInput}
+          disabled={pending || stale || notes.trim().length === 0 || hasInvalidDesignInput}
           onClick={() => resolve("reject")}
         >
           {pending ? <Spinner className="h-4 w-4" /> : "Reject"}
