@@ -5,7 +5,11 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { approveAssetAction, recommendAssetScheduleAction } from "@/lib/actions";
-import { PUBLISHABLE_PLATFORMS, PLATFORM_LABELS } from "@/lib/integrations/platforms";
+import {
+  PUBLISHABLE_PLATFORMS,
+  PLATFORM_LABELS,
+  platformSupportsAssetMedia,
+} from "@/lib/integrations/platforms";
 import { cn } from "@/lib/utils";
 import type { Asset, PublishMode } from "@/lib/types";
 
@@ -44,7 +48,15 @@ export function ApprovePanel({
   onDone: () => void;
 }) {
   const router = useRouter();
-  const compatiblePlatforms = PUBLISHABLE_PLATFORMS[asset.type] ?? [];
+  // PUBLISHABLE_PLATFORMS[type] is the coarse, TYPE-LEVEL ceiling (every
+  // platform that type could ever carry, media aside). This asset's actual
+  // media — does it carry video, an image, or neither — narrows that ceiling
+  // further: a text-only draft should never offer Instagram/TikTok/YouTube,
+  // and a video-less post should never offer YouTube. See
+  // platformSupportsAssetMedia (platforms.ts) for the product owner's rule.
+  const compatiblePlatforms = (PUBLISHABLE_PLATFORMS[asset.type] ?? []).filter((p) =>
+    platformSupportsAssetMedia(p, asset),
+  );
   // The agent's declared channels are the DEFAULT pick, not the ceiling: a
   // client can still check any other connected platform the asset type
   // supports (e.g. an Instagram-agent carousel also going out to TikTok),

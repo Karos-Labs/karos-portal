@@ -13,6 +13,9 @@
  * copy while the two lines a client actually reads went unnoticed.
  */
 
+import { assetImages, assetVideos } from "@/lib/asset-images";
+import type { Asset } from "@/lib/types";
+
 /**
  * Credential fields for the manual-setup accordion.
  *
@@ -155,14 +158,93 @@ export const PENDING_VERIFICATION_PLATFORM_IDS = new Set<string>([]);
  * over this array (see both call sites: `asset.scheduledPlatform ??
  * inferPlatform(...)`). This list only gets reached for a post nobody
  * targeted at all.
+ *
+ * WIDENED 2026-09-22 (product owner ruling on the approve panel's platform
+ * picker): each entry is now the full TYPE-LEVEL CEILING — every platform
+ * that type could ever reasonably carry, media aside. Per-asset media
+ * eligibility (does THIS asset have the video/image a platform requires) is
+ * a separate, narrower filter layered on top only where a human is actually
+ * choosing a platform for one asset — see `PLATFORM_MEDIA_SUPPORT` and
+ * `platformSupportsAssetMedia` below, wired into approve-panel.tsx. This map
+ * stays the coarse ceiling every other consumer (isPublishableAssetType,
+ * pushablePlatformsByClient, the structural audit tests, …) already depends
+ * on for "is this asset type ever publishable, to roughly which platforms" —
+ * widening it is additive and order-preserving (new entries are appended, so
+ * every existing "first compatible+connected" default is unchanged):
+ *   - `instagram_post` gained "linkedin"/"twitter" — an image/carousel post
+ *     is perfectly postable to either, same "any media" rule as everywhere
+ *     else these two appear.
+ *   - `social_post` gained "instagram_business"/"instagram" — it already
+ *     covers TikTok/video-shaped content, which is just as postable to
+ *     Instagram.
+ *   - `article` gained "twitter" — text content, so only the any-media
+ *     platforms (linkedin, twitter) belong; youtube/instagram/tiktok all
+ *     need real media an article never carries.
+ *   - `email`/`note` are unrelated to social publish and stay `[]`.
  */
 export const PUBLISHABLE_PLATFORMS: Record<string, string[]> = {
-  instagram_post: ["instagram_business", "instagram", "tiktok"],
-  social_post: ["twitter", "linkedin", "tiktok", "youtube"],
-  article: ["linkedin"],
+  instagram_post: ["instagram_business", "instagram", "tiktok", "linkedin", "twitter"],
+  social_post: ["twitter", "linkedin", "tiktok", "youtube", "instagram_business", "instagram"],
+  article: ["linkedin", "twitter"],
   email: [],
   note: [],
 };
+
+/**
+ * Per-asset MEDIA eligibility for a platform — the narrower filter layered on
+ * top of `PUBLISHABLE_PLATFORMS`'s type-level ceiling (see that map's own
+ * comment). Product owner's rule set, 2026-09-22:
+ *   - "any": carries any media at all — text-only, image, or video.
+ *   - "video": video only.
+ *   - "image-or-video": image or video, never text-only.
+ *
+ * Reddit deliberately has NO entry here — it is out of scope for this rule
+ * set (see CLAUDE.md's hard "Reddit is draft-only" product rule) and must
+ * never appear in `PUBLISHABLE_PLATFORMS`'s values either.
+ *
+ * TIKTOK GAP: grouped here with Instagram as "image-or-video" per the product
+ * owner's stated rule for what the checkbox OFFERS, but `publishToTikTok`
+ * (publishers.ts) still throws "TikTok posts require a video file" for an
+ * image-only asset — it does not actually support image-only posts today.
+ * Left as-is deliberately (a separate, unscoped decision): an image-only
+ * asset checked for TikTok fails at actual publish time with a real,
+ * recorded per-platform error (`Asset.platformResults`, PR #164), consistent
+ * with this app's "each platform publishes independently" model.
+ */
+export const PLATFORM_MEDIA_SUPPORT: Record<string, "any" | "video" | "image-or-video"> = {
+  linkedin: "any",
+  twitter: "any",
+  youtube: "video",
+  instagram: "image-or-video",
+  instagram_business: "image-or-video",
+  tiktok: "image-or-video",
+};
+
+/**
+ * Whether ONE asset's actual media (not its coarse type) satisfies a
+ * platform's media requirement. Reuses `assetImages`/`assetVideos`
+ * (asset-images.ts) — the same client-safe helpers the asset card and the
+ * detail modal already use to render media previews — rather than a new,
+ * parallel media-detection helper.
+ *
+ * A platform id with no `PLATFORM_MEDIA_SUPPORT` entry defaults to `false`
+ * (never offered): every platform id that can appear in
+ * `PUBLISHABLE_PLATFORMS`'s values has an entry per the rule set above, so
+ * this branch should never actually trigger — it exists only so an unknown
+ * platform id fails closed instead of silently being offered.
+ */
+export function platformSupportsAssetMedia(platformId: string, asset: Asset): boolean {
+  const support = PLATFORM_MEDIA_SUPPORT[platformId];
+  if (!support) return false;
+  if (support === "any") return true;
+
+  const hasVideo = assetVideos(asset).length > 0;
+  if (support === "video") return hasVideo;
+
+  // "image-or-video"
+  const hasImage = assetImages(asset).length > 0;
+  return hasImage || hasVideo;
+}
 
 /**
  * Human-readable platform names for badges / pickers. THE map for displaying a
