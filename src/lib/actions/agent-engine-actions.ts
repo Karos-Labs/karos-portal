@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { creditClientCredits, getJob } from "@/lib/data";
-import { AgentEngineCredentialError, resolveAgentEngineGate } from "@/lib/agent-engine/client";
+import { AgentEngineCredentialError, resolveAgentEngineGate, type AgentEngineRequestError } from "@/lib/agent-engine/client";
 import type { AgentEngineReviewEdits, AgentEngineTemplateFeedback } from "@/lib/agent-engine/types";
 import { requireStaff } from "./_shared";
 
@@ -50,6 +50,79 @@ export interface ResolveAgentEngineGateOptions {
   rating?: number;
 }
 
+export interface ResolveAgentEngineGateResult {
+  error?: string;
+  /**
+   * The page's picture of the gate is out of date — the run has moved on, is
+   * parked at a later round, or this gate was already decided — so the panel
+   * should re-read the run rather than keep offering buttons that will meet
+   * the same answer. Set alongside `error` for exactly those conflicts.
+   */
+  stale?: true;
+}
+
+/**
+ * The engine's structured 409s (agent-engine `GateConflictBody`, 2026-09-22),
+ * as sentences a reviewer can act on. Each says what the run is actually
+ * doing and what, if anything, pressing again would achieve — because the
+ * one message this used to show, "Please try again", was the one thing
+ * guaranteed not to help.
+ */
+function describeGateConflict(e: AgentEngineRequestError): { error: string; stale?: true } {
+  const when = typeof e.body.resolvedAt === "string" ? formatWhen(e.body.resolvedAt) : undefined;
+  const by = typeof e.body.resolvedBy === "string" ? e.body.resolvedBy : undefined;
+  const decision = typeof e.body.resolvedDecision === "string" ? DECISION_WORDS[e.body.resolvedDecision] ?? e.body.resolvedDecision : undefined;
+  switch (e.code) {
+    case "RUN_NOT_AWAITING_GATE": {
+      const status = typeof e.body.runStatus === "string" ? e.body.runStatus : undefined;
+      return {
+        error:
+          status === "running"
+            ? "This run is already continuing — a decision on this review was applied and the agent is working on it. Nothing to redo; the page will follow along."
+            : `This run is no longer waiting for a review${status ? ` (it is ${RUN_STATUS_WORDS[status] ?? status})` : ""}. Refresh to see where it stands.`,
+        stale: true,
+      };
+    }
+    case "GATE_NOT_PENDING":
+      return { error: "The run has moved on to a newer review round than the one shown here. Refresh to see the current draft.", stale: true };
+    case "GATE_ALREADY_RESOLVED":
+      return {
+        error:
+          by === "system:gate-timeout"
+            ? `This draft approved itself when its review window ran out${when ? ` at ${when}` : ""}, and the run is continuing with that approval. Your note was not applied to this round.`
+            : `This review was already decided${decision ? ` — ${decision}` : ""}${by ? ` by ${by}` : ""}${when ? ` at ${when}` : ""} — and the run is continuing with that decision. Your note was not applied.`,
+        stale: true,
+      };
+    case "RUN_BUSY":
+      return { error: "Your decision was recorded. The run is being worked on right now and will pick it up; nothing to redo.", stale: true };
+    case "TIMEOUT":
+      return { error: "The agent engine did not answer in time. Your decision may still have been recorded — refresh in a moment before deciding again." };
+    default:
+      return { error: e.message };
+  }
+}
+
+/** Matched on NAME, like `AgentEngineCredentialError` is elsewhere, so it survives module mocking. */
+function isAgentEngineRequestError(e: unknown): e is AgentEngineRequestError {
+  return e instanceof Error && e.name === "AgentEngineRequestError" && typeof (e as { body?: unknown }).body === "object";
+}
+
+const DECISION_WORDS: Readonly<Record<string, string>> = { approve: "approved", revise: "changes requested", reject: "rejected" };
+const RUN_STATUS_WORDS: Readonly<Record<string, string>> = {
+  running: "running",
+  completed: "finished",
+  failed: "failed",
+  degraded: "stopped on an error",
+  held: "held",
+  blocked_intake: "blocked on missing client input",
+};
+
+function formatWhen(iso: string): string | undefined {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return undefined;
+  return new Date(t).toLocaleString("en-GB", { hour: "2-digit", minute: "2-digit", day: "numeric", month: "short", timeZone: "Asia/Jerusalem" });
+}
+
 /**
  * Approves or rejects an agent-engine run's currently-pending gate — the
  * Task 3 counterpart to the legacy agent-service flow's `ApprovePanel`
@@ -58,7 +131,11 @@ export interface ResolveAgentEngineGateOptions {
  * before agent-engine). Calls agent-engine's own
  * `POST /api/v1/runs/:runId/resume` directly — this is a synchronous RPC,
  * not something that goes through Pub/Sub (dispatch is fire-and-forget; a
- * gate decision needs a real response to know whether it landed).
+ * gate decision needs a real response to know whether it landed). Since
+ * agent-engine's 2026-09-22 change the engine answers 202 once the decision
+ * is RECORDED and runs the rest of the workflow on its worker, so this call
+ * is quick again; before that it ran the redraft inline and this client's
+ * 30s timeout severed every "Request changes" on a drafting agent.
  *
  * An options object rather than the previous five positional arguments —
  * `edits` made a sixth, and positional optionals past four are how a
@@ -68,7 +145,7 @@ export async function resolveAgentEngineGateAction(
   jobId: string,
   gateId: string,
   options: ResolveAgentEngineGateOptions,
-): Promise<{ error?: string }> {
+): Promise<ResolveAgentEngineGateResult> {
   const { decision, notes, templateFeedback, edits, rating } = options;
   const user = await requireStaff();
   const job = await getJob(jobId);
@@ -126,6 +203,14 @@ export async function resolveAgentEngineGateAction(
     if (e instanceof AgentEngineCredentialError) {
       console.error(`[agent-engine] gate "${gateId}" on job "${jobId}" was not sent: no ID token could be minted`, e);
       return { error: "Cannot reach the agent engine: this portal is not authenticated to it. Your decision was not sent — contact an administrator rather than retrying." };
+    }
+    if (isAgentEngineRequestError(e)) {
+      const described = describeGateConflict(e);
+      // The page is showing a gate that is not the one to decide on — bring
+      // it up to date on the way back, so the buttons the reviewer sees next
+      // are for the run as it actually is.
+      if (described.stale) revalidatePath(`/jobs/${jobId}`);
+      return described;
     }
     return { error: e instanceof Error ? e.message : "Failed to resolve the gate." };
   }
