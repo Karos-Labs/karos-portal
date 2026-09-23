@@ -44,7 +44,7 @@ import {
   assetFileStem,
   assetImages,
   assetLiMedia,
-  assetVideoSrc,
+  assetVideoPlaybackSrc,
   assetVideos,
 } from "@/lib/asset-images";
 import { templateForAsset } from "@/lib/post-chain";
@@ -283,6 +283,18 @@ export function AssetDetailModal({
 
   const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
   const imageConcept = asset.meta?.imageConcept as string | undefined;
+  /**
+   * What the item is, in its producer's words. The lab output contract's
+   * `about.txt` ("1-3 plain sentences the portal shows next to the item")
+   * has been written to `meta.about` by every importer since 2026-07, and
+   * nothing rendered it. Don Techno's runway sync (scripts/sync-don-techno-
+   * calendar.ts) puts the posting note there: reel or carousel, which file
+   * goes first, the credit line, who to invite as collaborator. Read
+   * leniently and shown only when there is text; a locked asset's meta never
+   * reaches this point (redactLockedAsset strips it).
+   */
+  const aboutNote =
+    typeof asset.meta?.about === "string" && asset.meta.about.trim().length > 0 ? asset.meta.about.trim() : undefined;
 
   /**
    * D11's line: what this post is for, who it speaks to, and why now.
@@ -484,7 +496,7 @@ export function AssetDetailModal({
         {videos.map((v, i) => (
           <video
             key={v.url}
-            src={assetVideoSrc(asset.id, i)}
+            src={assetVideoPlaybackSrc(asset, i)}
             controls
             preload="metadata"
             {...(coverImageUrl ? { poster: coverImageUrl } : {})}
@@ -603,6 +615,13 @@ export function AssetDetailModal({
               ))}
             </dl>
           </div>
+        )}
+
+        {aboutNote && (
+          <p className="rounded-lg bg-surface-2 p-2 text-xs text-muted">
+            <span className="font-medium text-foreground">Note: </span>
+            {aboutNote}
+          </p>
         )}
 
         {imageConcept && (

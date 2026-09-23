@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { assetDownloadTargets, assetVideoSrc, assetVideos } from "@/lib/asset-images";
+import { assetDownloadTargets, assetVideoPlaybackSrc, assetVideoSrc, assetVideos, firebaseStorageObject } from "@/lib/asset-images";
 import { isErrorDocumentContentType, isVideoContentType } from "@/lib/media-type";
 import { resolveAssetVideoSource, videoMimeFromPath } from "@/lib/asset-video-source";
 import type { Asset } from "@/lib/types";
@@ -69,6 +69,21 @@ vi.mock("@/lib/gcs-media", () => ({
   ),
 }));
 
+// The Firebase bucket the admin SDK opens, with a signer that records what it
+// was asked for. `createFirebaseDownloadSignedUrl` refuses any other bucket.
+vi.mock("@/lib/firebase/admin", () => ({
+  adminBucket: () => ({
+    name: "our-firebase-bucket",
+    file: (path: string) => ({
+      getSignedUrl: async (o: { responseDisposition?: string; responseType?: string }) => [
+        `https://fb-signed.test/${path}?sig=fb` +
+          (o.responseDisposition ? `&response-content-disposition=${encodeURIComponent(o.responseDisposition)}` : "") +
+          (o.responseType ? `&response-content-type=${encodeURIComponent(o.responseType)}` : ""),
+      ],
+    }),
+  }),
+}));
+
 import * as data from "@/lib/data";
 import * as gcs from "@/lib/gcs-media";
 import { GET as downloadGET } from "@/app/api/assets/[id]/download/route";
@@ -104,6 +119,19 @@ function makeClip(overrides: Partial<Asset> = {}): Asset {
   return makeAsset({
     videoUrl: "https://storage.googleapis.com/bucket/clients/c1/podcast-clips/1-clip.mp4?X-Goog-Expires=604800",
     meta: { bulkUpload: true, gcsPath: "clients/c1/podcast-clips/1-clip.mp4" },
+    ...overrides,
+  });
+}
+
+/** A clip hosted in Firebase Storage: a token URL, no gcsPath (lab imports, the Don Techno runway sync). */
+const FIREBASE_CLIP =
+  "https://firebasestorage.googleapis.com/v0/b/our-firebase-bucket/o/lab-imports%2Flab-dontechno%2F2026-W39%2Fspilia%2Fslide-1.mp4?alt=media&token=8f1c";
+function makeFirebaseClip(overrides: Partial<Asset> = {}): Asset {
+  return makeAsset({
+    title: "Spilia Mykonos",
+    videoUrl: FIREBASE_CLIP,
+    imageUrl: "https://firebasestorage.googleapis.com/v0/b/our-firebase-bucket/o/cover.jpg?alt=media&token=c0",
+    meta: { source: "don-techno-auto", files: [{ name: "slide-1.mp4", url: FIREBASE_CLIP }] },
     ...overrides,
   });
 }
@@ -206,6 +234,63 @@ describe("resolveAssetVideoSource picks the URL a clip can actually be fetched f
 });
 
 /* ═══ 2. the content-type split — denylist for photos, allowlist for clips ═ */
+
+describe("branch 5 — a Firebase-hosted clip is signed for download by the Firebase identity", () => {
+  function firebaseSigner() {
+    const calls: Array<{ bucket: string; path: string; opts: { downloadFilename: string; contentType?: string } }> = [];
+    const signFirebaseObject = async (bucket: string, path: string, opts: { downloadFilename: string; contentType?: string }) => {
+      calls.push({ bucket, path, opts });
+      return `https://fb-signed.test/${path}?dl`;
+    };
+    return { signFirebaseObject, calls };
+  }
+  const neverSign = async () => {
+    throw new Error("the media-bucket signer must not be asked about a Firebase object");
+  };
+
+  it("parses the token URL into the bucket and the decoded object path", () => {
+    expect(firebaseStorageObject(FIREBASE_CLIP)).toEqual({
+      bucket: "our-firebase-bucket",
+      path: "lab-imports/lab-dontechno/2026-W39/spilia/slide-1.mp4",
+    });
+    // No token: not durable, not ours to sign.
+    expect(firebaseStorageObject("https://firebasestorage.googleapis.com/v0/b/x/o/clip.mp4?alt=media")).toBeNull();
+    expect(firebaseStorageObject("https://storage.googleapis.com/bucket/clip.mp4?X-Goog-Expires=1")).toBeNull();
+  });
+
+  it("signs the download with an attachment name and the clip's own content type", async () => {
+    const { signFirebaseObject, calls } = firebaseSigner();
+    const out = await resolveAssetVideoSource(makeFirebaseClip(), 0, neverSign, {
+      downloadFilename: "spilia-mykonos.mp4",
+      signFirebaseObject,
+    });
+    expect(out).toEqual({ origin: "signed", url: "https://fb-signed.test/lab-imports/lab-dontechno/2026-W39/spilia/slide-1.mp4?dl" });
+    expect(calls).toEqual([
+      {
+        bucket: "our-firebase-bucket",
+        path: "lab-imports/lab-dontechno/2026-W39/spilia/slide-1.mp4",
+        opts: { downloadFilename: "spilia-mykonos.mp4", contentType: "video/mp4" },
+      },
+    ]);
+  });
+
+  it("keeps the durable stored URL for playback — nothing to re-sign, nothing to gate", async () => {
+    const { signFirebaseObject, calls } = firebaseSigner();
+    const out = await resolveAssetVideoSource(makeFirebaseClip(), 0, neverSign, { signFirebaseObject });
+    expect(out).toEqual({ origin: "stored", url: FIREBASE_CLIP });
+    expect(calls).toEqual([]);
+  });
+
+  it("falls back to the stored URL when the Firebase signer refuses (not our bucket, IAM)", async () => {
+    const out = await resolveAssetVideoSource(makeFirebaseClip(), 0, neverSign, {
+      downloadFilename: "spilia-mykonos.mp4",
+      signFirebaseObject: async () => {
+        throw new Error("Refusing to sign for a bucket that is not ours");
+      },
+    });
+    expect(out).toEqual({ origin: "stored", url: FIREBASE_CLIP });
+  });
+});
 
 describe("photos use a denylist: only a positive error document is refused", () => {
   it("refuses the error documents a dead storage link returns", () => {
@@ -353,6 +438,48 @@ describe("the download route", () => {
     expect(res.headers.get("Content-Disposition")).toBe('attachment; filename="podcast-cut-3.mp4"');
     expect(await res.text()).toBe("mp4-bytes");
     expect(vi.mocked(gcs.createDownloadSignedUrl)).not.toHaveBeenCalled();
+  });
+
+  it("redirects a Firebase-hosted clip to a URL signed by the Firebase identity, never through this server", async () => {
+    // The Don Techno case: a 36 MB reel with no meta.gcsPath. Proxied, it hit
+    // Cloud Run's 32 MiB fixed-length response cap and landed as a 0 KB file
+    // on the reviewer's phone. Redirected, the bytes are browser↔bucket.
+    vi.mocked(data.getAsset).mockResolvedValue(makeFirebaseClip() as any);
+    stubFetch(() => {
+      throw new Error("a Firebase-hosted clip must not be proxied when it can be signed");
+    });
+
+    const res = await call(downloadGET, "http://t/api/assets/a1/download?kind=video");
+
+    expect(res.status).toBe(302);
+    const location = decodeURIComponent(res.headers.get("Location")!);
+    expect(location).toContain("https://fb-signed.test/lab-imports/lab-dontechno/2026-W39/spilia/slide-1.mp4?sig=fb");
+    expect(location).toContain('attachment; filename="spilia-mykonos.mp4"');
+    expect(location).toContain("response-content-type=video/mp4");
+    // The media bucket's signer has no standing in the Firebase bucket.
+    expect(vi.mocked(gcs.createDownloadSignedUrl)).not.toHaveBeenCalled();
+  });
+
+  it("still proxies a Firebase clip in a bucket that is not ours — chunked, with no Content-Length", async () => {
+    const elsewhere = makeFirebaseClip({
+      videoUrl: FIREBASE_CLIP.replace("our-firebase-bucket", "someone-elses-bucket"),
+      meta: { files: [] },
+    });
+    vi.mocked(data.getAsset).mockResolvedValue(elsewhere as any);
+    stubFetch(() => {
+      const r = bytes("mp4-bytes", "video/mp4");
+      r.headers.set("content-length", "9");
+      return r;
+    });
+
+    const res = await call(downloadGET, "http://t/api/assets/a1/download?kind=video");
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Disposition")).toBe('attachment; filename="spilia-mykonos.mp4"');
+    // Cloud Run caps a fixed-length HTTP/1 response at 32 MiB; a chunked one
+    // has no cap. Copying the upstream length through is what broke.
+    expect(res.headers.get("Content-Length")).toBeNull();
+    expect(await res.text()).toBe("mp4-bytes");
   });
 
   it("fails a proxied clip with the existing 502 shape when the bytes are an error document", async () => {
@@ -678,14 +805,24 @@ describe("the wiring the executed tests rest on", () => {
     expect(source(ASSET_MEDIA)).not.toMatch(/updateAsset|createAsset|\.set\(|\.update\(/);
   });
 
-  it("points every <video> at our route rather than at a stored URL", () => {
+  it("points every <video> at the playback source: our route for a signed clip, the durable URL for a Firebase one", () => {
     expect(assetVideoSrc("a1", 0)).toBe("/api/assets/a1/media?i=0");
     expect(assetVideoSrc("a1", 2)).toBe("/api/assets/a1/media?i=2");
+    // A bulk upload's stored URL expires: the route re-signs it per request.
+    expect(assetVideoPlaybackSrc(makeClip(), 0)).toBe("/api/assets/a1/media?i=0");
+    // A Firebase token URL never expires, and on iOS Safari the media loader
+    // does not carry the session cookie through our route's redirect: the
+    // element gets the URL itself.
+    expect(assetVideoPlaybackSrc(makeFirebaseClip(), 0)).toBe(FIREBASE_CLIP);
+    // A tokenless Firebase URL is not durable: back through the route.
+    expect(
+      assetVideoPlaybackSrc(makeAsset({ videoUrl: "https://firebasestorage.googleapis.com/v0/b/x/o/clip.mp4?alt=media" }), 0),
+    ).toBe("/api/assets/a1/media?i=0");
 
     for (const rel of [CARD, MODAL]) {
       const src = source(rel);
       expect(src, `${rel} still renders a stored URL into <video>`).not.toContain("src={v.url}");
-      expect(src).toContain("src={assetVideoSrc(asset.id, i)}");
+      expect(src).toContain("src={assetVideoPlaybackSrc(asset, i)}");
     }
   });
 

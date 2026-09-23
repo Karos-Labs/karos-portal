@@ -14,7 +14,7 @@ import {
   assetFileStem,
   assetImages,
   assetLiMedia,
-  assetVideoSrc,
+  assetVideoPlaybackSrc,
   assetVideos,
 } from "@/lib/asset-images";
 import {
@@ -644,7 +644,7 @@ export function AssetCard({
               {videos.map((v, i) => (
                 <video
                   key={v.url}
-                  src={assetVideoSrc(asset.id, i)}
+                  src={assetVideoPlaybackSrc(asset, i)}
                   controls
                   preload="metadata"
                   className="max-h-96 w-full max-w-sm rounded-lg border border-border bg-black object-contain"

@@ -122,13 +122,18 @@ export async function GET(
       return NextResponse.json({ error: "Could not fetch video" }, { status: 502 });
     }
 
-    const length = res.headers.get("content-length");
-    // Streamed, not buffered: a clip is far too large to hold in memory.
+    // Streamed, not buffered: a clip is far too large to hold in memory. And
+    // streamed WITHOUT a Content-Length, on purpose: Cloud Run caps an HTTP/1
+    // response at 32 MiB unless it is chunked or streaming, and a fixed length
+    // is neither. This used to copy the upstream length through, and every
+    // clip over 32 MiB died at that line — Don Techno's reviewer got a 0 KB
+    // "download" file on his phone for the three reels above that size while
+    // the smaller eight worked (2026-09-23). Dropping the header makes the
+    // response chunked, which is the exemption the limit names.
     return new NextResponse(res.body, {
       headers: {
         "Content-Type": res.headers.get("content-type") ?? "video/mp4",
         "Content-Disposition": `attachment; filename="${filename}"`,
-        ...(length ? { "Content-Length": length } : {}),
         "Cache-Control": "private, no-store",
       },
     });

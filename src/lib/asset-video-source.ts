@@ -1,4 +1,4 @@
-import { assetVideos } from "@/lib/asset-images";
+import { assetVideos, firebaseStorageObject } from "@/lib/asset-images";
 import type { Asset } from "@/lib/types";
 
 /**
@@ -31,6 +31,19 @@ export type VideoUrlSigner = (
   opts: { downloadFilename?: string; contentType?: string },
 ) => Promise<string>;
 
+/**
+ * Mints a DOWNLOAD URL for an object in the Firebase Storage bucket, signed by
+ * the Firebase identity that wrote it (never the media bucket's ADC signer —
+ * that runtime account has no standing in the Firebase bucket, and a URL it
+ * signed would 403 the moment the browser followed it). Injected for the same
+ * reason as `VideoUrlSigner`.
+ */
+export type FirebaseObjectSigner = (
+  bucket: string,
+  path: string,
+  opts: { downloadFilename: string; contentType?: string },
+) => Promise<string>;
+
 const VIDEO_MIME: Record<string, string> = {
   mp4: "video/mp4",
   m4v: "video/x-m4v",
@@ -53,7 +66,7 @@ export function videoMimeFromPath(path: string): string | null {
 /**
  * Resolve the clip at `index` to a URL that works right now.
  *
- * Four outcomes, all reachable and all asserted in
+ * Five outcomes, all reachable and all asserted in
  * `src/lib/__tests__/asset-media-download.test.ts`:
  *
  *  1. no clip at that index                       → null
@@ -61,6 +74,15 @@ export function videoMimeFromPath(path: string): string | null {
  *  3. no `meta.gcsPath`, or it names another file → `origin: "stored"`
  *  4. the signer throws (bucket unset in an environment, IAM hiccup)
  *                                                 → `origin: "stored"`
+ *  5. a DOWNLOAD of a clip hosted in Firebase Storage (a token URL, no
+ *     `meta.gcsPath`: every lab import and every Don Techno runway clip), when
+ *     a `signFirebaseObject` is supplied → signed with an attachment
+ *     disposition, `origin: "signed"`, so the browser goes straight to the
+ *     bucket. Before this branch those clips were proxied through the app,
+ *     and Cloud Run caps a fixed-length HTTP/1 response at 32 MiB: every reel
+ *     over that size (three of Don Techno's first eleven) downloaded as an
+ *     empty file on the reviewer's phone. If the signer throws, or it is not
+ *     our bucket, branch 3 still proxies it.
  *
  * `meta.gcsPath` names exactly one object: the clip that landed in `videoUrl`.
  * Clips discovered in `meta.videos` / `meta.files` are other files entirely, so
@@ -74,13 +96,26 @@ export async function resolveAssetVideoSource(
   asset: Asset,
   index: number,
   sign: VideoUrlSigner,
-  opts: { downloadFilename?: string } = {},
+  opts: { downloadFilename?: string; signFirebaseObject?: FirebaseObjectSigner } = {},
 ): Promise<AssetVideoSource | null> {
   const video = assetVideos(asset)[index];
   if (!video) return null;
 
   const gcsPath = typeof asset.meta?.gcsPath === "string" ? asset.meta.gcsPath : null;
   if (!gcsPath || !asset.videoUrl || video.url !== asset.videoUrl) {
+    const object = opts.downloadFilename && opts.signFirebaseObject ? firebaseStorageObject(video.url) : null;
+    if (object && opts.downloadFilename && opts.signFirebaseObject) {
+      const contentType = videoMimeFromPath(object.path);
+      try {
+        const url = await opts.signFirebaseObject(object.bucket, object.path, {
+          downloadFilename: opts.downloadFilename,
+          ...(contentType ? { contentType } : {}),
+        });
+        return { origin: "signed", url };
+      } catch {
+        // Not our bucket, or signing failed: the proxy still serves it.
+      }
+    }
     return { origin: "stored", url: video.url };
   }
 

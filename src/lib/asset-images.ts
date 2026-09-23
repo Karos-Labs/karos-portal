@@ -165,6 +165,56 @@ export function assetVideoSrc(assetId: string, index: number): string {
   return `/api/assets/${assetId}/media?i=${index}`;
 }
 
+/**
+ * A Firebase Storage object URL as the admin SDK and the REST uploader mint it:
+ * `https://firebasestorage.googleapis.com/v0/b/<bucket>/o/<encoded path>?alt=media&token=<uuid>`.
+ * Durable: the token lives as long as the object does (nothing rotates it), so
+ * unlike a V4 signed URL it can be handed to a browser today and followed next
+ * month. Null for anything else, including a Firebase URL with no token.
+ */
+export function firebaseStorageObject(url: string): { bucket: string; path: string } | null {
+  try {
+    const u = new URL(url);
+    if (u.hostname !== "firebasestorage.googleapis.com") return null;
+    const m = u.pathname.match(/^\/v0\/b\/([^/]+)\/o\/(.+)$/);
+    if (!m || !u.searchParams.get("token")) return null;
+    return { bucket: decodeURIComponent(m[1]), path: decodeURIComponent(m[2]) };
+  } catch {
+    return null;
+  }
+}
+
+/** A stored clip URL that will still answer tomorrow: today, a Firebase Storage token URL. */
+export function isDurableVideoUrl(url: string): boolean {
+  return firebaseStorageObject(url) !== null;
+}
+
+/**
+ * What a `<video>` element should be given for a clip.
+ *
+ * `assetVideoSrc` above exists for the clip whose stored URL EXPIRES (a bulk
+ * upload's 7-day V4 URL): the route re-signs it per request. A Firebase-hosted
+ * clip has the opposite problem. Its URL is durable, and the route only ever
+ * 302s to it unchanged, but on the way there the request has to carry the
+ * session cookie and follow a redirect from inside the media loader, and on an
+ * iPhone that is exactly the path that failed: Don Techno's reviewer opened a
+ * reel on Safari for iOS on 2026-09-23 and got a black player with the
+ * cannot-play glyph, while the same clip played on a desktop. Safari's media
+ * loader is a separate process that does not reliably send the page's
+ * cookies, so the route answered 401 and the element gave up. Pointing the
+ * element straight at the durable URL removes both the cookie and the
+ * redirect from the media fetch. Nothing new is exposed: the same URL is
+ * already on the asset the client component holds (`meta.files`), and a
+ * locked post never reaches a client with its meta intact.
+ *
+ * Everything else keeps going through the route.
+ */
+export function assetVideoPlaybackSrc(asset: Pick<Asset, "id" | "videoUrl" | "meta">, index: number): string {
+  const clip = assetVideos(asset as Asset)[index];
+  if (clip && isDurableVideoUrl(clip.url)) return clip.url;
+  return assetVideoSrc(asset.id, index);
+}
+
 /** A download control to render for an asset: one per downloadable payload. */
 export type AssetDownloadTarget = {
   kind: "image" | "video";
