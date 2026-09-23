@@ -33,12 +33,25 @@
  *   FIRESTORE_DATABASE_ID=prep        npx tsx scripts/sync-don-techno-calendar.ts
  *   FIRESTORE_DATABASE_ID=prep        npx tsx scripts/sync-don-techno-calendar.ts --apply
  *   FIRESTORE_DATABASE_ID="(default)" npx tsx scripts/sync-don-techno-calendar.ts --apply
- *   options: --week=2026-W39   --client=<clientId>   --dropbox=<path>   --repo=<path>   --no-cover
+ *   options: --week=2026-W39   --client=<clientId>   --dropbox=<path>   --repo=<path>   --no-cover   --release-now
+ *
+ * --release-now: every post the plan dates in the future is dated TODAY (Madrid)
+ * instead, at its planned time of day plus five minutes per day it was moved,
+ * so the whole queue is open to the client at once and still reads in plan
+ * order. The plan's own time stays in meta.runwayScheduledAt. Albert,
+ * 2026-09-23: the engine builds new posts every day and Daniel should be able
+ * to open and post everything that is built, not wait for the planned day.
+ *            --report=<path> (write the portal's status of every runway asset as JSON, for the
+ *            engine's catalog: a post the portal marked published becomes posted there)
+ *            --report-only (the report and nothing else)
+ *
+ * The engine's wrapper `scripts/karos_push.sh` (don-techno-auto) runs this after every build
+ * and every morning, so a new post is on the calendar without a manual step.
  */
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
@@ -98,11 +111,20 @@ const FORMAT_LABELS: Record<string, string> = {
 const argv = process.argv.slice(2);
 const APPLY = argv.includes("--apply");
 const NO_COVER = argv.includes("--no-cover");
+const RELEASE_NOW = argv.includes("--release-now");
 const flag = (name: string) => argv.find((a) => a.startsWith(`--${name}=`))?.split("=").slice(1).join("=");
 const WEEK_FILTER = flag("week");
 const CLIENT_ID_ARG = flag("client");
 const DROPBOX = resolve(flag("dropbox") ?? process.env.DT_DROPBOX ?? join(homedir(), "Dropbox", "DonTechnoAuto"));
 const REPO = resolve(flag("repo") ?? join(homedir(), "Code", "don-techno-auto"));
+/**
+ * --report=<path>: write what the portal holds for every runway asset (labRun, status,
+ * publishedAt, scheduledAt) as JSON, so the engine can mark a post the portal published as
+ * posted in its catalog (the reverse direction; the engine's daily job reads it). Read-only.
+ * --report-only: write the report and stop before the plan.
+ */
+const REPORT = flag("report");
+const REPORT_ONLY = argv.includes("--report-only");
 
 /* ── firebase ─────────────────────────────────────────────────────────── */
 function initAdmin(): App {
@@ -190,6 +212,30 @@ function zonedToUtc(ymd: string, hm: string, timeZone: string): number {
   const again = asUtc - tzOffsetMs(ts, timeZone);
   if (again !== ts) ts = again;
   return ts;
+}
+/** Today's date in the posting zone, as YYYY-MM-DD. */
+function todayInZone(timeZone: string, now: number): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(now));
+  const get = (t: string) => parts.find((p) => p.type === t)?.value;
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+function daysBetween(fromYmd: string, toYmd: string): number {
+  const d = (ymd: string) => {
+    const [y, m, dd] = ymd.split("-").map(Number);
+    return Date.UTC(y, m - 1, dd);
+  };
+  return Math.round((d(toYmd) - d(fromYmd)) / 86_400_000);
+}
+/**
+ * Where --release-now puts a post the plan dates after today: today, at the
+ * planned time of day, plus five minutes for every day it was pulled forward,
+ * so three 10:00 reels from three days land at 10:00, 10:05 and 10:10.
+ */
+function releaseSlot(plannedDate: string, time: string, now: number): number | null {
+  const today = todayInZone(POSTING_TIME_ZONE, now);
+  const ahead = daysBetween(today, plannedDate);
+  if (ahead <= 0) return null;
+  return zonedToUtc(today, time, POSTING_TIME_ZONE) + ahead * 5 * 60_000;
 }
 function iso(t: number | null | undefined): string {
   return t == null ? "—" : new Date(t).toISOString().replace(".000Z", "Z");
@@ -308,6 +354,7 @@ interface Planned {
   date: string;
   time: string;
   scheduledAt: number;
+  plannedAt: number;
   catalogStatus: string;
   doc: Omit<Asset, "id">;
   existing: (Asset & { id: string }) | null;
@@ -339,7 +386,9 @@ async function buildPost(args: {
   const date = slot?.date ?? data.slot?.split("/")[0] ?? slug.slice(0, 10);
   const slotName = slot?.slot ?? data.slot?.split("/")[1] ?? (kind === "carousel" ? "carousel" : "reel-1");
   const time = slot?.post_time ?? DEFAULT_TIME_BY_SLOT[slotName] ?? "18:00";
-  const scheduledAt = zonedToUtc(date, time, POSTING_TIME_ZONE);
+  const plannedAt = zonedToUtc(date, time, POSTING_TIME_ZONE);
+  const released = RELEASE_NOW ? releaseSlot(date, time, now) : null;
+  const scheduledAt = released ?? plannedAt;
   const labRun = `${SLUG}/${week}#${slug}`;
   const catalogStatus = catalog?.status ?? (where === "posts" ? "posted" : "built");
 
@@ -424,7 +473,8 @@ async function buildPost(args: {
     date,
     postTime: time,
     postTimeZone: POSTING_TIME_ZONE,
-    runwayScheduledAt: scheduledAt,
+    runwayScheduledAt: plannedAt,
+    ...(released != null ? { releasedAt: now } : {}),
     format: slot?.format ?? data.format ?? null,
     kind,
     ...(slot?.kicker ? { kicker: slot.kicker } : {}),
@@ -454,9 +504,9 @@ async function buildPost(args: {
     scheduledAt,
     scheduledPlatform: "instagram",
     publishMode: "manual" as PublishMode,
-    recommendedAt: scheduledAt,
+    recommendedAt: plannedAt,
     recommendedReason: `Weekly runway ${week}: ${slotName} at ${time} ${POSTING_TIME_ZONE.replace("Europe/", "")}`,
-    ...(posted ? { publishedAt: Math.min(scheduledAt, now) } : {}),
+    ...(posted ? { publishedAt: Math.min(plannedAt, now) } : {}),
     templateKey: template.key,
     templateName: template.name,
     orderKey: `${date}T${time}#${slug}`,
@@ -476,6 +526,7 @@ async function buildPost(args: {
     date,
     time,
     scheduledAt,
+    plannedAt,
     catalogStatus,
     doc,
     existing,
@@ -506,9 +557,11 @@ function updatePatch(p: Planned): Partial<Asset> {
     recommendedReason: p.doc.recommendedReason,
     updatedAt: p.doc.updatedAt,
   };
-  const runwayMoved = exMeta.runwayScheduledAt !== p.scheduledAt;
+  const runwayMoved = exMeta.runwayScheduledAt !== p.plannedAt;
   const handMoved = ex.scheduledAt != null && ex.scheduledAt !== exMeta.runwayScheduledAt;
-  if (runwayMoved || !handMoved || ex.scheduledAt == null) patch.scheduledAt = p.scheduledAt;
+  // --release-now pulls a future-dated post to today even if someone moved it by hand.
+  const releasing = RELEASE_NOW && p.scheduledAt !== p.plannedAt && ex.scheduledAt != null && ex.scheduledAt > p.scheduledAt;
+  if (releasing || runwayMoved || !handMoved || ex.scheduledAt == null) patch.scheduledAt = p.scheduledAt;
   const portalPublished = ex.status === "published" || ex.publishedAt != null;
   if (p.catalogStatus === "posted" && !portalPublished) {
     patch.status = "published";
@@ -580,6 +633,25 @@ async function main() {
   }
   console.log(`Existing runway assets on this client: ${existing.size}`);
 
+  if (REPORT) {
+    const rows = [...existing.entries()]
+      .map(([labRun, a]) => ({
+        labRun,
+        week: labRun.slice(SLUG.length + 1).split("#")[0] ?? null,
+        slug: labRun.split("#")[1] ?? null,
+        assetId: a.id,
+        status: a.status,
+        publishedAt: a.publishedAt ?? null,
+        scheduledAt: a.scheduledAt ?? null,
+        platformPostId: a.platformPostId ?? null,
+        engineStatus: ((a.meta as { engineStatus?: string } | undefined)?.engineStatus ?? null),
+      }))
+      .sort((x, y) => (x.labRun < y.labRun ? -1 : 1));
+    writeFileSync(REPORT, JSON.stringify({ clientId, databaseId, at: now, assets: rows }, null, 2) + "\n");
+    console.log(`Report: ${rows.length} asset(s) → ${REPORT}`);
+    if (REPORT_ONLY) return;
+  }
+
   const catalog = loadCatalog();
   const weeks = readdirSync(join(DROPBOX, "queue", "week"))
     .filter((w) => /^\d{4}-W\d{2}$/.test(w) && (!WEEK_FILTER || w === WEEK_FILTER))
@@ -645,7 +717,7 @@ async function main() {
   for (const p of planned) {
     const flag = p.action === "create" ? "+" : p.action === "update" ? "~" : p.action === "unchanged" ? "=" : "x";
     console.log(
-      `  ${flag} ${p.date} ${p.time} ${p.kind.padEnd(8)} ${p.slug}\n      ${p.doc.title}\n      ${p.doc.status} · ${iso(p.scheduledAt)} · ${p.files} files (${(p.mediaBytes / 1e6).toFixed(1)} MB, ${p.uploads} to upload) · catalog ${p.catalogStatus}${p.existing ? ` · asset ${p.existing.id}` : ""}`,
+      `  ${flag} ${p.date} ${p.time} ${p.kind.padEnd(8)} ${p.slug}\n      ${p.doc.title}\n      ${p.doc.status} · ${iso(p.scheduledAt)}${p.scheduledAt !== p.plannedAt ? ` (released; plan ${iso(p.plannedAt)})` : ""} · ${p.files} files (${(p.mediaBytes / 1e6).toFixed(1)} MB, ${p.uploads} to upload) · catalog ${p.catalogStatus}${p.existing ? ` · asset ${p.existing.id}` : ""}`,
     );
   }
   if (skippedNoMedia.length) console.log(`\nNo media yet (not synced): ${skippedNoMedia.join(", ")}`);
