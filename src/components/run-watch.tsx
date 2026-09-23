@@ -81,6 +81,8 @@ export interface WatchedRun {
    * a value the gate may have rejected while the tab was closed.
    */
   agentDone?: boolean;
+  /** When the engine picked the run up (RunProgressView.startedAt), for the elapsed label. Not persisted: the next tick refills it. */
+  startedAt?: number;
 }
 
 const KEY = "karos.watchedRuns.v1";
@@ -122,7 +124,7 @@ function load(): WatchedRun[] {
 }
 
 /** What survives a reload: the run's identity and its last status, nothing a tick refills. */
-function persistedFields({ headline: _h, shownInPage: _s, agentDone: _d, ...rest }: WatchedRun): WatchedRun {
+function persistedFields({ headline: _h, shownInPage: _s, agentDone: _d, startedAt: _t, ...rest }: WatchedRun): WatchedRun {
   return rest;
 }
 
@@ -243,7 +245,7 @@ async function pollNow() {
         if (res.status === 404) return { jobId, gone: true as const };
         if (!res.ok) return null; // transient - ask again next tick
         const data = (await res.json()) as RunProgressView;
-        return { jobId, status: data.status, headline: data.headline, agentDone: data.agentDone === true };
+        return { jobId, status: data.status, headline: data.headline, agentDone: data.agentDone === true, startedAt: data.startedAt };
       } catch {
         return null; // network hiccup, same as a non-OK response
       }
@@ -260,14 +262,20 @@ async function pollNow() {
       if (!hit || !("status" in hit)) return r;
       // The headline changes while the status stays `running` (writing, then
       // visuals), so it counts as a change too.
-      if (hit.status === r.status && hit.headline === r.headline && hit.agentDone === Boolean(r.agentDone)) {
+      if (
+        hit.status === r.status &&
+        hit.headline === r.headline &&
+        hit.agentDone === Boolean(r.agentDone) &&
+        hit.startedAt === r.startedAt
+      ) {
         return r;
       }
-      const { headline: _h, agentDone: _d, ...base } = r;
+      const { headline: _h, agentDone: _d, startedAt: _t, ...base } = r;
       return {
         ...base,
         status: hit.status,
         ...(hit.headline ? { headline: hit.headline } : {}),
+        ...(hit.startedAt !== undefined ? { startedAt: hit.startedAt } : {}),
         ...(hit.agentDone ? { agentDone: true } : {}),
       };
     });

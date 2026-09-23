@@ -81,6 +81,20 @@ export interface RunProgressView {
    * that can run past an hour. Readers show it as landed.
    */
   agentDone?: boolean;
+  /**
+   * When the engine picked the run up, so a reader can be told how long they
+   * have been waiting rather than only what is happening.
+   *
+   * ELAPSED AND NOT "STEP N OF M", deliberately. A denominator would have to
+   * come from the seeded stage count, and that count has been wrong in
+   * production before — the catalog said instagram had 16 stages while the
+   * engine ran 122. A progress bar built on a stale total is worse than no
+   * bar: it is a promise. Elapsed is always true.
+   *
+   * Absent for a job with no engine run behind it, and after the run ends —
+   * a finished run's duration belongs on the Job page, not in a live dock.
+   */
+  startedAt?: number;
 }
 
 /** The endpoint one run's progress is polled from. One spelling, two readers. */

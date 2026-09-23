@@ -77,7 +77,11 @@ function DockRow({
           works, full once the agent is done, none for a run that stopped. */}
       {outcome !== "stopped" && (
         <div className="mt-2">
-          <AgentRunProgress outcome={outcome} {...(run.headline ? { headline: run.headline } : {})} />
+          <AgentRunProgress
+            outcome={outcome}
+            {...(run.headline ? { headline: run.headline } : {})}
+            {...(run.startedAt !== undefined ? { startedAt: run.startedAt } : {})}
+          />
         </div>
       )}
 
