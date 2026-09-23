@@ -10,6 +10,7 @@ import { JobDeleteButton } from "@/components/job-delete";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { retryJobAction } from "@/lib/actions";
 import { classifyJobError } from "@/lib/job-error-taxonomy";
+import { classifyHold } from "@/lib/hold-taxonomy";
 import { JOB_STATUS_META, jobStatusLabel } from "@/lib/job-status-copy";
 import {
   ALL_JOB_BUCKETS,
@@ -218,6 +219,7 @@ export function JobsList({ jobs, isAdmin }: { jobs: JobListRow[]; isAdmin: boole
               {shown.map((job) => {
                 const inFlight = job.status === "queued" || job.status === "running";
                 const classifiedError = job.status === "failed" ? classifyJobError(job.error) : null;
+                const classifiedHold = job.status === "held" ? classifyHold(job.heldReason) : undefined;
                 return (
                   <li key={job.id}>
                     <div className="flex items-center transition-colors hover:bg-surface-2/40">
@@ -249,16 +251,24 @@ export function JobsList({ jobs, isAdmin }: { jobs: JobListRow[]; isAdmin: boole
                         {job.customAgentId && <RetryButton jobId={job.id} />}
                       </div>
                     )}
-                    {/* The same strip for a held run, in the neutral surface tone
-                        and with no Retry beside it: a hold is a rule declining,
-                        not a breakage to re-attempt, and the reason is the whole
-                        message (unclassified — see `Job.heldReason`). Without it
-                        a held row showed a "Held" badge and no way to learn why
-                        short of opening the run. */}
-                    {job.status === "held" && job.heldReason && (
-                      <div className="border-t border-border bg-surface-2/60 px-5 py-2">
-                        <p className="truncate text-xs text-muted" title={job.heldReason}>
-                          {job.heldReason}
+                    {/* The same strip for a held run, in the neutral surface tone:
+                        a hold is a rule declining, not a breakage to re-attempt.
+                        The raw reason stays — it is what was already here, and it
+                        is what survives a wrong guess — with the ONE thing that
+                        would release it above it, when the reason is one of the
+                        families `hold-taxonomy.ts` was written from.
+
+                        A hold with no known family says nothing extra rather than
+                        inventing an instruction: 42 gates went unanswered and a
+                        reader sent confidently to the wrong place is worse off
+                        than one told only what happened. */}
+                    {job.status === "held" && classifiedHold && (
+                      <div className="space-y-1 border-t border-border bg-surface-2/60 px-5 py-2">
+                        {classifiedHold.action && (
+                          <p className="text-xs font-medium text-foreground">{classifiedHold.action}</p>
+                        )}
+                        <p className="truncate text-xs text-muted" title={classifiedHold.raw}>
+                          {classifiedHold.raw}
                         </p>
                       </div>
                     )}
