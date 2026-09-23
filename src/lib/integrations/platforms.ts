@@ -106,20 +106,27 @@ export const READ_ONLY_PLATFORM_IDS = new Set<string>([
  * because the PLATFORM has not approved the Karos Labs developer account.
  *
  * TikTok is blocked on TikTok verifying that account (call directive D2,
- * 27 Jul 2026). Offering a "Connect with TikTok" button in that state sends the
- * client into a popup that can only fail, so the card says pending verification
- * instead of pretending. DELETE THE ENTRY the day verification lands — nothing
- * else needs changing, the OAuth config is already complete.
+ * 27 Jul 2026 — still true as of the re-confirmation below). Offering a
+ * "Connect with TikTok" button in that state sends the client into a popup
+ * that can only fail, so the card says pending verification instead of
+ * pretending.
  *
- * TEMPORARY — DEMO RECORDING ONLY (2026-09-20): tiktok removed from this set
- * so the real "Connect with TikTok" button shows up against prep (running
- * with the TikTok app's Sandbox client key/secret, not the real one) to
- * record the Login Kit + Content Posting API demo video TikTok's re-review
- * requires. This must NOT reach production before TikTok actually approves
- * the account — put "tiktok" back in this Set (or revert this commit) once
- * the demo is recorded and before this branch is promoted to prod.
+ * It briefly left this set (2026-09-20, "TEMPORARY — DEMO RECORDING ONLY",
+ * to record the Login Kit + Content Posting API demo video TikTok's
+ * re-review requires) with an explicit note to put it back before promoting
+ * to prod — that revert never happened, and the removal reached production.
+ * Re-confirmed with the product owner 2026-09-23: TikTok still has NOT
+ * approved the account for public posting, so every post still goes out
+ * `SELF_ONLY` (see `publishToTikTok` in publishers.ts) — a client clicking
+ * "Connect with TikTok" in the meantime was being offered a channel that can
+ * only ever post privately, with nothing on the card saying so.
+ *
+ * DELETE THE ENTRY the day TikTok approves the account, and move
+ * `publishToTikTok`'s `privacy_level` off `SELF_ONLY` in the same change —
+ * nothing else needs changing, the OAuth config and publisher are already
+ * correct for that day.
  */
-export const PENDING_VERIFICATION_PLATFORM_IDS = new Set<string>([]);
+export const PENDING_VERIFICATION_PLATFORM_IDS = new Set<string>(["tiktok"]);
 
 /**
  * Which platforms each asset type can be pushed to (auto cron or Publish Now).

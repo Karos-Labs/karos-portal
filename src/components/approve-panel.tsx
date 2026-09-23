@@ -258,6 +258,25 @@ export function ApprovePanel({
         )}
       </div>
 
+      {/* TikTok has not been approved by TikTok for public posting yet (see
+          PENDING_VERIFICATION_PLATFORM_IDS, platforms.ts) — every post from
+          this app still goes out privacy_level:SELF_ONLY, visible only to
+          the connected account, never on the public profile. A checked
+          TikTok box publishes successfully with no error, so without this
+          note the only sign anything happened is a post nobody but the
+          account owner can see — exactly the "it didn't publish" report
+          this note exists to prevent. */}
+      {platforms.includes("tiktok") && (
+        <p className="flex items-start gap-1.5 text-[11px] text-muted-2">
+          <Icon name="EyeOff" className="mt-0.5 h-3 w-3 shrink-0 text-muted-2" />
+          <span>
+            TikTok hasn&apos;t approved this account for public posting yet, so this post will
+            publish but stay private (visible only from the connected TikTok account), not on
+            the public profile.
+          </span>
+        </p>
+      )}
+
       {/* AI recommendation (calendar-density aware) */}
       {recLoading ? (
         <p className="flex items-center gap-1.5 text-[11px] text-muted-2">
