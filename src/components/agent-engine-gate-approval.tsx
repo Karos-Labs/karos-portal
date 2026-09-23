@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Spinner, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { GateStructuredValue } from "@/components/gate-structured-value";
 import { ImageLightbox, type LightboxImage } from "@/components/image-lightbox";
 import { normalizeDashes } from "@/lib/text-utils";
 import { resolveAgentEngineGateAction } from "@/lib/actions";
@@ -277,14 +278,6 @@ function labelForKey(key: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function stringify(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2) ?? String(value);
-  } catch {
-    return String(value);
-  }
 }
 
 export function AgentEngineGateApproval({
@@ -1127,9 +1120,13 @@ export function AgentEngineGateApproval({
       {structured.map(([label, value]) => (
         <details key={label} className="rounded-md border border-border/60 bg-surface-2/40">
           <summary className="cursor-pointer px-2.5 py-1.5 text-xs font-medium text-muted">{label}</summary>
-          <pre dir="auto" className="max-h-72 overflow-auto whitespace-pre-wrap border-t border-border/60 p-2.5 text-[11px] leading-relaxed text-muted">
-            {stringify(value)}
-          </pre>
+          {/* The generic rule stays — an unanticipated key still reaches the
+              screen. What changed is that it arrives readable when its shape is
+              one the products actually write, and keeps the JSON block when it
+              is not. See `gate-structured-shape.ts`. */}
+          <div className="max-h-72 overflow-auto border-t border-border/60 p-2.5">
+            <GateStructuredValue value={value} />
+          </div>
         </details>
       ))}
 
