@@ -165,7 +165,7 @@ function Carousel({ slides, onOpenLightbox }: { slides: SlideMeta[]; onOpenLight
                 {s.headline ? `${i + 1}. ${s.headline}` : `Slide ${i + 1}`}
                 {s.role ? <span className="text-muted-2"> · {s.role}</span> : null}
               </p>
-              {s.body ? <p className="mt-0.5 whitespace-pre-wrap text-xs text-muted">{s.body}</p> : null}
+              {s.body ? <p dir="auto" className="mt-0.5 whitespace-pre-wrap text-xs text-muted">{s.body}</p> : null}
               {s.attribution ? <p className="mt-1 text-[10px] text-muted-2">{s.attribution}</p> : null}
             </div>
           </div>
@@ -584,7 +584,7 @@ export function AssetCard({
             )
           ) : (
             <div className="group/caption relative">
-              <p
+              <p dir="auto"
                 className={cn(
                   "mt-1 whitespace-pre-wrap text-sm text-muted",
                   asset.content && "pr-12",

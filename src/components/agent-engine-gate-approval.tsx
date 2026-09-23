@@ -8,6 +8,7 @@ import { ImageLightbox, type LightboxImage } from "@/components/image-lightbox";
 import { normalizeDashes } from "@/lib/text-utils";
 import { resolveAgentEngineGateAction } from "@/lib/actions";
 import type { AgentEngineStyleEdit } from "@/lib/agent-engine/types";
+import { textDirection } from "@/lib/text-direction";
 import {
   CLIP_REVIEW_KEYS,
   describeBudgetPlan,
@@ -847,7 +848,18 @@ export function AgentEngineGateApproval({
       {preview && (
         <div className="rounded-md border border-border bg-surface p-3">
           <p className="mb-1.5 text-xs text-muted-2">Awaiting your approval</p>
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{normalizeDashes(preview)}</p>
+          {/* `dir="auto"` — the browser reads the first strong character and
+              lays the paragraph out accordingly. THE POST IS NOT THIS APP: the
+              chrome around it is English and stays LTR, while the copy inside
+              may be Hebrew, and until now a Hebrew post was read here laid out
+              left-to-right with its punctuation stranded at the wrong end.
+              (Your own gate comment: "the text should be rtl (right to left)
+              like hebrew in the posts. just fix it".)
+              `auto` rather than a language lookup on purpose: it is per-element
+              and needs nothing threaded through, it is right for a mixed
+              corpus where some posts are Hebrew and some are not, and it keeps
+              working for a language nobody has configured yet. */}
+          <p dir={textDirection(preview)} className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{normalizeDashes(preview)}</p>
         </div>
       )}
 
@@ -978,7 +990,11 @@ export function AgentEngineGateApproval({
             <div className="space-y-3">
               <div className="space-y-1">
                 <label className="text-xs text-muted-2">Caption</label>
+                {/* Editing Hebrew copy in an LTR textarea puts the caret and
+                    the punctuation in the wrong place, which is worse than
+                    reading it wrong. `auto` follows the text. */}
                 <textarea
+                  dir="auto"
                   value={captionDraft ?? editableCopy.caption ?? ""}
                   onChange={(e) => setCaptionDraft(e.target.value)}
                   rows={3}
@@ -1019,6 +1035,7 @@ export function AgentEngineGateApproval({
                       <div key={key} className="space-y-0.5">
                         <label className="text-xs text-muted-2">{labelForKey(key)}</label>
                         <textarea
+                          dir="auto"
                           value={fieldDrafts[slide.n]?.[key] ?? slide.fields[key]}
                           onChange={(e) =>
                             setFieldDrafts((prev) => ({ ...prev, [slide.n]: { ...prev[slide.n], [key]: e.target.value } }))
@@ -1089,7 +1106,8 @@ export function AgentEngineGateApproval({
           {facts.map(([label, value]) => (
             <div key={label} className="min-w-0">
               <dt className="text-xs text-muted-2">{label}</dt>
-              <dd className="truncate text-sm" title={value}>
+              {/* Agent-authored values: same reasoning as the preview above. */}
+              <dd dir={textDirection(value)} className="truncate text-sm" title={value}>
                 {/* A landing page's `previewUrl`/`pageUrl` (RFC-11) is the thing
                     the reviewer is asked to judge; a link they can open beats a
                     string they have to copy. Only https:// values, never http. */}
@@ -1109,7 +1127,7 @@ export function AgentEngineGateApproval({
       {structured.map(([label, value]) => (
         <details key={label} className="rounded-md border border-border/60 bg-surface-2/40">
           <summary className="cursor-pointer px-2.5 py-1.5 text-xs font-medium text-muted">{label}</summary>
-          <pre className="max-h-72 overflow-auto whitespace-pre-wrap border-t border-border/60 p-2.5 text-[11px] leading-relaxed text-muted">
+          <pre dir="auto" className="max-h-72 overflow-auto whitespace-pre-wrap border-t border-border/60 p-2.5 text-[11px] leading-relaxed text-muted">
             {stringify(value)}
           </pre>
         </details>
@@ -1156,6 +1174,7 @@ export function AgentEngineGateApproval({
               </label>
               <textarea
                 id={`template-note-${slide.n}`}
+                dir="auto"
                 value={templateNotes[slide.n] ?? ""}
                 onChange={(e) => setTemplateNotes((prev) => ({ ...prev, [slide.n]: e.target.value }))}
                 placeholder="What did you think of this layout? (optional)"
@@ -1178,7 +1197,9 @@ export function AgentEngineGateApproval({
       )}
 
       <div className="space-y-1">
+        {/* The reviewer writes here too, and this team writes Hebrew. */}
         <textarea
+          dir="auto"
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           placeholder="What should change? (required to request changes, optional when approving)"

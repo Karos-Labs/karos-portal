@@ -602,7 +602,7 @@ export function StaffSlotNotes({
                 </Button>
               )}
             </div>
-            <p className="mt-1 whitespace-pre-wrap text-xs text-foreground">{day.note?.text}</p>
+            <p dir="auto" className="mt-1 whitespace-pre-wrap text-xs text-foreground">{day.note?.text}</p>
             <p className="mt-1 text-[11px] text-muted-2">
               {day.note?.authorName} · {relativeTime(day.note?.createdAt ?? 0)}
             </p>

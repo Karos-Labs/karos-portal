@@ -113,7 +113,7 @@ function StepTranscript({ stepId, transcript }: { stepId: string; transcript: Ag
                 />
               </button>
               {outputOpen && (
-                <pre className="max-h-72 overflow-auto whitespace-pre-wrap border-t border-border/60 p-2.5 text-[11px] leading-relaxed text-muted">
+                <pre dir="auto" className="max-h-72 overflow-auto whitespace-pre-wrap border-t border-border/60 p-2.5 text-[11px] leading-relaxed text-muted">
                   {transcript.finalOutput}
                 </pre>
               )}
@@ -145,7 +145,7 @@ function OutputDisclosure({ preview }: { preview: StepOutputPreview }) {
       </button>
       {open && (
         <>
-          <pre className="max-h-72 overflow-auto whitespace-pre-wrap border-t border-border/60 p-2.5 text-[11px] leading-relaxed text-muted">
+          <pre dir="auto" className="max-h-72 overflow-auto whitespace-pre-wrap border-t border-border/60 p-2.5 text-[11px] leading-relaxed text-muted">
             {preview.json}
           </pre>
           {preview.truncated && (

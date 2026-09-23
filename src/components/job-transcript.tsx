@@ -41,7 +41,7 @@ function Block({ block }: { block: TranscriptBlock }) {
   switch (block.kind) {
     case "text":
       return (
-        <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+        <p dir="auto" className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
           {normalizeDashes(block.text)}
         </p>
       );
@@ -55,7 +55,7 @@ function Block({ block }: { block: TranscriptBlock }) {
           preview={firstLine(normalizeDashes(block.text))}
           defaultOpen={block.text.length < 400}
         >
-          <p className="whitespace-pre-wrap text-xs italic leading-relaxed text-muted">
+          <p dir="auto" className="whitespace-pre-wrap text-xs italic leading-relaxed text-muted">
             {normalizeDashes(block.text)}
           </p>
         </Disclosure>
@@ -69,7 +69,7 @@ function Block({ block }: { block: TranscriptBlock }) {
           tone="tool"
           preview={inputPreview(block.input)}
         >
-          <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-surface-3 p-2 text-[11px] leading-relaxed text-muted">
+          <pre dir="auto" className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-surface-3 p-2 text-[11px] leading-relaxed text-muted">
             {stringify(block.input)}
           </pre>
         </Disclosure>
@@ -83,7 +83,7 @@ function Block({ block }: { block: TranscriptBlock }) {
           tone={block.isError ? "error" : "muted"}
           preview={firstLine(block.text)}
         >
-          <pre
+          <pre dir="auto"
             className={`max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-surface-3 p-2 text-[11px] leading-relaxed ${
               block.isError ? "text-danger" : "text-muted"
             }`}

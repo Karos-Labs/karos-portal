@@ -51,6 +51,7 @@ import { templateForAsset } from "@/lib/post-chain";
 import { cn } from "@/lib/utils";
 import type { Asset } from "@/lib/types";
 
+import { textDirection } from "@/lib/text-direction";
 const MODE_LABELS: Record<string, string> = {
   auto: "Auto-publish",
   manual: "Manual push",
@@ -898,11 +899,18 @@ function PublishStateNotice({ publishError, partial }: { publishError: string; p
  * are the content, and reflowing them would misrepresent what gets posted.
  */
 function AssetContentBody({ content }: { content: string }) {
+  // `dir="auto"` on BOTH branches: this modal is the only viewer a client can
+  // reach, and a Hebrew deliverable read left-to-right is the wrong document.
+  // The browser takes the direction from the first strong character, so the
+  // English chrome around it is untouched and a mixed corpus needs no
+  // configuration — which matters here, because nothing in the payload
+  // currently states the target language at all.
   if (!looksLikeMarkdown(content)) {
-    return <p className="whitespace-pre-wrap text-sm text-foreground/90">{normalizeDashes(content)}</p>;
+    return <p dir={textDirection(content)} className="whitespace-pre-wrap text-sm text-foreground/90">{normalizeDashes(content)}</p>;
   }
   return (
     <div
+      dir={textDirection(content)}
       className="break-words [&_code]:break-all [&_table]:min-w-0"
       dangerouslySetInnerHTML={{ __html: renderAssetBody(content) }}
     />

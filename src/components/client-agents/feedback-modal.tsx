@@ -217,7 +217,7 @@ export function ClientAgentFeedbackModal({
                     </div>
                   ) : (
                     <>
-                      <p className="whitespace-pre-wrap text-xs text-foreground">{row.text}</p>
+                      <p dir="auto" className="whitespace-pre-wrap text-xs text-foreground">{row.text}</p>
                       <div className="mt-1.5 flex flex-wrap items-center gap-2">
                         <span className="text-[11px] text-muted-2">
                           {row.authorName} · {relativeTime(row.createdAt)}

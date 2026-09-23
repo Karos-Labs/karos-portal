@@ -377,7 +377,7 @@ function Field({ label, value, multiline }: { label: string; value?: string; mul
   return (
     <div>
       <p className="text-xs text-muted">{label}</p>
-      <p className={`mt-0.5 text-sm ${multiline ? "whitespace-pre-wrap" : ""} ${value ? "text-foreground" : "text-muted-2"}`}>
+      <p dir="auto" className={`mt-0.5 text-sm ${multiline ? "whitespace-pre-wrap" : ""} ${value ? "text-foreground" : "text-muted-2"}`}>
         {value || "-"}
       </p>
     </div>

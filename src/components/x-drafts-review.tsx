@@ -38,6 +38,7 @@ import { normalizeDashes } from "@/lib/text-utils";
 import { assetFileStem } from "@/lib/asset-images";
 import { splitMetaLinks } from "@/lib/draft-meta";
 import { AwaitingReviewBadge, DownloadDraftButton } from "@/components/draft-review-kit";
+import { textDirection } from "@/lib/text-direction";
 import {
   classifyXMetaBullet,
   xIntentUrl,
@@ -223,7 +224,7 @@ function DraftCard({
       <div className="mt-3">
         {mainPost ? (
           <div className="rounded-md border border-border bg-background p-4">
-            <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">{mainPost.text}</p>
+            <p dir={textDirection(mainPost.text)} className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">{mainPost.text}</p>
             {isThread && charLabel(mainPost.chars) ? (
               <p
                 className="mt-2 text-right font-mono text-[10px] text-muted-2"
@@ -242,7 +243,7 @@ function DraftCard({
                   <Icon name="CornerDownRight" className="h-3 w-3" />
                   Reply {i + 1}
                 </p>
-                <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">{post.text}</p>
+                <p dir={textDirection(post.text)} className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">{post.text}</p>
                 {charLabel(post.chars) ? (
                   <p
                     className="mt-2 text-right font-mono text-[10px] text-muted-2"

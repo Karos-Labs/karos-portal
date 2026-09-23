@@ -131,11 +131,11 @@ export default async function TranscriptDetailPage({
         <div className="space-y-6">
           <Card>
             <CardTitle className="mb-2">Summary</CardTitle>
-            <p className="whitespace-pre-wrap text-sm text-muted">{t.summary ? normalizeDashes(t.summary) : "No summary available."}</p>
+            <p dir="auto" className="whitespace-pre-wrap text-sm text-muted">{t.summary ? normalizeDashes(t.summary) : "No summary available."}</p>
           </Card>
           <Card>
             <CardTitle className="mb-2">Transcript</CardTitle>
-            <pre className="max-h-[480px] overflow-auto whitespace-pre-wrap text-xs text-muted">{t.rawText}</pre>
+            <pre dir="auto" className="max-h-[480px] overflow-auto whitespace-pre-wrap text-xs text-muted">{t.rawText}</pre>
           </Card>
         </div>
 
