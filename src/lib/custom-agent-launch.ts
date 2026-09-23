@@ -16,7 +16,7 @@ import {
   STEER_RUN_HELPER_WITH_KIND,
   STEER_RUN_LABEL,
 } from "@/lib/intake-steer-copy";
-import { ENGINE_PRODUCTS_READING_MEDIA_ASSETS } from "@/lib/agent-engine/product-mapping";
+import { ENGINE_PRODUCTS_READING_MEDIA_ASSETS, INSTAGRAM_POST_TYPE_FIELD_KEY } from "@/lib/agent-engine/product-mapping";
 
 /**
  * `media` is the run-attachment control (`RunAttachments`): the value is the
@@ -513,6 +513,27 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
             { value: "carousel", label: "Carousel (6-8 slides)" },
             { value: "single", label: "Single image with a deep caption" },
             { value: "auto", label: "Rotate (every third post a single image)" },
+          ],
+        },
+        {
+          // 2026-09-23: the owner asked for an optional post type for the next
+          // run. Empty means the agent decides from the story and this client's
+          // learned preferences (agent-middleware `client_preferences`). Read by
+          // instagram-agent only; translated in `toEngineRunInput`
+          // (`instagramPostTypeInput`) into the engine's own keys.
+          key: INSTAGRAM_POST_TYPE_FIELD_KEY,
+          label: "Instagram post type (optional)",
+          type: "select",
+          defaultValue: "",
+          helper: "Leave on Auto and the agent picks the type from the story and this client's preferences.",
+          options: [
+            { value: "", label: "Auto" },
+            { value: "news_flash", label: "News flash (one photo in a news frame)" },
+            { value: "photo_first", label: "Photo-led carousel" },
+            { value: "the_list", label: "Numbered list" },
+            { value: "by_the_numbers", label: "By the numbers" },
+            { value: "head_to_head", label: "Head to head" },
+            { value: "the_breakdown", label: "The breakdown" },
           ],
         },
         {

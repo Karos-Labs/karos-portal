@@ -13,6 +13,7 @@ import {
   resolveAgentEngineProductId,
   resolveAgentEngineProductIdForCustomAgent,
   resolveAgentEngineRunKind,
+  instagramPostTypeInput,
   toEngineRunInput,
 } from "../product-mapping";
 
@@ -306,8 +307,8 @@ const ENGINE_ROUTED_DIALOGS: ReadonlyArray<{
   { key: "karos-linkedin-setup-v2", name: "LinkedIn Setup", productId: "linkedin-agent", visibleFields: ["li_identity", "request", "customPrompt", "media_source", "mediaAssets"] },
   { key: "karos-reddit-runner", name: "Reddit Runner", productId: "reddit-agent", visibleFields: ["request"] },
   { key: "karos-reddit-setup", name: "Reddit Setup", productId: "reddit-agent", visibleFields: ["request", "audience", "success_criteria", "customPrompt"] },
-  { key: "karos-instagram-agent", name: "Instagram Agent", productId: "instagram-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "batch_size", "audience", "must_include", "customPrompt", "media_source", "mediaAssets"] },
-  { key: "karos-tiktok-agent", name: "TikTok Agent", productId: "tiktok-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "batch_size", "audience", "must_include", "customPrompt", "media_source", "mediaAssets"] },
+  { key: "karos-instagram-agent", name: "Instagram Agent", productId: "instagram-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "instagram_post_type", "batch_size", "audience", "must_include", "customPrompt", "media_source", "mediaAssets"] },
+  { key: "karos-tiktok-agent", name: "TikTok Agent", productId: "tiktok-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "instagram_post_type", "batch_size", "audience", "must_include", "customPrompt", "media_source", "mediaAssets"] },
   { key: "branded-shorts", name: "Branded Shorts", productId: "branded-shorts-agent", visibleFields: ["request", "source_url", "platform", "duration", "cta", "editing_notes", "customPrompt", "media_source", "mediaAssets"] },
   { key: "landing-builder", name: "Landing Page Builder", productId: "landing-builder-agent", visibleFields: ["request", "offer", "audience", "cta", "proof", "references", "customPrompt"] },
   { key: "karos-blog-writer-v2", name: "Blog Writer", productId: "blog-agent", visibleFields: ["run_mode", "request", "audience", "keywords", "point_of_view", "sources", "customPrompt"] },
@@ -326,6 +327,8 @@ function answerFor(key: string): string {
   if (key === "mediaAssets") return '[{"uri": "gs://bucket/probe-mediaAssets.mp4", "role": "source"}]';
   // The non-default value, so dropping the field changes the payload.
   if (key === "media_source") return "client";
+  // 2026-09-23: a select whose answers are a closed vocabulary; a probe string means Auto.
+  if (key === "instagram_post_type") return "the_list";
   if (key === "source_url" || key === "references" || key === "sources") {
     return `https://example.com/probe-${key}`;
   }
@@ -616,5 +619,22 @@ describe("page/server engineProductId consistency (C3 mandatory fix #2)", () => 
     ]) {
       expect(swept.has(key), `${key} routes to agent-engine but has no dialog-coverage case`).toBe(true);
     }
+  });
+});
+
+describe("the Instagram post type (2026-09-23)", () => {
+  it("translates each option into the engine keys instagram-agent reads", () => {
+    expect(instagramPostTypeInput("news_flash")).toEqual({ requestedMode: "news_flash", requestedFormat: "single" });
+    expect(instagramPostTypeInput("photo_first")).toEqual({ pictureDensity: "photo-first" });
+    for (const series of ["the_list", "by_the_numbers", "head_to_head", "the_breakdown"]) {
+      expect(instagramPostTypeInput(series)).toEqual({ requestedSeries: series });
+    }
+    expect(instagramPostTypeInput("")).toEqual({});
+    expect(instagramPostTypeInput("reels")).toEqual({});
+  });
+
+  it("a news flash wins over the format select's carousel default, and Auto sends nothing", () => {
+    expect(toEngineRunInput({ requestedFormat: "carousel", instagram_post_type: "news_flash" }, "instagram-agent")).toMatchObject({ requestedFormat: "single", requestedMode: "news_flash" });
+    expect(toEngineRunInput({ requestedFormat: "carousel", instagram_post_type: "" }, "instagram-agent")).toEqual({ requestedFormat: "carousel" });
   });
 });
