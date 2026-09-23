@@ -357,10 +357,23 @@ body {
   --border: #dad6cc;
   --border-strong: #c8c3b6;
   --foreground: #1a1a1a;
-  --muted: #6b6a63;
-  /* 4.7:1 on white. Was #8a887f — ~3.6:1 (QA F119). */
-  --muted-2: #767469;
-  --muted-3: #8a887f;
+  /* MEASURED AGAINST THE PAGE, NOT AGAINST WHITE.
+     The previous value was picked at 4.7:1 on #ffffff, which is true and is
+     the wrong ground: --background in this mode is #f2f1ec, and most muted
+     text sits on that or on --surface-2 (#eceae2). The same colour measures
+     4.15 and 3.90 there — under 4.5 on the two grounds it is actually used on.
+     These clear 4.5 on ALL FOUR light grounds (#f2f1ec, #ffffff, #eceae2,
+     #e9e7df); `light-mode-contrast.test.ts` recomputes it from this file.
+
+     The ladder still runs dark to light — --muted is the body tone, --muted-2
+     the secondary, --muted-3 the decorative one. Darkening --muted-2 on its
+     own inverted it, which is what the first attempt did and the ordering
+     assertion caught. */
+  --muted: #61605a;
+  --muted-2: #67665d;
+  /* The decorative tier: 3.23 minimum, which is the large-text / non-text
+     floor. It was 2.87 on --surface-2, under even that. */
+  --muted-3: #827f76;
 
   /* The orange never changes between modes */
   --neon: #ff6b2c;
@@ -368,6 +381,15 @@ body {
   --neon-dim: #cc4f18;
   --neon-glow: rgba(255, 107, 44, 0.25);
   --neon-soft: rgba(255, 107, 44, 0.1);
+
+  /* ORANGE AS TEXT, AND ONLY AS TEXT.
+     --neon is 2.51:1 on paper — it is a FILL colour here, and a fill does not
+     have to be readable. Set as text it is illegible, and it is set as text in
+     179 places including links. This is the same colour reasoning --focus
+     already uses (ink, not orange, because an orange ring fails 1.4.11), taken
+     to the one other place the orange is asked to be read rather than seen.
+     5.01:1 on the darkest light ground, and still recognisably the brand. */
+  --neon-ink: #a83f11;
 
   /* Primary flips: ink-on-paper */
   --primary: #1a1a1a;
@@ -401,6 +423,24 @@ body {
      instead of over grey: rgba(26,26,26,...) is --foreground's own ink. */
   --shadow-1: 0 1px 2px rgba(26, 26, 26, 0.05), 0 1px 3px rgba(26, 26, 26, 0.07);
   --shadow-2: 0 2px 4px rgba(26, 26, 26, 0.06), 0 12px 26px -12px rgba(26, 26, 26, 0.22);
+}
+
+/* THE ORANGE STAYS A FILL IN LIGHT MODE.
+   One rule rather than 179 edits, and deliberately so: `text-neon` remains the
+   thing a component asks for, because the component is right — it wants the
+   accent. What changes is what the accent RESOLVES to when it has to be read
+   on paper. `bg-neon`, `border-neon` and every other use are untouched, which
+   is the whole point: a fill does not have to clear 4.5:1 and text does.
+
+   Specificity is what makes it work without `!important`: `.light .text-neon`
+   is (0,2,0) against Tailwind's (0,1,0). */
+.light .text-neon,
+.light .neon-text {
+  color: var(--neon-ink);
+}
+.light .text-neon-dim {
+  /* --neon-dim is 3.61 at its best on these grounds; same treatment. */
+  color: var(--neon-ink);
 }
 
 .light body {
