@@ -1148,7 +1148,7 @@ export default async function ClientAgentDetailPage({
           the poller and the mark on the status line can no longer answer that
           question differently — which they did, and which is why a staff run left a static
           page behind it. */}
-      {(launchInFlight || running) && <AutoRefresh />}
+      {(launchInFlight || running) && <AutoRefresh watchUrl={`/api/clients/${client.id}/activity`} />}
       <div className="mb-4">
         <Link
           href={`/clients/${id}/agents`}

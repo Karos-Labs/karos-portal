@@ -611,6 +611,29 @@ export async function listJobs(opts?: { clientId?: string }): Promise<Job[]> {
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
 }
 
+/**
+ * The newest `updatedAt` across a client's jobs, or 0 when they have none.
+ *
+ * The one read behind `/api/clients/[id]/activity`, which exists so a page
+ * watching an in-flight run stops paying for a full route re-render every four
+ * seconds to discover that nothing happened.
+ *
+ * ORDERED AND LIMITED IN FIRESTORE, not in memory: `listJobs` fetches every
+ * job a client has ever had and sorts them here, which is the right shape for
+ * a page that shows them all and the wrong one for something polled on a
+ * timer. This reads one document.
+ */
+export async function latestClientJobActivity(clientId: string): Promise<number> {
+  const snap = await col
+    .jobs()
+    .where("clientId", "==", clientId)
+    .orderBy("updatedAt", "desc")
+    .limit(1)
+    .get();
+  const doc = snap.docs[0];
+  return doc ? ((doc.data() as { updatedAt?: number }).updatedAt ?? 0) : 0;
+}
+
 export async function getJob(id: string): Promise<Job | null> {
   const doc = await col.jobs().doc(id).get();
   return doc.exists ? withId<Job>(doc) : null;

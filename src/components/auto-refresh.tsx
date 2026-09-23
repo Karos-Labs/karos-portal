@@ -22,23 +22,64 @@ import { useRouter } from "next/navigation";
  * uses), so the interval is cleared rather than left polling a route that no
  * longer needs it.
  *
- * Omitting `statusUrl` keeps the exact previous behavior (full refresh every
- * tick) — this is deliberate, not a placeholder: the other AutoRefresh call
- * sites (jobs list, pending queue, calendar, client-agent runs) track
- * different, non-job-shaped in-flight signals with no single narrow endpoint
- * of their own yet, and converting them is out of this ticket's scope.
+ * `watchUrl` is the second mechanism, for the call sites `statusUrl` could not
+ * serve. Those pages each watch a DIFFERENT in-flight signal — the calendar
+ * asks whether a job belonging to a rendered row is queued or running, the
+ * agents page also counts launch state and an active template run — and those
+ * predicates are correct, computed from data the page already holds. Moving
+ * them into a route would copy page logic somewhere the two can drift.
+ *
+ * So `watchUrl` does not answer "is it in flight". It answers "did anything
+ * MOVE" (`{ changedAt: number }`), and the page keeps its own predicate for
+ * whether to watch at all. A tick that returns the same number costs one
+ * document read; the expensive `router.refresh()` happens on the tick where
+ * the number changes, which is the tick where there is something new to draw.
+ *
+ * Omitting both keeps the original behaviour — a full refresh every tick.
  */
 export function AutoRefresh({
   intervalMs = 4000,
   statusUrl,
+  watchUrl,
 }: {
   intervalMs?: number;
   /** A narrow endpoint returning `{ inProgress: boolean }` for this page's subject. */
   statusUrl?: string;
+  /** A narrow endpoint returning `{ changedAt: number }` — refresh only when it moves. */
+  watchUrl?: string;
 }) {
   const router = useRouter();
 
   useEffect(() => {
+    if (!statusUrl && watchUrl) {
+      let cancelled = false;
+      // Seeded from the first response rather than from 0, so mounting does not
+      // itself count as a change and cost a refresh nobody asked for.
+      let seen: number | undefined;
+      const t = setInterval(async () => {
+        try {
+          const res = await fetch(watchUrl, { cache: "no-store" });
+          if (!res.ok || cancelled) return;
+          const { changedAt } = (await res.json()) as { changedAt?: number };
+          if (cancelled || typeof changedAt !== "number") return;
+          if (seen === undefined) {
+            seen = changedAt;
+            return;
+          }
+          if (changedAt > seen) {
+            seen = changedAt;
+            router.refresh();
+          }
+        } catch {
+          // A hiccup is not a change. Wait for the next tick.
+        }
+      }, intervalMs);
+      return () => {
+        cancelled = true;
+        clearInterval(t);
+      };
+    }
+
     if (!statusUrl) {
       const t = setInterval(() => router.refresh(), intervalMs);
       return () => clearInterval(t);
@@ -64,7 +105,7 @@ export function AutoRefresh({
       cancelled = true;
       clearInterval(t);
     };
-  }, [router, statusUrl, intervalMs]);
+  }, [router, statusUrl, watchUrl, intervalMs]);
 
   return null;
 }
