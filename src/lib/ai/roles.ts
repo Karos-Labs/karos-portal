@@ -243,6 +243,19 @@ export const AI_ROLES = {
   },
   "chat.followups": {
     tier: "HAIKU",
+    // PINNED, and the pin is the point. This role is picked by TIER, never
+    // through the chat picker, so without it the follow-up chips under a
+    // Vertex-served answer would follow `defaultVendor()` to Anthropic and bill
+    // to the second invoice — the exact split moving the Quality option to
+    // Vertex exists to close, reappearing one function below it.
+    pinnedTo: {
+      vendor: "vertex",
+      because:
+        "It generates the follow-ups for an answer the chat has already served " +
+        "from Vertex. A different vendor for the chips than for the answer they " +
+        "belong to is the two-invoice split this surface was consolidated to end, " +
+        "and it is invisible: the chips look right either way.",
+    },
     // Shifted 825 → 834 by the credits rework's copy change to the copilot's
     // price appendix, which sits above this call, to 833 when the run-estimate
     // import went, and to 844 with the served-platforms import and the

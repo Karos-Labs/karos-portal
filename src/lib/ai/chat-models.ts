@@ -31,7 +31,7 @@
  */
 
 import type { Vendor } from "./capabilities";
-import { MODELS } from "@/lib/constants";
+import { VERTEX_MODELS } from "@/lib/constants";
 
 export interface ChatModelOption {
   /** Passed straight through to `aiFor("chat.client", { vendor, modelId })`. */
@@ -69,8 +69,20 @@ export const CHAT_MODEL_OPTIONS = {
     description: "Cheapest model. The copilot's default for everyday questions.",
   },
   haiku: {
-    vendor: "anthropic",
-    modelId: MODELS.HAIKU,
+    // VERTEX, not the first-party Anthropic API. The chat used to straddle two
+    // vendor accounts — Fast on Vertex (Gemini), Quality on `ANTHROPIC_API_KEY`
+    // — so one surface arrived on two invoices against two credentials, which
+    // is the split the engine side had to unpick before a bill could be
+    // reconciled at all. Same model, same price to the client (see
+    // `CHAT_MESSAGE_CREDITS`, keyed on the model FAMILY and not on which
+    // infrastructure carried the call), one invoice.
+    //
+    // This was blocked from 2026-08-30 until quota landed: every Claude call
+    // through Vertex answered 429. Re-probed with real calls on 2026-09-23 —
+    // `claude-haiku-4-5@20251001` and `claude-sonnet-4-6` both return 200 at
+    // `global` in karoscmo-prep AND karoscmo.
+    vendor: "vertex",
+    modelId: VERTEX_MODELS.HAIKU,
     label: "Quality",
     description:
       "Claude Haiku. Used automatically for the multi-step proactive actions, or pick it yourself for a harder question.",
