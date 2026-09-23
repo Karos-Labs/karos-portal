@@ -158,7 +158,7 @@ export const PRODUCT_DELIVERABLE_KINDS: Readonly<Record<string, string>> = Objec
   Object.entries(PRODUCT_DELIVERABLES).map(([productId, spec]) => [productId, spec.kind]),
 );
 
-interface AssetMaterialization {
+export interface AssetMaterialization {
   title: string;
   content: string;
   imageUrl?: string | null;
@@ -708,7 +708,7 @@ async function materializeTiktokClip(job: Job, deliverable: TiktokClipDeliverabl
   };
 }
 
-interface LandingPageSiteDeliverable {
+export interface LandingPageSiteDeliverable {
   /** Landing Builder v2 (agent-engine RFC-11): the page's <title>. */
   title?: string;
   description?: string;
@@ -741,7 +741,7 @@ interface LandingPageSiteDeliverable {
  * A v1 deliverable (only `gcsPrefix`/`fileCount`) still materialises, with
  * the old "site source uploaded to ..." body, so historical jobs render.
  */
-async function materializeLandingPageSite(job: Job, deliverable: LandingPageSiteDeliverable): Promise<AssetMaterialization> {
+export async function materializeLandingPageSite(job: Job, deliverable: LandingPageSiteDeliverable): Promise<AssetMaterialization> {
   const screenshots = Array.isArray(deliverable.screenshots) ? deliverable.screenshots : [];
   const desktop = screenshots.find((s) => s.label === "desktop" && typeof s.url === "string") ?? screenshots.find((s) => typeof s.url === "string");
   const imageUrl = desktop?.url ? await rehostIfFetchable(desktop.url, `agent-engine/${job.id}/landing-desktop.png`, "image/png") : undefined;
@@ -751,12 +751,27 @@ async function materializeLandingPageSite(job: Job, deliverable: LandingPageSite
   if (deliverable.previewUrl) lines.push(`Preview: ${deliverable.previewUrl}`);
   if (!deliverable.liveUrl && !deliverable.previewUrl && deliverable.indexSignedUrl) lines.push(`Page (signed link, 7 days): ${deliverable.indexSignedUrl}`);
   if (deliverable.description) lines.push("", deliverable.description);
-  if (deliverable.status === "needs_human") lines.push("", "The engine's own checks did not all pass; review before sharing.");
+  // A CLIENT READS THIS BODY. It used to say "The engine's own checks did not
+  // all pass; review before sharing." — our internal machinery, named to the
+  // person paying for the page, and an instruction phrased as our anxiety
+  // rather than their next step. Same rule as AF-14: a failure that is ours is
+  // not the client's to attend to. What they need is the ACTION; the reason it
+  // was flagged is already on `meta.buildStatus` for staff.
+  if (deliverable.status === "needs_human") lines.push("", "Worth a read before you share this one.");
   if (lines.length === 0) {
     lines.push(
       deliverable.gcsPrefix
-        ? `Site source (${deliverable.fileCount ?? "?"} files) uploaded to ${deliverable.gcsPrefix}`
-        : "Landing page build completed — no site bundle was uploaded (GCS_ARTIFACTS_BUCKET not configured on agent-engine).",
+        ? // The v1 body used to print the raw `gs://` prefix to the client:
+          // "Site source (12 files) uploaded to gs://karoscmo-prod-agent-…".
+          // A storage path is not something a client can open or act on; the
+          // prefix is already on `meta.gcsPrefix` for staff.
+          `Landing page build completed (${deliverable.fileCount ?? "?"} files).`
+        : // This branch used to name an environment variable and a service to
+          // the client: "no site bundle was uploaded (GCS_ARTIFACTS_BUCKET not
+          // configured on agent-engine)". That is a misconfiguration on OUR
+          // side, and there is nothing a client can do about it — so they get
+          // the fact, and staff get the reason on `meta.buildNote`.
+          "Landing page build completed. The page files are not attached to this asset.",
     );
   }
 
@@ -777,6 +792,11 @@ async function materializeLandingPageSite(job: Job, deliverable: LandingPageSite
       fileCount: deliverable.fileCount,
       buildStatus: deliverable.status,
       gate: deliverable.gate,
+      // The diagnostic the body no longer carries. `meta` is staff-side; the
+      // body is what a client reads.
+      ...(deliverable.gcsPrefix === undefined
+        ? { buildNote: "no site bundle uploaded: GCS_ARTIFACTS_BUCKET is not configured on agent-engine" }
+        : {}),
     },
   };
 }

@@ -993,12 +993,18 @@ describe("the three products that already worked keep working", () => {
     expect(asset.imageUrl).toBe("https://karos.example/agent-engine/job_1/slide-2.png");
   });
 
-  it("landing-page-site (v1 shape) names where the reviewed source tree lives", async () => {
+  it("landing-page-site (v1 shape) keeps the storage path for staff and out of the client's body", async () => {
+    // This test used to be called "names where the reviewed source tree lives"
+    // and asserted the `gs://` prefix IN THE BODY. A client reads that body and
+    // cannot open a storage path — the prefix is a staff fact. It moved to
+    // `meta`, where it already was, and the body now says what was built.
     await materialize("landing-builder-agent", { gcsPrefix: "gs://bucket/sites/acme", fileCount: 12, status: "ok" });
     const asset = createdAsset();
     expect(asset.type).toBe("note");
     expect(asset.title).toBe("Landing page");
-    expect(asset.content).toContain("gs://bucket/sites/acme");
+    expect(asset.content).not.toContain("gs://");
+    expect(asset.content).toContain("12 files");
+    expect(asset.meta).toMatchObject({ gcsPrefix: "gs://bucket/sites/acme" });
   });
 
   it("landing-page-site (v2, RFC-11) leads with the live URL, keeps the preview, and rehosts the desktop screenshot as the cover", async () => {
@@ -1036,7 +1042,12 @@ describe("the three products that already worked keep working", () => {
     await materialize("landing-builder-agent", { title: "Northwind", status: "needs_human", gate: "fail", indexSignedUrl: "https://signed.example/index.html", gcsPrefix: "gs://bucket/landing/northwind/run/", screenshots: [] });
     const asset = createdAsset();
     expect(asset.content).toContain("Page (signed link, 7 days): https://signed.example/index.html");
-    expect(asset.content).toContain("review before sharing");
+    // Was `"review before sharing"`, from the sentence "The engine's own checks
+    // did not all pass; review before sharing." The client still gets the
+    // instruction; they no longer get our machinery. `meta.buildStatus` carries
+    // the reason for staff.
+    expect(asset.content).toContain("read before you share");
+    expect(asset.content).not.toMatch(/engine/i);
     expect(asset.imageUrl ?? null).toBeNull();
   });
 });
