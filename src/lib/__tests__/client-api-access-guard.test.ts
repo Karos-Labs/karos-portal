@@ -681,6 +681,11 @@ describe("every API route that takes a client id asks the fence", () => {
     "auth/social/[provider]": "fenced",
     "auth/social/[provider]/callback": "signed",
     "cleanup-logs": "cron",
+    // The watch endpoint `AutoRefresh` polls instead of calling
+    // `router.refresh()` on a timer. Fenced like every other client-scoped
+    // read: polling is a read, and a read of somebody else's activity is still
+    // a read of it.
+    "clients/[id]/activity": "fenced",
     "clients/[id]/agents/mentionable": "fenced",
     "clients/[id]/chat": "fenced",
     "clients/[id]/context": "fenced",

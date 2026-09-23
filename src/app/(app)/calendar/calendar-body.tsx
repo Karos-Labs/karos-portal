@@ -909,7 +909,8 @@ export async function CalendarBody({
 
   return (
     <>
-      {runInFlight && <AutoRefresh />}
+      {runInFlight && scopedClientId && <AutoRefresh watchUrl={`/api/clients/${scopedClientId}/activity`} />}
+      {runInFlight && !scopedClientId && <AutoRefresh />}
       <PageHeader title={title} description={description} action={runwayBadge} />
       {isEmpty && scopedClientId && (
         <div className="mb-4">
