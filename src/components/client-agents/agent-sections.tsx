@@ -262,7 +262,7 @@ export function AgentInputsSection({ view }: { view: AgentInputsView }) {
                             sentences, and a multi-line "never post about" answer
                             that collapses into one paragraph reads as a different
                             answer from the one they typed. */}
-                        <dd className="whitespace-pre-wrap text-xs leading-relaxed text-foreground">
+                        <dd dir="auto" className="whitespace-pre-wrap text-xs leading-relaxed text-foreground">
                           {entry.value}
                         </dd>
                       </div>

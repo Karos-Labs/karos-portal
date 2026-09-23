@@ -331,7 +331,7 @@ function ActionItemRow({
                   <li key={c.id} className="text-xs">
                     <span className="font-medium text-foreground">{c.authorName}</span>
                     <span className="ml-2 text-muted-2">{relativeTime(c.createdAt)}</span>
-                    <p className="mt-0.5 whitespace-pre-wrap break-words text-muted">{c.text}</p>
+                    <p dir="auto" className="mt-0.5 whitespace-pre-wrap break-words text-muted">{c.text}</p>
                   </li>
                 ))}
               </ul>

@@ -42,6 +42,7 @@ import { assetFileStem } from "@/lib/asset-images";
 import { splitMetaLinks } from "@/lib/draft-meta";
 import { AwaitingReviewBadge, DownloadDraftButton } from "@/components/draft-review-kit";
 
+import { textDirection } from "@/lib/text-direction";
 type SentState = "posted" | "posted_with_edits" | "not_posted" | "edit_request";
 
 /**
@@ -342,7 +343,10 @@ function DraftCard({
             would never learn they need fixing. Reddit renders markdown natively,
             so the comment that goes up must be byte-for-byte what we showed.
             Pinned by reddit-drafts.test.ts. */}
-        <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">
+        {/* `activeText`, not `draft.text` — the direction has to follow what
+            is actually on screen, which is the selected approach when there
+            is one. */}
+        <p dir={textDirection(activeText)} className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">
           {activeText}
         </p>
       </div>

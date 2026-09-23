@@ -173,7 +173,7 @@ function ArtifactSection({
       {/* An image-only run has no text body; an empty frame reads as a failure. */}
       {artifact.trim() !== "" && (
         <div className="max-h-64 overflow-y-auto rounded-md border border-border bg-surface-2 p-3">
-          <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-foreground">
+          <pre dir="auto" className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-foreground">
             {artifact}
           </pre>
         </div>

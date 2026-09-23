@@ -58,6 +58,7 @@ import type { LiParsedAccount, LiParsedDraft } from "@/lib/li-drafts";
 import { splitMetaLinks } from "@/lib/draft-meta";
 import { AwaitingReviewBadge, DownloadDraftButton, DraftMediaDownloads } from "@/components/draft-review-kit";
 
+import { textDirection } from "@/lib/text-direction";
 type SentState = "posted" | "posted_with_edits" | "not_posted" | "edit_request";
 
 /** A client-facing run artifact the reader can offer for manual attach. */
@@ -225,7 +226,7 @@ function DraftCard({
       ) : null}
 
       <div className="mt-3 rounded-md border border-border bg-background p-4">
-        <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">{draft.text}</p>
+        <p dir={textDirection(draft.text)} className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">{draft.text}</p>
       </div>
 
       {/* LinkedIn cannot prefill files, so any media the run attached still has

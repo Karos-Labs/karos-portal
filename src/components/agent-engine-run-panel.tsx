@@ -69,7 +69,7 @@ function ResolvedGateNotice({ gate }: { gate: AgentEngineGateRecord }) {
           : ""}
         The run is continuing with this decision — there is nothing left to decide on this round. This page follows along as it moves.
       </p>
-      {note && <p className="whitespace-pre-wrap text-xs text-muted">“{note}”</p>}
+      {note && <p dir="auto" className="whitespace-pre-wrap text-xs text-muted">“{note}”</p>}
     </div>
   );
 }

@@ -115,7 +115,7 @@ export function OptionPicker({
               ) : (
                 <div className="space-y-1.5">
                   {option.posts.map((post, i) => (
-                    <p
+                    <p dir="auto"
                       key={i}
                       className="whitespace-pre-wrap text-xs leading-relaxed text-foreground"
                     >

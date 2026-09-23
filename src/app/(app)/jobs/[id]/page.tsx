@@ -191,7 +191,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
           {job.rawOutput && (
             <Card>
               <CardTitle className="mb-2">Raw model output</CardTitle>
-              <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-2 p-3 text-xs text-muted">{normalizeDashes(job.rawOutput)}</pre>
+              <pre dir="auto" className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-2 p-3 text-xs text-muted">{normalizeDashes(job.rawOutput)}</pre>
             </Card>
           )}
 
