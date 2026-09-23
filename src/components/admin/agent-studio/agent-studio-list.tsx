@@ -13,6 +13,7 @@ import {
 import type { DynamicAgentSpec } from "@/lib/types";
 import { GeneralSettingsForm, type GeneralSettingsDraft } from "./general-settings-form";
 import { Modal } from "@/components/modal";
+import { ConfirmAction } from "@/components/confirm-action";
 
 const BLANK_DRAFT: GeneralSettingsDraft = {
   name: "",
@@ -60,12 +61,17 @@ export function AgentStudioList({
     });
   }
 
-  function handleDelete(spec: DynamicAgentSpec) {
-    if (!confirm(`Delete "${spec.name}"? This can't be undone.`)) return;
-    startTransition(async () => {
-      const result = await deleteDynamicAgentSpecAction(spec.id);
-      if (result.ok) router.refresh();
-    });
+  /**
+   * Returns the message `ConfirmAction` shows, or nothing on success — the
+   * confirmation itself is the component's, not `window.confirm()`'s. The
+   * result used to be dropped when `ok` was false, so a refused delete looked
+   * exactly like a successful one.
+   */
+  async function deleteSpec(spec: DynamicAgentSpec): Promise<string | undefined> {
+    const result = await deleteDynamicAgentSpecAction(spec.id);
+    if (!result.ok) return result.error ?? "Could not delete this agent.";
+    router.refresh();
+    return undefined;
   }
 
   return (
@@ -119,15 +125,23 @@ export function AgentStudioList({
                   <Button size="sm" variant="outline" disabled={pending} onClick={() => handleToggleActive(spec)}>
                     {spec.active ? "Deactivate" : "Activate"}
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={pending}
-                    onClick={() => handleDelete(spec)}
-                    aria-label={`Delete agent spec "${spec.name || "Untitled agent"}"`}
-                  >
-                    <Icon name="Trash2" className="h-3.5 w-3.5" />
-                  </Button>
+                  <ConfirmAction
+                    question={`Delete "${spec.name || "Untitled agent"}"?`}
+                    detail="The spec and its step pipeline are removed. Runs it already produced are kept."
+                    confirmLabel="Delete agent"
+                    onConfirm={() => deleteSpec(spec)}
+                    trigger={({ onClick, disabled }) => (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={disabled || pending}
+                        onClick={onClick}
+                        aria-label={`Delete agent spec "${spec.name || "Untitled agent"}"`}
+                      >
+                        <Icon name="Trash2" className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  />
                 </div>
               </div>
             ))}
