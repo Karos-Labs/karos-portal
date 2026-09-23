@@ -504,3 +504,71 @@ describe("isFrameworkDefaultColor", () => {
     expect(accentCandidates(observed).map((c) => c.hex)).toEqual(["#d89166"]);
   });
 });
+
+/**
+ * TYPOGRAPHY, READ THE SAME WAY AND FOR THE SAME REASON.
+ *
+ * The palette above was made deterministic because a model browsing the site
+ * reported `#6366f1` for CSS that contains no such value. Typography never got
+ * that treatment and failed identically: for this same site the extractor
+ * stored **Space Grotesk** and **Inter**, while it serves **Spectral** and
+ * **Hanken Grotesk**. The colours from that run were right, because they came
+ * from the reader; the fonts did not.
+ */
+const FONT_HTML = `<!doctype html><html><head>
+<link rel="stylesheet" href="/_next/static/fonts.css">
+</head><body>hi</body></html>`;
+
+/** The real shape: `next/font` families behind a token layer, two hops deep. */
+const FONT_CSS = `
+:root{--font-hanken:"Hanken Grotesk", "Hanken Grotesk Fallback";--font-spectral:"Spectral", "Spectral Fallback"}
+@layer theme{:root{--font-sans:var(--font-hanken), system-ui, sans-serif;--font-serif:var(--font-spectral), Georgia, serif}}
+body{font-family: var(--font-hanken), system-ui, sans-serif}
+h1,h2,h3{font-family: var(--font-serif)}
+`;
+
+describe("observeSiteFonts", () => {
+  it("reads the families the site serves, where the model said Space Grotesk and Inter", async () => {
+    const { observeSiteFonts } = await import("../branding-site-palette");
+    const fonts = await observeSiteFonts(
+      "karoslabs.com",
+      fakeFetch({ "https://karoslabs.com/": FONT_HTML, "https://karoslabs.com/_next/static/fonts.css": FONT_CSS }),
+    );
+    expect(fonts.fontHeading).toBe("Spectral");
+    expect(fonts.fontBody).toBe("Hanken Grotesk");
+  });
+
+  it("returns nothing when the site is unreachable, rather than inventing a pair", async () => {
+    const { observeSiteFonts } = await import("../branding-site-palette");
+    expect(await observeSiteFonts("nowhere.example", fakeFetch({}))).toEqual({});
+  });
+
+  it("reads the stylesheets and not the markup", async () => {
+    // The page's own prose used to reach the resolver, and the rule scanner
+    // splits on braces — so the text before the first CSS rule was read as that
+    // rule's selector. A page containing the word "body" therefore attributed
+    // whatever came next, including an `@font-face` that merely LOADS a font,
+    // to body copy. Only <style> blocks and linked sheets go in now.
+    const { observeSiteFonts } = await import("../branding-site-palette");
+    const html = `<!doctype html><html><head><link rel="stylesheet" href="/s.css"></head>
+      <body><p>Every body of work starts somewhere.</p></body></html>`;
+    const css = `@font-face{font-family:"Loaded Only";src:url(x.woff2)}h1{font-family:"Real Heading"}`;
+    const fonts = await observeSiteFonts(
+      "markup.example",
+      fakeFetch({ "https://markup.example/": html, "https://markup.example/s.css": css }),
+    );
+    expect(fonts.fontHeading).toBe("Real Heading");
+    expect(fonts.fontBody).toBeUndefined();
+  });
+
+  it("returns nothing when the CSS states no family at all", async () => {
+    // "Could not tell" has to stay available as an answer — it is the one the
+    // model could not give, and the reason it guessed.
+    const { observeSiteFonts } = await import("../branding-site-palette");
+    const fonts = await observeSiteFonts(
+      "plain.example",
+      fakeFetch({ "https://plain.example/": `<!doctype html><html><head><link rel="stylesheet" href="/s.css"></head><body>x</body></html>`, "https://plain.example/s.css": `body{color:#111}` }),
+    );
+    expect(fonts).toEqual({});
+  });
+});

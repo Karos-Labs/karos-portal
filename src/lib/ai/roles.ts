@@ -102,13 +102,14 @@ export const AI_ROLES = {
   "branding.fetch_site": {
     tier: "HAIKU",
     requires: ["web_fetch"],
-    // Re-pinned twice: from :346 by SCRUM-394 (IGSTYLE-9), which inserted the
+    // Re-pinned three times: from :346 by SCRUM-394 (IGSTYLE-9), which inserted the
     // role-based palette resolver earlier in branding.ts, and again when
     // `normalizeHex` moved out to `branding-hex.ts` and the verified-palette
-    // observer was wired in. Line pins are load-bearing here and drift with
+    // observer was wired in, and again when `observeSiteFonts` joined that same
+    // Promise.all. Line pins are load-bearing here and drift with
     // any edit above them — that is the cost of pinning, and the sweep test
     // is what makes the cost visible instead of silent.
-    sites: ["src/lib/branding.ts:641"],
+    sites: ["src/lib/branding.ts:643"],
   },
 
   /* ── COUPLED · web_search only · 2 sites ─────────────────────────────────
@@ -124,7 +125,7 @@ export const AI_ROLES = {
     tier: "HAIKU",
     requires: ["web_search"],
     // Re-pinned from :386 — see branding.fetch_site's own comment above.
-    sites: ["src/lib/branding.ts:683"],
+    sites: ["src/lib/branding.ts:685"],
   },
 
   /* ── PLAIN · no vendor-specific surface · 27 sites ───────────────────────
@@ -223,7 +224,7 @@ export const AI_ROLES = {
     // colours" change moved them again, and the ScrappyCoco brand-evidence
     // change (rendered screenshot + Instagram images) moved them a third time.
     // All merged; provider-wiring.test.ts is what catches the drift.
-    sites: ["src/lib/branding.ts:1199", "src/lib/branding.ts:1206"],
+    sites: ["src/lib/branding.ts:1231", "src/lib/branding.ts:1238"],
   },
   // Shifted 36/37 → 37/38 by the credits rework (2026-09), which added one
   // import above them. Re-pinned against the real file, per the rule above.

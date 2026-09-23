@@ -1,7 +1,9 @@
 import "server-only";
 
 import { normalizeHex } from "@/lib/branding-hex";
+import type { ResolvedBrandFonts } from "@/lib/brand-fonts";
 import {
+  observeSiteFonts,
   observeSitePalette,
   describeObservedPalette,
   snapToObservedPalette,
@@ -830,6 +832,8 @@ export function buildBrandingPrompt(
   observedPalette: readonly ObservedColor[] = [],
   /** Labels for the images attached alongside this prompt, in order. */
   visionSources: readonly string[] = [],
+  /** Families read out of the site's own CSS by `observeSiteFonts`, var() chains resolved. */
+  observedFonts: ResolvedBrandFonts = {},
 ): string {
   const safeName = name.slice(0, MAX_NAME_LEN);
   const safeDesc = description?.slice(0, MAX_DESC_LEN);
@@ -942,6 +946,24 @@ export function buildBrandingPrompt(
   const verified = describeObservedPalette(observedPalette);
   if (verified) lines.push("", verified);
 
+  // Typography, on the same footing as the verified palette and for the same
+  // reason. Source B above is a MODEL's report of the CSS, and a model that
+  // cannot follow `var(--font-serif)` -> `var(--font-spectral)` -> "Spectral"
+  // answers with the most plausible name it knows instead of admitting it could
+  // not tell. These families came out of the stylesheet in code.
+  const observedTypography = [
+    ...(observedFonts.fontHeading ? [`- Heading: ${observedFonts.fontHeading}`] : []),
+    ...(observedFonts.fontBody ? [`- Body: ${observedFonts.fontBody}`] : []),
+  ];
+  if (observedTypography.length > 0) {
+    lines.push(
+      "",
+      "## Source D — Verified Typography (read from the site's stylesheets, var() chains resolved)",
+      ...observedTypography,
+      ...(observedFonts.source ? [`Read from: ${observedFonts.source}`] : []),
+    );
+  }
+
   lines.push(
     "",
     "## Palette rules (strictly enforced)",
@@ -957,7 +979,11 @@ export function buildBrandingPrompt(
     "- A color that belongs to a third party — a chat widget, a share button, a screenshot mock-up of " +
       "another product — is never this brand's, however prominent it is on the page.",
     "- Never use generic placeholder colors (#2563eb, #22c55e) for brands with known distinctive palettes.",
-    "- fontHeading/fontBody: use actual brand fonts if known; archetype fallback only if unknown.",
+    ...(observedTypography.length > 0
+      ? [
+          "- fontHeading/fontBody must be copied EXACTLY from Source D. It is the stylesheet, not a reading of it.",
+        ]
+      : ["- fontHeading/fontBody: use actual brand fonts if known; archetype fallback only if unknown."]),
     "- visualStyle, toneKeywords, and brandVoice must be internally consistent — High-Tech must pair with Disruptive/Innovative tone.",
   );
 
@@ -1054,7 +1080,7 @@ export async function applyBrandingForClient(
   const logoUrl = client.logoUrl ?? client.brandingGuidelines?.logoUrl;
 
   // ── Tiers 1+2 (site intelligence), the verified palette, and the logo ─
-  const [siteIntelligence, declaredPalette, logoContext, screenshot, instagram] = await Promise.all([
+  const [siteIntelligence, declaredPalette, observedFonts, logoContext, screenshot, instagram] = await Promise.all([
     (async (): Promise<string | null> => {
       if (!siteUrl) return null;
       const access = await checkSiteAccess(siteUrl);
@@ -1072,6 +1098,11 @@ export async function applyBrandingForClient(
     // four stylesheets, and gives the extraction below a list of hexes that
     // provably exist.
     siteUrl ? observeSitePalette(siteUrl) : Promise.resolve<ObservedColor[]>([]),
+    // Typography, read the same deterministic way and for the same reason. See
+    // `observeSiteFonts`: the model answered "Space Grotesk"/"Inter" for a site
+    // serving Spectral/Hanken Grotesk, while the colours from that same run
+    // were right — because colours came from the reader above and fonts did not.
+    siteUrl ? observeSiteFonts(siteUrl) : Promise.resolve<ResolvedBrandFonts>({}),
     logoUrl ? prepareLogoContext(logoUrl) : Promise.resolve<LogoContext>(null),
     // What the site PAINTS, as opposed to what it declares — the one question
     // the two sources above cannot answer. See `branding-scrappycoco.ts`.
@@ -1180,6 +1211,7 @@ export async function applyBrandingForClient(
     logoContext,
     observedPalette,
     visionImages.map((image) => image.label),
+    observedFonts,
   );
 
   const paletteUsageMeta = {
@@ -1292,8 +1324,15 @@ export async function applyBrandingForClient(
     secondaryAccent: legacyScalars.secondaryAccent,
     brandNeutralDark: legacyScalars.brandNeutralDark,
     brandNeutralLight: legacyScalars.brandNeutralLight,
-    fontHeading: object.fontHeading,
-    fontBody: object.fontBody,
+    // OBSERVED WINS. `observedFonts` is what the site's own CSS says, read by
+    // `observeSiteFonts` with the var() chain resolved; `object.font*` is what a
+    // model reported after browsing. When the stylesheet states a family there
+    // is nothing for a model to be right about, and it was wrong here: Space
+    // Grotesk/Inter against a site serving Spectral/Hanken Grotesk. The model's
+    // answer remains the fallback for a site that states nothing — a press-kit
+    // font name is better than no font name.
+    fontHeading: observedFonts.fontHeading ?? object.fontHeading,
+    fontBody: observedFonts.fontBody ?? object.fontBody,
     visualStyle: object.visualStyle,
     toneKeywords: object.toneKeywords,
     guidelines: buildGuidelinesMarkdown(object),
