@@ -71,6 +71,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     status,
     inProgress: isJobInProgress(job, view),
     ...(agentDone ? { agentDone: true } : {}),
+    // Free: already on the run document this route reads. No extra query, and
+    // no step subcollection — this is hit every four seconds per watched run.
+    ...(run && runOutcome(status) === "working" ? { startedAt: run.createdAt } : {}),
     // While working: the engine's current step in client words; a run with no
     // engine behind it has no step to report, so it says it is working once it
     // is (rather than "Starting the run" for the whole run).
