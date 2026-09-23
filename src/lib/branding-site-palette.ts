@@ -359,14 +359,6 @@ export function brandPageUrl(site: string): string {
 }
 
 /**
- * Read the palette a domain actually serves.
- *
- * Never throws and never rejects: an unreachable site yields an empty array,
- * which every caller treats as "no observations, change nothing". Branding is
- * a non-fatal side pipeline (`applyBrandingForClient`'s call site catches and
- * logs), and making it fatal here would trade a cosmetic gap for a failed run.
- */
-/**
  * The SAME reading, for typography.
  *
  * `observeSitePalette` below exists because a model browsing a site reported
@@ -391,9 +383,25 @@ export async function observeSiteFonts(site: string, fetchImpl: typeof fetch = f
   const html = await fetchText(pageUrl, fetchImpl);
   if (html === null) return {};
   const sheets = await Promise.all(stylesheetUrls(html, pageUrl).map((url) => fetchText(url, fetchImpl)));
-  return resolveBrandFonts([html, ...sheets.filter((s): s is string => s !== null)].join("\n"));
+  // The page's <style> blocks, NOT the whole page. `observeSitePalette` reads
+  // raw markup because an inline `style="background:#…"` is a real observation;
+  // a font resolver has no such use for it, and handing it the markup was
+  // actively wrong — the rule scanner splits on braces, so the text of the page
+  // preceding the first CSS rule became that rule's selector. `</body></html>`
+  // contains the word `body`, which is how a @font-face declaration ended up
+  // being read as the site's body-copy rule.
+  const inlineCss = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]!);
+  return resolveBrandFonts([...inlineCss, ...sheets.filter((s): s is string => s !== null)].join("\n"));
 }
 
+/**
+ * Read the palette a domain actually serves.
+ *
+ * Never throws and never rejects: an unreachable site yields an empty array,
+ * which every caller treats as "no observations, change nothing". Branding is
+ * a non-fatal side pipeline (`applyBrandingForClient`'s call site catches and
+ * logs), and making it fatal here would trade a cosmetic gap for a failed run.
+ */
 export async function observeSitePalette(site: string, fetchImpl: typeof fetch = fetch): Promise<ObservedColor[]> {
   const pageUrl = brandPageUrl(site);
   const html = await fetchText(pageUrl, fetchImpl);

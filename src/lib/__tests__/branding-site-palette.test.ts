@@ -543,6 +543,24 @@ describe("observeSiteFonts", () => {
     expect(await observeSiteFonts("nowhere.example", fakeFetch({}))).toEqual({});
   });
 
+  it("reads the stylesheets and not the markup", async () => {
+    // The page's own prose used to reach the resolver, and the rule scanner
+    // splits on braces — so the text before the first CSS rule was read as that
+    // rule's selector. A page containing the word "body" therefore attributed
+    // whatever came next, including an `@font-face` that merely LOADS a font,
+    // to body copy. Only <style> blocks and linked sheets go in now.
+    const { observeSiteFonts } = await import("../branding-site-palette");
+    const html = `<!doctype html><html><head><link rel="stylesheet" href="/s.css"></head>
+      <body><p>Every body of work starts somewhere.</p></body></html>`;
+    const css = `@font-face{font-family:"Loaded Only";src:url(x.woff2)}h1{font-family:"Real Heading"}`;
+    const fonts = await observeSiteFonts(
+      "markup.example",
+      fakeFetch({ "https://markup.example/": html, "https://markup.example/s.css": css }),
+    );
+    expect(fonts.fontHeading).toBe("Real Heading");
+    expect(fonts.fontBody).toBeUndefined();
+  });
+
   it("returns nothing when the CSS states no family at all", async () => {
     // "Could not tell" has to stay available as an answer — it is the one the
     // model could not give, and the reason it guessed.

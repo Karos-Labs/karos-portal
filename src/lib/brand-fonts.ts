@@ -108,9 +108,29 @@ function resolveVars(value: string, props: Map<string, string>): string {
  */
 const GENERIC = new Set(["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "ui-serif", "ui-sans-serif", "ui-monospace", "ui-rounded", "inherit", "initial", "unset", "revert"]);
 
+/**
+ * `__Plus_Jakarta_Sans_b6296e` back to `Plus Jakarta Sans`.
+ *
+ * `next/font` does not write the family the designer chose; it writes a
+ * generated, content-hashed name and only that. Storing it verbatim gives a
+ * brand kit a typeface nobody can buy, install or name in a brief — which is
+ * worse than the guess it replaced, because it LOOKS measured. Found by running
+ * the resolver against all eight live client sites; the karoslabs fixture that
+ * drove this file does not use the hashed form.
+ */
+function demangleFrameworkFamily(name: string): string {
+  const m = /^__(.+?)_[0-9a-z]{4,}$/i.exec(name);
+  return m ? m[1]!.replace(/_/g, " ") : name;
+}
+
 export function firstConcreteFamily(fontFamily: string): string | undefined {
   for (const raw of fontFamily.split(",")) {
-    const name = raw.trim().replace(/^["']|["']$/g, "").trim();
+    // `!important` belongs to the declaration, not to the family. Without this
+    // a real site yielded the family "inherit!important", which then passed the
+    // generic-keyword filter because it is not the word `inherit`.
+    const name = demangleFrameworkFamily(
+      raw.replace(/!\s*important/gi, "").trim().replace(/^["']|["']$/g, "").trim(),
+    );
     if (name.length === 0) continue;
     if (GENERIC.has(name.toLowerCase())) continue;
     // Only as a SUFFIX. `next/font` emits the real family beside a generated
@@ -128,9 +148,40 @@ export function firstConcreteFamily(fontFamily: string): string | undefined {
   return undefined;
 }
 
-/** Selector → which role it sets. Order matters: the first match wins. */
+/** A selector that mentions the role somewhere — the loose reading. */
 const HEADING_SELECTOR = /(^|[\s,>+~])(h1|h2|h3)\b|\b(heading|display|title)\b/i;
 const BODY_SELECTOR = /(^|[\s,>+~])(body|html|p)\b|:root\b|\b(body-?text|prose)\b/i;
+
+/**
+ * A selector that GOVERNS the role rather than merely mentioning it: every one
+ * of its comma-separated parts is the bare element.
+ *
+ * The distinction is load-bearing, and a live site is what proved it. Sitti's
+ * stylesheet sets `font-family: Gaegu` — a handwriting face — on a selector
+ * ending in `p`, later in the file than its own `body` rule. Taking simply the
+ * last rule that MENTIONS body copy made a decorative flourish the brand's body
+ * typeface. A bare `body {}` outranks any compound selector however late it
+ * comes, because that is the rule a reader means when they ask what a site's
+ * body font is.
+ */
+const HEADING_GOVERNS = /^h[1-3]$/i;
+const BODY_GOVERNS = /^(body|html|:root|:host|\*)$/i;
+
+/**
+ * At-rules whose `font-family` names a font being DEFINED, not one being used.
+ *
+ * `@font-face { font-family: Gaegu; src: url(…) }` says the browser may load
+ * Gaegu — nothing about where it is applied. Sitti's bundle declares two dozen
+ * such faces; before this, the first one won and a handwriting face became the
+ * brand's body typeface. A site that loads a font does not thereby use it, and
+ * the whole point of this file is to report what a reader actually sees.
+ */
+const DEFINING_AT_RULE = /@(font-face|keyframes|counter-style|font-feature-values|font-palette-values)/i;
+
+function governs(selector: string, part: RegExp): boolean {
+  const parts = selector.split(",").map((p) => p.trim()).filter((p) => p.length > 0);
+  return parts.length > 0 && parts.every((p) => part.test(p));
+}
 
 /** Variable names a framework conventionally uses for each role, when no selector says so. */
 const HEADING_VARS = ["--font-heading", "--font-display", "--font-serif", "--font-title"];
@@ -156,25 +207,40 @@ export function resolveBrandFonts(source: string): ResolvedBrandFonts {
   const css = stripComments(source);
   const props = customProperties(css);
   const sources: string[] = [];
-  let heading: string | undefined;
-  let body: string | undefined;
 
-  // Pass 1 — rules, in document order, later rules overriding earlier ones.
+  // Pass 1 — rules, in document order. Within a tier the later rule wins, which
+  // is the cascade; across tiers the governing selector wins, which is what the
+  // cascade does anyway for an element the compound selector never matches.
+  const found: Record<"heading" | "body", { governing?: [string, string]; loose?: [string, string] }> = {
+    heading: {},
+    body: {},
+  };
   for (const rule of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     const selector = rule[1]!.trim();
+    if (DEFINING_AT_RULE.test(selector)) continue;
     const declarations = rule[2]!;
     const decl = /(?:^|[;{\s])font-family\s*:\s*([^;}]+)/i.exec(declarations);
     if (!decl) continue;
     const family = firstConcreteFamily(resolveVars(decl[1]!, props));
     if (!family) continue;
 
-    if (HEADING_SELECTOR.test(selector)) {
-      heading = family;
-      sources.push(`heading: font-family on \`${selector.slice(0, 60)}\``);
-    } else if (BODY_SELECTOR.test(selector)) {
-      body = family;
-      sources.push(`body: font-family on \`${selector.slice(0, 60)}\``);
-    }
+    const hit = (role: "heading" | "body", governing: boolean) => {
+      found[role][governing ? "governing" : "loose"] = [family, selector.slice(0, 60)];
+    };
+    if (governs(selector, HEADING_GOVERNS)) hit("heading", true);
+    else if (governs(selector, BODY_GOVERNS)) hit("body", true);
+    else if (HEADING_SELECTOR.test(selector)) hit("heading", false);
+    else if (BODY_SELECTOR.test(selector)) hit("body", false);
+  }
+
+  let heading: string | undefined;
+  let body: string | undefined;
+  for (const role of ["heading", "body"] as const) {
+    const pick = found[role].governing ?? found[role].loose;
+    if (!pick) continue;
+    if (role === "heading") heading = pick[0];
+    else body = pick[0];
+    sources.push(`${role}: font-family on \`${pick[1]}\``);
   }
 
   // Pass 2 — the conventional role variables, for whichever role is still open.

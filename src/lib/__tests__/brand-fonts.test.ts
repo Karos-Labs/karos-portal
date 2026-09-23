@@ -95,6 +95,61 @@ describe("resolveBrandFonts — the karoslabs case", () => {
   });
 });
 
+/**
+ * WHAT THE FIXTURE COULD NOT TELL ME.
+ *
+ * The karoslabs stylesheet above made this file pass on the first run. Pointing
+ * it at all eight live client sites broke it four different ways in one go —
+ * each of these is a real site, and each would have written a wrong font into a
+ * brand kit. The fixture is the specification; the live run is the test.
+ */
+describe("resolveBrandFonts — found by running it against live sites", () => {
+  it("ignores @font-face, which names a font LOADED and not one used", () => {
+    // The exact shape that produced the bug, and it takes markup to reproduce:
+    // the caller passed page + stylesheets concatenated, the rule scanner splits
+    // on braces, so everything since the last brace is read as the selector —
+    // any page whose prose contains the word "body" reads as a body selector.
+    // sitti.app declares two
+    // dozen faces before applying anything, so a LOADED font became the brand's
+    // body typeface. `observeSiteFonts` no longer passes markup; this keeps the
+    // resolver safe for any caller that does.
+    const markup = `<p>Every body of work starts somewhere.</p>`;
+    const css = `@font-face{font-family:"Loaded Only";src:url(x.woff2)}h1{font-family:"Actually Used"}`;
+    const fonts = resolveBrandFonts(markup + "\n" + css);
+    expect(fonts.fontBody).toBeUndefined();
+    expect(fonts.fontHeading).toBe("Actually Used");
+  });
+
+  it("un-mangles next/font's hashed family", () => {
+    // xodigital.com.br serves `__Plus_Jakarta_Sans_b6296e`. Stored verbatim that
+    // is a typeface nobody can name in a brief, buy or install — worse than the
+    // guess it replaced, because it looks measured.
+    const css = `h1{font-family:__Plus_Jakarta_Sans_b6296e, __Plus_Jakarta_Sans_Fallback_b6296e}`;
+    expect(resolveBrandFonts(css).fontHeading).toBe("Plus Jakarta Sans");
+  });
+
+  it("does not take !important for part of the font's name", () => {
+    // deel.com yielded the family "inherit!important", which slipped past the
+    // generic-keyword filter because it is not the word `inherit`.
+    const css = `h1{font-family:inherit!important}h2{font-family:"Bagoss Condensed"}`;
+    expect(resolveBrandFonts(css).fontHeading).toBe("Bagoss Condensed");
+  });
+
+  it("prefers a rule that GOVERNS the role over one that merely mentions it", () => {
+    // A decorative `p` rule later in the file must not outrank `body`.
+    const css = `body{font-family:"Real Body"}.testimonial p{font-family:"Handwriting"}`;
+    expect(resolveBrandFonts(css).fontBody).toBe("Real Body");
+    // …and with no governing rule at all, the loose one is still better than
+    // nothing: a site that only ever styles `.prose p` has said something.
+    expect(resolveBrandFonts(`.testimonial p{font-family:"Handwriting"}`).fontBody).toBe("Handwriting");
+  });
+
+  it("still lets a later governing rule win over an earlier one", () => {
+    // Tier order must not cost us the cascade inside a tier.
+    expect(resolveBrandFonts(`body{font-family:"First"}html{font-family:"Second"}`).fontBody).toBe("Second");
+  });
+});
+
 describe("firstConcreteFamily", () => {
   it("skips the framework's own fallback twin", () => {
     // `next/font` writes the real family beside a generated fallback.
