@@ -59,6 +59,13 @@ do those things automatically:
   `/api/*/reconcile`, etc.** Only wire Cloud Scheduler to production. Prep's `CRON_SECRET`
   exists so those routes don't 503, but nothing should ever call them there — don't create
   a scheduler job against the prep URL.
+- **Which routes production must schedule is `src/lib/cron-schedule-manifest.ts`**, and it
+  is checked against the tree, so a new cron route cannot be added without saying what
+  should call it. It is a statement of intent, not a reading of GCP — confirm the project
+  against it with `gcloud scheduler jobs list --project=karoscmo --location=<region>` on
+  every deploy that adds one. On 2026-09-23 ten of the fourteen had no job in production,
+  including `agent-engine/reconcile`, which is why five finished engine runs sat in the
+  portal as `queued` holding nothing a client could see.
 - **Firebase Auth users are shared.** The same login works on both `PREP_APP_URL` and
   `PROD_APP_URL`. There is no separate prep signup.
 - **OAuth app credentials (LinkedIn/Twitter/Google/TikTok) are shared** — same client
