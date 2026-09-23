@@ -6,6 +6,7 @@ import { getCurrentUser, isStaff } from "@/lib/auth";
 import { canViewClient } from "@/lib/client-visibility";
 import { getAsset, getClient } from "@/lib/data";
 import { resolveAssetVideoSource, type AssetVideoSource } from "@/lib/asset-video-source";
+import { adminBucket } from "@/lib/firebase/admin";
 import {
   PLAYBACK_URL_TTL_MS,
   createDownloadSignedUrl,
@@ -109,6 +110,36 @@ export async function resolveAssetVideo(
             ttlMs: PLAYBACK_URL_TTL_MS,
           })
         : createReadSignedUrl(gcsPath, PLAYBACK_URL_TTL_MS),
-    opts,
+    { ...opts, signFirebaseObject: createFirebaseDownloadSignedUrl },
   );
+}
+
+/**
+ * A V4 signed download URL for an object in OUR Firebase Storage bucket, with
+ * the attachment disposition and filename inside the signature, minted by the
+ * Firebase admin identity: the account that uploaded the object and the one
+ * the bucket's rules already trust. Deliberately not `gcs-media.ts`'s signer,
+ * which signs with Application Default Credentials for the separate media
+ * bucket (SCRUM-373): in prep that is a different project's runtime account,
+ * and a URL it signed for this bucket would answer 403 when followed.
+ *
+ * Refuses any other bucket rather than signing a URL that cannot work; the
+ * resolver then falls back to proxying the stored URL.
+ */
+export async function createFirebaseDownloadSignedUrl(
+  bucket: string,
+  path: string,
+  opts: { downloadFilename: string; contentType?: string },
+): Promise<string> {
+  const ours = adminBucket();
+  if (ours.name !== bucket) throw new Error(`Refusing to sign for a bucket that is not ours: ${bucket}`);
+  const filename = opts.downloadFilename.replace(/["\\\r\n]/g, "");
+  const [url] = await ours.file(path).getSignedUrl({
+    version: "v4",
+    action: "read",
+    expires: Date.now() + PLAYBACK_URL_TTL_MS,
+    responseDisposition: `attachment; filename="${filename}"`,
+    ...(opts.contentType ? { responseType: opts.contentType } : {}),
+  });
+  return url;
 }

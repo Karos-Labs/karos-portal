@@ -115,7 +115,8 @@ const RELEASE_NOW = argv.includes("--release-now");
 const flag = (name: string) => argv.find((a) => a.startsWith(`--${name}=`))?.split("=").slice(1).join("=");
 const WEEK_FILTER = flag("week");
 const CLIENT_ID_ARG = flag("client");
-const DROPBOX = resolve(flag("dropbox") ?? process.env.DT_DROPBOX ?? join(homedir(), "Dropbox", "DonTechnoAuto"));
+// The Dropbox root is a flag, not an env var, so the repo's env inventory stays exact (the engine's own DT_DROPBOX is its business).
+const DROPBOX = resolve(flag("dropbox") ?? join(homedir(), "Dropbox", "DonTechnoAuto"));
 const REPO = resolve(flag("repo") ?? join(homedir(), "Code", "don-techno-auto"));
 /**
  * --report=<path>: write what the portal holds for every runway asset (labRun, status,

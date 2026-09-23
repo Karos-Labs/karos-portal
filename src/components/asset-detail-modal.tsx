@@ -44,7 +44,7 @@ import {
   assetFileStem,
   assetImages,
   assetLiMedia,
-  assetVideoSrc,
+  assetVideoPlaybackSrc,
   assetVideos,
 } from "@/lib/asset-images";
 import { templateForAsset } from "@/lib/post-chain";
@@ -496,7 +496,7 @@ export function AssetDetailModal({
         {videos.map((v, i) => (
           <video
             key={v.url}
-            src={assetVideoSrc(asset.id, i)}
+            src={assetVideoPlaybackSrc(asset, i)}
             controls
             preload="metadata"
             {...(coverImageUrl ? { poster: coverImageUrl } : {})}
