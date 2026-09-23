@@ -1,6 +1,7 @@
 import "server-only";
 
 import { normalizeHex } from "@/lib/branding-hex";
+import { resolveBrandFonts, type ResolvedBrandFonts } from "@/lib/brand-fonts";
 import type { BrandColor } from "@/lib/types";
 
 /**
@@ -365,6 +366,34 @@ export function brandPageUrl(site: string): string {
  * a non-fatal side pipeline (`applyBrandingForClient`'s call site catches and
  * logs), and making it fatal here would trade a cosmetic gap for a failed run.
  */
+/**
+ * The SAME reading, for typography.
+ *
+ * `observeSitePalette` below exists because a model browsing a site reported
+ * `#6366f1` for a site whose CSS contains no such value. Typography never got
+ * the same treatment, and it failed the same way: for karoslabs.com the
+ * extractor stored **Space Grotesk** and **Inter** while the site serves
+ * **Spectral** and **Hanken Grotesk**. The colours from that very run were
+ * correct — because they came from here, and the fonts did not.
+ *
+ * "Inter" and "Space Grotesk" are the two most common modern-tech-startup
+ * fonts there are. That is what a model answers with when the input cannot
+ * answer the question: karoslabs.com exposes only `font-family: var(--font-serif)`,
+ * and the real name is two variable hops further down
+ * (`--font-serif: var(--font-spectral)` → `--font-spectral: "Spectral"`).
+ *
+ * Costs the same page fetch and up to four stylesheets the palette already
+ * pays for. Returns `{}` when the CSS genuinely does not say — an honest
+ * "could not tell", which is the answer the model was unable to give.
+ */
+export async function observeSiteFonts(site: string, fetchImpl: typeof fetch = fetch): Promise<ResolvedBrandFonts> {
+  const pageUrl = brandPageUrl(site);
+  const html = await fetchText(pageUrl, fetchImpl);
+  if (html === null) return {};
+  const sheets = await Promise.all(stylesheetUrls(html, pageUrl).map((url) => fetchText(url, fetchImpl)));
+  return resolveBrandFonts([html, ...sheets.filter((s): s is string => s !== null)].join("\n"));
+}
+
 export async function observeSitePalette(site: string, fetchImpl: typeof fetch = fetch): Promise<ObservedColor[]> {
   const pageUrl = brandPageUrl(site);
   const html = await fetchText(pageUrl, fetchImpl);

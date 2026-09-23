@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { vi, describe, it, expect } from "vitest";
 
 // Must be hoisted before any import that transitively pulls in server-only or Firebase
@@ -26,6 +28,7 @@ import {
   effectiveNeutralLight,
   reconcileRoleWithHex,
   isSubstrateColor,
+  buildBrandingPrompt,
 } from "../branding";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -571,5 +574,67 @@ describe("body text and content are neutrals", () => {
     expect(classifyColorRole("Card and border surface")).toBe("neutral");
     // An accent keyword still wins when both appear.
     expect(classifyColorRole("CTA button text")).toBe("accent");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Verified typography reaches the prompt
+//
+// The palette was made ground truth in the prompt because a model invented a
+// hex. Typography got the same treatment after the same failure: for a site
+// serving Spectral/Hanken Grotesk the extraction returned Space Grotesk/Inter,
+// the two most common modern-tech-startup fonts there are. A model that cannot
+// follow a var() chain does not say so, it guesses — so the chain is resolved
+// in code (`observeSiteFonts`) and handed over as a value to copy.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("buildBrandingPrompt — verified typography", () => {
+  const args = ["Karos Labs", "karoslabs.com", undefined, undefined, null, undefined, [], []] as const;
+
+  it("states the observed families and where they were read", () => {
+    const prompt = buildBrandingPrompt(...args, {
+      fontHeading: "Spectral",
+      fontBody: "Hanken Grotesk",
+      source: "heading: font-family on `h1,h2,h3`",
+    });
+    expect(prompt).toContain("Spectral");
+    expect(prompt).toContain("Hanken Grotesk");
+    expect(prompt).toContain("h1,h2,h3");
+  });
+
+  it("replaces the archetype-fallback rule with a copy-exactly rule", () => {
+    const withFonts = buildBrandingPrompt(...args, { fontHeading: "Spectral", fontBody: "Hanken Grotesk" });
+    expect(withFonts).toContain("copied EXACTLY from Source D");
+    // The rule it replaces is what licensed the guess. Both must not be present:
+    // "use a fallback if unknown" beside "copy this" is an instruction to choose.
+    expect(withFonts).not.toContain("archetype fallback only if unknown");
+  });
+
+  it("keeps the old rule when the stylesheet stated no family", () => {
+    // A site behind Cloudflare, or one whose CSS this run could not fetch, still
+    // needs an answer — the model's documented-typography knowledge is the
+    // fallback, and it is only a fallback.
+    const withoutFonts = buildBrandingPrompt(...args, {});
+    expect(withoutFonts).toContain("archetype fallback only if unknown");
+    expect(withoutFonts).not.toContain("Source D");
+  });
+});
+
+describe("the stored font is the observed one, not the model's", () => {
+  // `applyBrandingForClient` is not callable here — it fetches a live site,
+  // screenshots it and calls a vision model. So this reads the assembly itself.
+  // It proves the precedence is written the right way round; it cannot prove the
+  // observer ran, which is what `observeSiteFonts`' own tests are for.
+  const source = fs.readFileSync(path.join(process.cwd(), "src/lib/branding.ts"), "utf8");
+
+  it("reads the model's answer only as a fallback", () => {
+    expect(source).toContain("fontHeading: observedFonts.fontHeading ?? object.fontHeading");
+    expect(source).toContain("fontBody: observedFonts.fontBody ?? object.fontBody");
+  });
+
+  it("asks the observer for every client that has a site", () => {
+    // Inside the same Promise.all as the palette observer: one round trip, and
+    // the two readings of the same site cannot drift apart in time.
+    expect(source).toMatch(/siteUrl \? observeSiteFonts\(siteUrl\)/);
   });
 });
