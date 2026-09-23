@@ -439,6 +439,9 @@ export const DEDICATED_FIELDS = [
  */
 export const SPECIAL_CASED_WIRE_KEYS = [
   "customPrompt",
+  // 2026-09-23: the Instagram post type, translated by `instagramPostTypeInput`.
+  "pictureDensity",
+  "requestedSeries",
   "mediaAssets",
   // `media_source` → `mediaSource`, validated to its two legal values rather
   // than passed through: an unknown value must read engine-side as the
@@ -551,6 +554,32 @@ function normalizeTargetDate(raw: string): string | undefined {
  * business question rather than a topic. Omitted, `request` keeps its
  * historical meaning.
  */
+/** The Instagram run dialog's optional post-type field (2026-09-23). Declared here so the dialog imports it. */
+export const INSTAGRAM_POST_TYPE_FIELD_KEY = "instagram_post_type";
+
+/**
+ * The Instagram run dialog's optional post type (2026-09-23), in the engine's
+ * own run-input keys. Each maps to something `instagram-agent` reads in
+ * `01-open-run`: `requestedMode: "news_flash"` (with `requestedFormat:
+ * "single"`, because a news flash is one image), `pictureDensity`, or
+ * `requestedSeries`. An unknown value sends nothing, so the agent decides.
+ */
+export function instagramPostTypeInput(postType: string): Record<string, string> {
+  switch (postType) {
+    case "news_flash":
+      return { requestedMode: "news_flash", requestedFormat: "single" };
+    case "photo_first":
+      return { pictureDensity: "photo-first" };
+    case "the_list":
+    case "by_the_numbers":
+    case "head_to_head":
+    case "the_breakdown":
+      return { requestedSeries: postType };
+    default:
+      return {};
+  }
+}
+
 export function toEngineRunInput(
   briefValues: Record<string, string> | undefined,
   engineProductId?: string,
@@ -620,6 +649,11 @@ export function toEngineRunInput(
     const value = at(dialogKey);
     if (value) input[wireKey] = value;
   }
+
+  // AFTER the dedicated fields, deliberately: a news flash is a single image,
+  // so it must win over the format select's own default of "carousel".
+  const postType = at(INSTAGRAM_POST_TYPE_FIELD_KEY);
+  if (postType) Object.assign(input, instagramPostTypeInput(postType));
 
   // Attachments arrive as a JSON array from the dialog, because a form field
   // carries strings. Parsed and re-validated here rather than forwarded raw:

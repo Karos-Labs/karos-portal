@@ -514,6 +514,8 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
     readBy: [
       { product: "x-agent", evidence: "agents/x-agent/src/workflow/create-x-agent-workflow.ts (00-intake-check overlays wf.input.requestedMode; :415-416 07b-select-content-mode: selectContentMode(recentModes, runDirection.modeOverride ?? intake.requestedMode) — applied when the note names no kind)" },
       { product: "linkedin-agent", evidence: "agents/linkedin-agent/src/workflow/create-linkedin-agent-workflow.ts (RUN_SCOPED_KEYS includes requestedMode; readRunConfig; :562-563 07b-select-content-mode: selectContentMode(recentDecisions.modes, runDirection.modeOverride ?? intake.requestedMode) — applied when the note names no kind)" },
+      // 2026-09-23: only the value "news_flash", sent by the Instagram post-type select.
+      { product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts (01-open-run: wf.input.requestedMode === \"news_flash\" -> InstagramRunClaim.newsFlash; 04p newsCover)" },
     ],
     sentButUnread: [],
   },
@@ -524,6 +526,18 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
   // does not have, the same shape `platform` already carries.
   requestedFormat: {
     readBy: [{ product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts (01-open-run: isFormatChoice(wf.input.requestedFormat) -> InstagramRunClaim.requestedFormat; 04h-select-format)" }],
+    sentButUnread: ["tiktok-agent"],
+  },
+
+  // 2026-09-23: the Instagram post type's photo-led option.
+  pictureDensity: {
+    readBy: [{ product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts (01-open-run: isPictureDensity(wf.input.pictureDensity) -> InstagramRunClaim.pictureDensity; PICTURE_BANDS)" }],
+    sentButUnread: ["tiktok-agent"],
+  },
+
+  // 2026-09-23: the Instagram post type's editorial-series options.
+  requestedSeries: {
+    readBy: [{ product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts (01-open-run: wf.input.requestedSeries -> InstagramRunClaim.requestedSeries; 04i2-select-series honours it when the catalogue carries it)" }],
     sentButUnread: ["tiktok-agent"],
   },
 

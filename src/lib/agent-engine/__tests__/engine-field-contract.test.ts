@@ -40,6 +40,9 @@ const PROBE_INPUT: Record<WireFieldKey, Record<string, string>> = {
   requestedArchetype: { requestedArchetype: "probe-archetype" },
   requestedMode: { requestedMode: "hot-news" },
   requestedFormat: { requestedFormat: "single" },
+  // 2026-09-23: both arrive through the Instagram post-type select.
+  pictureDensity: { instagram_post_type: "photo_first" },
+  requestedSeries: { instagram_post_type: "the_list" },
   requestedExecutiveName: { requestedExecutiveName: "Albert Kattan" },
   requestedSubreddit: { requestedSubreddit: "probe-subreddit" },
   requestedThreadUrl: { requestedThreadUrl: "https://reddit.test/thread" },
@@ -141,7 +144,7 @@ describe("the guard actually guards (fixes the prior round's build-time-guard re
     }).toThrow();
   });
 
-  it("pins the exact current wire-field set (29 keys) — a change here should be a deliberate, reviewed diff", () => {
+  it("pins the exact current wire-field set (31 keys) — a change here should be a deliberate, reviewed diff", () => {
     expect([...WIRE_FIELD_KEYS].sort()).toEqual(
       [
         "audience",
@@ -156,6 +159,7 @@ describe("the guard actually guards (fixes the prior round's build-time-guard re
         "mediaSource",
         "mustInclude",
         "offer",
+        "pictureDensity",
         "platform",
         "requestedIdentityScope",
         "proof",
@@ -163,6 +167,7 @@ describe("the guard actually guards (fixes the prior round's build-time-guard re
         "requestedFormat",
         "requestedLane",
         "requestedMode",
+        "requestedSeries",
         "requestedSubreddit",
         "requestedThreadTitle",
         "requestedThreadUrl",
@@ -286,8 +291,11 @@ describe("ENGINE_FIELD_CONTRACT — the pinned classification (C3's deliverable 
       requestedTopic: [...REACHABLE_PRODUCTS].filter((p) => p !== "seo-geo-agent").sort(),
       requestedLane: ["x-agent"],
       requestedArchetype: ["linkedin-agent"],
-      requestedMode: ["linkedin-agent", "x-agent"],
+      requestedMode: ["instagram-agent", "linkedin-agent", "x-agent"],
       requestedFormat: ["instagram-agent"],
+      // 2026-09-23: the Instagram post-type select.
+      pictureDensity: ["instagram-agent"],
+      requestedSeries: ["instagram-agent"],
       requestedIdentityScope: ["linkedin-agent"],
       requestedExecutiveName: ["linkedin-agent"],
       requestedSubreddit: ["reddit-agent"],
