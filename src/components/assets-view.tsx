@@ -1,10 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Badge } from "@/components/ui";
+import { Badge, Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { EmptyState } from "@/components/ui";
 import { AssetCard } from "@/components/asset-card";
+import { ReviewQueue } from "@/components/review-queue";
 // The staff register. These words were a local const here; they are unchanged
 // byte for byte, and this is now the only place they are written down — the
 // analytics chart was printing a third, drifted set of them to the same reader
@@ -90,6 +91,16 @@ export function AssetsView({
   now: number;
 }) {
   const [status, setStatus] = useState<StatusFilter>(initialStatus);
+  /**
+   * THE QUEUE IS A VIEW OF THIS LIST, not a second list.
+   *
+   * A grid answers "what do we have"; a backlog of drafts is the other
+   * question, and in a two-column grid a reviewer loses their place after every
+   * approval because the page re-sorts under them. The queue shows the same
+   * cards one at a time with a position and a keyboard {D} and it reads THIS
+   * component's filters, so whatever is on screen is what the queue holds.
+   */
+  const [queueOpen, setQueueOpen] = useState(false);
   const channels = useMemo(
     () => [...new Set(assets.flatMap((asset) => asset.channels ?? []))].sort(),
     [assets],
@@ -123,7 +134,7 @@ export function AssetsView({
    * so the page that renders this passes the moment down.
    */
   const now = nowProp;
-  const { todayAssets, groupedAssets } = useMemo(() => {
+  const { todayAssets, groupedAssets, reviewable } = useMemo(() => {
     const matching = assets
       .filter((asset) => status === "all" || asset.status === status)
       .filter((asset) => channel === "all" || asset.channels?.includes(channel))
@@ -159,6 +170,13 @@ export function AssetsView({
 
     return {
       todayAssets,
+      /**
+       * What the queue works through: every DRAFT this filter matched, in the
+       * order the page shows them, Today section included. Drafts only — a
+       * queue that walked past published posts would be asking a reviewer to
+       * decide on things already decided.
+       */
+      reviewable: matching.filter((asset) => asset.status === "draft"),
       groupedAssets: STATUS_ORDER.flatMap((groupStatus) => {
         const items = rest.filter((asset) => asset.status === groupStatus);
         return items.length ? [{ status: groupStatus, items }] : [];
@@ -259,7 +277,30 @@ export function AssetsView({
             first within itself - so the sentence describes the rule both
             sections follow rather than either one's position. */}
         <span className="ml-auto px-1 text-[11px] text-muted-2">Newest first in each section</span>
+        {/* THE ENTRY, and only when there is something to review. A button that
+            opens an empty queue is a button that teaches people not to press
+            it; below two drafts a grid is already the better shape. */}
+        {canApprove && reviewable.length > 1 && !queueOpen && (
+          <Button size="sm" variant="outline" onClick={() => setQueueOpen(true)}>
+            <Icon name="ListChecks" className="h-3.5 w-3.5" />
+            Review {reviewable.length} drafts
+          </Button>
+        )}
       </div>
+
+      {/* One draft at a time, with a position and a keyboard — the same cards
+          and the same approve action, in the shape a backlog needs. It reads
+          the filters above, so what it holds is what the page is showing. */}
+      {queueOpen && (
+        <ReviewQueue
+          assets={reviewable}
+          canApprove={canApprove}
+          {...(clientNames ? { clientNames } : {})}
+          {...(connectedPlatformsByClient ? { connectedPlatformsByClient } : {})}
+          {...(agentDraftPublishPlatformsByClient ? { agentDraftPublishPlatformsByClient } : {})}
+          onClose={() => setQueueOpen(false)}
+        />
+      )}
 
       {/* WHAT JUST HAPPENED, before what do we have. Its own section with a
           real heading, above the library rather than mixed into it - "clear
@@ -270,7 +311,7 @@ export function AssetsView({
           and not a second list: filtering to Drafts and finding a Today section
           full of published posts would be the page disagreeing with its own
           control. */}
-      {todayAssets.length > 0 && (
+      {!queueOpen && todayAssets.length > 0 && (
         <section aria-label={GENERATED_TODAY_TITLE}>
           <div className="mb-3 flex items-center gap-2">
             <Badge tone="info">{GENERATED_TODAY_TITLE}</Badge>
@@ -298,7 +339,7 @@ export function AssetsView({
         </section>
       )}
 
-      {groupedAssets.length === 0 && todayAssets.length === 0 ? (
+      {queueOpen ? null : groupedAssets.length === 0 && todayAssets.length === 0 ? (
         <EmptyState
           icon={<Icon name="SearchX" className="h-7 w-7" />}
           title="No matching assets"

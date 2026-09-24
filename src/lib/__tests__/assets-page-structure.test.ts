@@ -92,7 +92,12 @@ describe("the today section", () => {
   });
 
   it("does not render at all on a day with no output", () => {
-    expect(view).toContain("{todayAssets.length > 0 && (");
+    // `!queueOpen &&` was added when the review queue landed: the queue REPLACES
+    // the grid while it is open, so the condition is now "there is output today
+    // AND we are not in the queue". The rule this test states is unchanged —
+    // an empty Today section must not render — so the assertion reads the
+    // length check rather than the whole expression.
+    expect(view).toContain("todayAssets.length > 0 && (");
     // And the empty state has to account for BOTH sections being empty, or a
     // day whose only matches were lifted would show "No matching assets" over
     // a full Today section.

@@ -16,6 +16,12 @@ import { jobStatusLabel } from "@/lib/job-status-copy";
  * `job-status-copy`'s register, so the sentence now names the nav entry and asks
  * the register for the state.
  *
+ * 2026-09-24: A REVIEW QUEUE NOW EXISTS — a staff mode of the Assets page
+ * (`components/review-queue.tsx`), not a route and not a client surface. The
+ * rule below was rewritten rather than deleted: the phrase is allowed in the
+ * two files that implement it and still forbidden everywhere else, because the
+ * sentence that caused the report was one a CLIENT read.
+ *
  * WHY A SWEEP AND NOT AN ASSERTION ABOUT ONE SENTENCE. A test pinning that one
  * string would go green and stay useless: the failure mode is a WRITER naming a
  * destination that does not exist, and that can happen in any component, in copy
@@ -118,13 +124,40 @@ describe("the destinations this app names", () => {
     expect(dangling, "these link somewhere the router does not serve").toEqual([]);
   });
 
-  it("no copy names a review queue, because there is no review queue", () => {
+  /**
+   * THE PREMISE OF THIS RULE CHANGED, and the rule outlived it.
+   *
+   * It read "no copy names a review queue, because there is no review queue",
+   * which was exactly right while there was none. There is one now: the staff
+   * Assets page has a queue mode — one draft at a time, a position, a keyboard
+   * — implemented in `components/review-queue.tsx` and mounted by
+   * `components/assets-view.tsx`.
+   *
+   * What has NOT changed is the defect underneath: a reader met a name for a
+   * place they could not reach. The queue is STAFF-only, it is a mode of the
+   * Assets page rather than a route, and the copy that caused the report was
+   * client-facing ("your deliverables land in the review queue"). So the rule
+   * becomes: the phrase belongs to the two files that implement it, and nowhere
+   * else — a client-facing string naming it would be the original defect again,
+   * word for word.
+   */
+  it("names a review queue only where there is one", () => {
+    const IMPLEMENTS = ["components/review-queue.tsx", "components/assets-view.tsx"];
     const offenders: string[] = [];
+    let named = 0;
     for (const file of FILES) {
       const src = code(readFileSync(file, "utf8"));
-      if (/review queue/i.test(src)) offenders.push(relToSrc(file));
+      if (!/review queue/i.test(src)) continue;
+      named += 1;
+      if (!IMPLEMENTS.includes(relToSrc(file))) offenders.push(relToSrc(file));
     }
-    expect(offenders, "the staff Jobs list is the place; name that instead").toEqual([]);
+    // The premise, so a renamed or deleted queue fails HERE rather than leaving
+    // an allowlist guarding a phrase nothing says any more.
+    expect(named, "nothing implements the queue this allowlist names").toBeGreaterThan(0);
+    expect(
+      offenders,
+      "the queue is a staff mode of the Assets page, not a place a client can be sent",
+    ).toEqual([]);
   });
 
   it("the run-started panel asks the register for the run state's word", () => {
