@@ -942,6 +942,11 @@ export function AssetCard({
                 <div className="flex items-center gap-2">
                   <Button
                     size="sm"
+                    /* The review queue's `A` shortcut reaches for THIS control
+                       rather than calling the action itself, so a keystroke
+                       still opens the panel where a person picks the publish
+                       tier and the slot — one approve path, two ways in. */
+                    data-approve-trigger="true"
                     onClick={() => {
                       if (calendarEligible) {
                         setApproving(true);
