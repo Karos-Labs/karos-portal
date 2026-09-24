@@ -95,6 +95,11 @@ const NAV: NavItem[] = [
   { href: "/jobs", label: "Jobs", icon: "ListChecks", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   { href: "/transcripts", label: "Meetings", icon: "Mic", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
   { href: "/assets", label: "Assets", icon: "FolderOpen", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
+  // 2026-09-24: `/campaigns/[id]` had existed for months with no list page
+  // and no link anywhere, so a bundle of dependent tasks was reachable only
+  // by a URL nobody generated (audit §09). The entry is staff-only for the
+  // same reason the page is: a cross-client list is a staff surface.
+  { href: "/campaigns", label: "Campaigns", icon: "Layers", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   { href: "/calendar", label: "Calendar", icon: "CalendarClock", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
   { href: "/team", label: "Team", icon: "Users", roles: ["KAROS_ADMIN"] },
   { href: "/admin/analytics", label: "Analytics", icon: "TrendingUp", roles: ["KAROS_ADMIN"] },
