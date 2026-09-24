@@ -2775,6 +2775,29 @@ export interface Campaign {
   updatedAt: number;
 }
 
+/**
+ * A comment on a DRAFT, so the client and their account manager can talk
+ * about the post itself.
+ *
+ * Flat in `assetComments`, exactly like `TaskComment` in `taskComments`:
+ * a thread that lives on the document it is about cannot be read without
+ * reading that document, and a client's comment on a draft is a thing staff
+ * must be able to list per asset.
+ *
+ * §09 asked for this: a comment mechanism existed for task tickets and
+ * nothing at all for content, so "make the second line punchier" was said in
+ * Slack, in an email, or not at all.
+ */
+export interface AssetComment {
+  id: string;
+  assetId: string;
+  clientId: string;
+  content: string;
+  authorName: string;
+  authorRole: Role;
+  createdAt: number;
+}
+
 /** A comment thread entry on a task ticket. Stored flat in `taskComments` collection. */
 export interface TaskComment {
   id: string;

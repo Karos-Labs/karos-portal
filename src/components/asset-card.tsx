@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Card, Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { VersionComparison } from "@/components/version-comparison";
+import { DraftComments } from "@/components/draft-comments";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { CopyCaptionButton, captionText } from "@/components/copy-caption-button";
 import { downloadTextFile } from "@/components/draft-review-kit";
@@ -710,6 +711,10 @@ export function AssetCard({
                   only when this draft was actually edited (`VersionComparison`
                   returns null otherwise), and opens on a press — the current
                   text is what ships and stays the first thing read. */}
+              {/* The conversation about this draft. Both sides of it: a client
+                  asking for the second line to change, and the account manager
+                  answering, on the post rather than in an inbox. */}
+              <DraftComments assetId={asset.id} />
               {typeof asset.meta?.engineOriginalContent === "string" && (
                 <VersionComparison original={asset.meta.engineOriginalContent} current={asset.content} />
               )}
