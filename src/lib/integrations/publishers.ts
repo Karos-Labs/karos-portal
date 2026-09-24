@@ -180,6 +180,176 @@ function assertTextPostDeliverable(
   }
 }
 
+/* ── The picture on an X or LinkedIn post ────────────────────────────── */
+
+/**
+ * THE PICTURE THE ENGINE WORKED FOR, ACTUALLY ON THE POST.
+ *
+ * `publishToTwitter` and `publishToLinkedIn` both posted text and nothing else
+ * — `assertTextPostDeliverable(..., { attachesPhoto: false })` — while the
+ * agents behind those posts run a four-tier media cascade (a screenshot of the
+ * cited page, the article's own lead image, licensed stock, generation last),
+ * vision-vet the result, record its licence and carry it on the deliverable.
+ * All of that arrived here and was dropped on the floor, silently: the post
+ * went out, so nothing failed, and the only way to see it was to compare the
+ * published post with the draft.
+ *
+ * ## The picture never costs the post
+ *
+ * Every step below returns `null` rather than throwing, and both publishers
+ * fall back to the text-only body they used to send. A platform that changes
+ * its upload API, an image host that 404s, a file over the size cap — none of
+ * those may turn a publishable post into a failed one. What each failure does
+ * instead is log a line naming the reason, because "the picture is missing" is
+ * otherwise indistinguishable from "the draft had no picture".
+ *
+ * ## Alt text is sent, never invented
+ *
+ * `meta.media.altText` is what agent-engine derived from its own vision read
+ * (`altTextFor`, agent-engine#245), and that is the only thing sent. When it is
+ * absent the picture goes up with no description, exactly as a human posting it
+ * by hand would leave it — inventing one here would mean this file describing a
+ * photograph it has never looked at.
+ */
+
+/** X's own limit for an image in one upload (5MB). LinkedIn's is far higher; this is the binding one. */
+const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+/** What the engine said a reader who cannot see the picture should be told, when it said anything. */
+function altTextOf(asset: Asset): string | null {
+  const media = (asset.meta as Record<string, unknown> | undefined)?.["media"];
+  if (typeof media !== "object" || media === null) return null;
+  const alt = (media as Record<string, unknown>)["altText"];
+  return typeof alt === "string" && alt.trim().length > 0 ? alt.trim() : null;
+}
+
+/** The image bytes, or `null` with the reason logged. Never throws. */
+async function fetchImageBytes(url: string, platform: string): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.warn(`[publish:${platform}] the post's picture could not be fetched (${res.status}); posting text only`);
+      return null;
+    }
+    const buffer = new Uint8Array(await res.arrayBuffer());
+    if (buffer.byteLength === 0) {
+      console.warn(`[publish:${platform}] the post's picture fetched as 0 bytes; posting text only`);
+      return null;
+    }
+    if (buffer.byteLength > IMAGE_MAX_BYTES) {
+      console.warn(
+        `[publish:${platform}] the post's picture is ${(buffer.byteLength / (1024 * 1024)).toFixed(1)}MB, over the ${IMAGE_MAX_BYTES / (1024 * 1024)}MB upload limit; posting text only`,
+      );
+      return null;
+    }
+    const contentType = res.headers.get("content-type") ?? "image/jpeg";
+    return { bytes: buffer, contentType };
+  } catch (e) {
+    console.warn(`[publish:${platform}] the post's picture could not be fetched (${e instanceof Error ? e.message : String(e)}); posting text only`);
+    return null;
+  }
+}
+
+/**
+ * Uploads the picture to X and returns its media id, or `null`.
+ *
+ * `POST /2/media/upload` is the OAuth 2.0 user-context endpoint (the v1.1
+ * upload host wants OAuth 1.0a signing, which this app does not do). Alt text
+ * is a SECOND call and a best-effort one: a picture with no description is a
+ * worse post, a post that failed to publish is no post.
+ */
+async function uploadTwitterImage(token: string, photo: string, altText: string | null): Promise<string | null> {
+  const image = await fetchImageBytes(photo, "twitter");
+  if (!image) return null;
+  try {
+    const form = new FormData();
+    form.append("media", new Blob([image.bytes as unknown as BlobPart], { type: image.contentType }), "image");
+    form.append("media_category", "tweet_image");
+    const res = await fetch("https://api.x.com/2/media/upload", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    });
+    if (!res.ok) {
+      console.warn(`[publish:twitter] media upload failed (${res.status}); posting text only`);
+      return null;
+    }
+    const body = (await res.json().catch(() => ({}))) as { data?: { id?: string }; id?: string; media_id_string?: string };
+    const mediaId = body.data?.id ?? body.id ?? body.media_id_string ?? null;
+    if (!mediaId) {
+      console.warn("[publish:twitter] media upload returned no id; posting text only");
+      return null;
+    }
+    if (altText) {
+      const meta = await fetch("https://api.x.com/2/media/metadata", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ id: mediaId, metadata: { alt_text: { text: altText.slice(0, 1000) } } }),
+      });
+      if (!meta.ok) console.warn(`[publish:twitter] alt text was refused (${meta.status}); the picture goes up without it`);
+    }
+    return mediaId;
+  } catch (e) {
+    console.warn(`[publish:twitter] media upload threw (${e instanceof Error ? e.message : String(e)}); posting text only`);
+    return null;
+  }
+}
+
+/**
+ * Registers, uploads and returns a LinkedIn image asset URN, or `null`.
+ *
+ * Stays on the `/v2` API this file already speaks (`registerUpload` +
+ * `ugcPosts`) rather than moving to `/rest/posts`: one new capability at a
+ * time, and the version header on the newer API is a second thing to get wrong
+ * on a call nobody here can test against a real account.
+ */
+async function uploadLinkedInImage(token: string, ownerUrn: string, photo: string): Promise<string | null> {
+  const image = await fetchImageBytes(photo, "linkedin");
+  if (!image) return null;
+  try {
+    const registerRes = await fetch("https://api.linkedin.com/v2/assets?action=registerUpload", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "X-Restli-Protocol-Version": "2.0.0" },
+      body: JSON.stringify({
+        registerUploadRequest: {
+          owner: ownerUrn,
+          recipes: ["urn:li:digitalmediaRecipe:feedshare-image"],
+          serviceRelationships: [{ relationshipType: "OWNER", identifier: "urn:li:userGeneratedContent" }],
+        },
+      }),
+    });
+    if (!registerRes.ok) {
+      console.warn(`[publish:linkedin] upload registration failed (${registerRes.status}); posting text only`);
+      return null;
+    }
+    const registered = (await registerRes.json().catch(() => ({}))) as {
+      value?: {
+        asset?: string;
+        uploadMechanism?: Record<string, { uploadUrl?: string }>;
+      };
+    };
+    const assetUrn = registered.value?.asset;
+    const uploadUrl = Object.values(registered.value?.uploadMechanism ?? {})[0]?.uploadUrl;
+    if (!assetUrn || !uploadUrl) {
+      console.warn("[publish:linkedin] upload registration returned no asset or URL; posting text only");
+      return null;
+    }
+    const putRes = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": image.contentType },
+      body: image.bytes as unknown as BodyInit,
+    });
+    if (!putRes.ok) {
+      console.warn(`[publish:linkedin] image upload failed (${putRes.status}); posting text only`);
+      return null;
+    }
+    return assetUrn;
+  } catch (e) {
+    console.warn(`[publish:linkedin] image upload threw (${e instanceof Error ? e.message : String(e)}); posting text only`);
+    return null;
+  }
+}
+
 /* ── Instagram ───────────────────────────────────────────────────────── */
 
 /**
@@ -504,9 +674,11 @@ async function publishToLinkedIn(
 ): Promise<PublishResult> {
   const token = credentials.accessToken;
   if (!token) throw new Error("No access token");
-  // shareMediaCategory is NONE below: this call posts commentary text and nothing
-  // else, so it takes the text-post precondition with no photo to offer.
-  assertTextPostDeliverable("linkedin", asset, { attachesPhoto: false });
+  // A picture is attached when the draft carries one and the upload succeeds
+  // (see `uploadLinkedInImage`); the precondition therefore counts a photo as
+  // publishable content, so a picture-only post is no longer refused for having
+  // no text.
+  assertTextPostDeliverable("linkedin", asset, { attachesPhoto: true });
 
   // Post as the organization when a Company Page URN was configured;
   // otherwise as the member the token belongs to.
@@ -530,13 +702,25 @@ async function publishToLinkedIn(
   // Truncate to 3000 chars (LinkedIn limit)
   const text = asset.content.slice(0, 3000);
 
+  // The draft's picture, uploaded and attached when there is one and the
+  // upload works. `null` — for any reason — means the post goes out exactly as
+  // it did before this existed: text, no media block.
+  const photo = photoUrl(asset);
+  const imageUrn = photo ? await uploadLinkedInImage(token, authorUrn, photo) : null;
+  const altText = altTextOf(asset);
+
   const body = {
     author: authorUrn,
     lifecycleState: "PUBLISHED",
     specificContent: {
       "com.linkedin.ugc.ShareContent": {
         shareCommentary: { text },
-        shareMediaCategory: "NONE",
+        shareMediaCategory: imageUrn ? "IMAGE" : "NONE",
+        // `description` IS LinkedIn's alt text on a ugcPost image, and it is
+        // sent only when agent-engine derived one from its own vision read.
+        ...(imageUrn
+          ? { media: [{ status: "READY", media: imageUrn, ...(altText ? { description: { text: altText.slice(0, 200) } } : {}) }] }
+          : {}),
       },
     },
     visibility: {
@@ -573,12 +757,16 @@ async function publishToTwitter(
 ): Promise<PublishResult> {
   const token = credentials.accessToken;
   if (!token) throw new Error("No access token");
-  // Text-only endpoint (media needs the separate chunked upload API, which this
-  // module does not implement), so the same precondition with no photo to offer.
-  assertTextPostDeliverable("twitter", asset, { attachesPhoto: false });
+  // A picture is attached when the draft carries one and the upload succeeds
+  // (see `uploadTwitterImage`), so a picture counts as publishable content
+  // here now.
+  assertTextPostDeliverable("twitter", asset, { attachesPhoto: true });
 
   // 280-char hard limit
   const text = asset.content.slice(0, 280);
+
+  const photo = photoUrl(asset);
+  const mediaId = photo ? await uploadTwitterImage(token, photo, altTextOf(asset)) : null;
 
   const postRes = await fetch("https://api.twitter.com/2/tweets", {
     method: "POST",
@@ -586,7 +774,7 @@ async function publishToTwitter(
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, ...(mediaId ? { media: { media_ids: [mediaId] } } : {}) }),
   });
 
   if (postRes.status === 401 || postRes.status === 403) throw new TokenExpiredError("twitter", postRes.status);

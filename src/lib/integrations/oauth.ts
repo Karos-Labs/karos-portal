@@ -296,7 +296,13 @@ export const OAUTH_CONFIGS: Record<string, OAuthPlatformConfig> = {
     // change needed, just new endpoint calls (see fetchTwitterFollowerGrowth /
     // fetchTwitterMentions). What DOES gate them is the X Developer account's
     // paid API tier (Basic/Pro) — a billing decision, not a scope grant.
-    scopes: ["tweet.read", "tweet.write", "users.read", "offline.access"],
+    // `media.write` (2026-09-24) is what lets a post carry the picture the
+    // agent sourced for it: `POST /2/media/upload` refuses an OAuth 2.0 token
+    // without it. An EXISTING connection keeps the scopes it was granted, so a
+    // client connected before today uploads nothing and the publisher degrades
+    // to the text-only post it always sent — visibly, in the log, rather than
+    // by failing. Reconnecting the account is what grants it.
+    scopes: ["tweet.read", "tweet.write", "users.read", "media.write", "offline.access"],
     usePkce: true,
   },
   youtube: {
