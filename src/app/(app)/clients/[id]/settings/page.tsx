@@ -6,6 +6,8 @@ import {
   getClientCredits,
   getClientSeoGeo,
   listAssets,
+  listClientMarketingAnalytics,
+  listClientFollowerSnapshots,
   listClientIntegrations,
   listCreditLedger,
   listCustomAgents,
@@ -41,6 +43,8 @@ import { ClientSuggestions } from "@/components/seo-geo/client-suggestions";
 import { VisibilityWork, type VisibilityWorkRow } from "@/components/seo-geo/visibility-work";
 import { buildClientRosterEntries } from "@/lib/client-roster";
 import type { RosterStatus } from "@/lib/client-agents";
+import { monthlyPerformance } from "@/lib/client-performance";
+import { ClientPostPerformance } from "@/components/client-post-performance";
 import {
   citationDomainFor,
   sortVisibilityWorkRows,
@@ -89,6 +93,8 @@ import { relativeTime } from "@/lib/utils";
 import type {
   Asset,
   ClientIntegration,
+  ClientMarketingAnalytics,
+  ClientFollowerSnapshot,
   Transcript,
   ClientCredits,
   CreditLedgerEntry,
@@ -209,6 +215,8 @@ export default async function ClientSettingsPage({
     actionStates,
     spendJobs,
     spendUmbrellas,
+    marketingRows,
+    followerSnapshots,
   ] = (await Promise.all([
     listClientIntegrations(id),
     // FILTERED FOR A CLIENT READER, the same way /transcripts filters its own
@@ -268,6 +276,12 @@ export default async function ClientSettingsPage({
     // round trips into two (ruling 8).
     listJobs({ clientId: id }),
     listClientAgents({ clientId: id }),
+    // THE TWO READS THE 'LAST 30 DAYS' SECTION ADDS. In this wave rather
+    // than a serial await for the same reason every read above is: the tab
+    // pays latency once. `rosterAssets` above is the same asset list, so
+    // the join costs no third query.
+    listClientMarketingAnalytics(id),
+    listClientFollowerSnapshots(id),
   ])) as [
     ClientIntegration[],
     Transcript[],
@@ -284,6 +298,8 @@ export default async function ClientSettingsPage({
     ClientActionState[],
     Job[],
     ClientAgent[],
+    ClientMarketingAnalytics[],
+    ClientFollowerSnapshot[],
   ];
 
   /**
@@ -797,8 +813,24 @@ export default async function ClientSettingsPage({
   // the tab is named after, the agent rows say what is moving them, the panel
   // is the comparison and the evidence behind both, and the one section that
   // asks the READER for anything closes the tab rather than interrupting it.
+  /**
+   * WHAT LAST MONTH'S POSTS DID (§09, 2026-09-25).
+   *
+   * The tab is named Reporting and answered only "are we findable" — the
+   * visibility scores. "Did the work land" was in a block labelled staff-only
+   * on Home, and the client's one measured number was a follower count with
+   * nothing attached to it. Both halves belong here, and the posts go FIRST:
+   * the client's own work is the thing they came to read about.
+   *
+   * `rosterAssets` is the same list the agent section already read, so the
+   * join adds no query of its own.
+   */
+  const postPerformance = monthlyPerformance({ assets: rosterAssets, rows: marketingRows, snapshots: followerSnapshots, now });
+  const performanceSection = <ClientPostPerformance performance={postPerformance} />;
+
   const reportingSection = seoGeo ? (
     <div className="space-y-8">
+      {performanceSection}
       {/* The anchor Home's Visibility KPI links to (portal feedback round 5,
           2026-09): that cell is a headline of these scores, so it opens the
           section it is a headline OF rather than the top of the tab.
@@ -822,6 +854,7 @@ export default async function ClientSettingsPage({
     // suggestions stay unrendered without a snapshot, as before: every row in
     // them is a finding OF one.
     <div className="space-y-8">
+      {performanceSection}
       {visibilityPanel}
       {visibilityWork}
     </div>
