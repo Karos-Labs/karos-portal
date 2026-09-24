@@ -44,6 +44,7 @@ import type {
   Role,
   ScheduledRun,
   TaskComment,
+  AssetComment,
   TaskStatus,
   Transcript,
   ClientSeat,
@@ -118,6 +119,7 @@ const col = {
   loginLogs: () => adminDb().collection("loginLogs"),
   clientTasks: () => adminDb().collection("clientTasks"),
   taskComments: () => adminDb().collection("taskComments"),
+  assetComments: () => adminDb().collection("assetComments"),
   clientSettings: () => adminDb().collection("clientSettings"),
   feedbacks: () => adminDb().collection("feedbacks"),
   // Client usage credits: balance doc per client (doc ID = clientId) + append-only ledger.
@@ -524,6 +526,7 @@ const CLIENT_SCOPED_COLLECTIONS: Array<keyof typeof col> = [
   "clientIntegrations",
   "clientTasks",
   "taskComments",
+  "assetComments",
   "actionItems",
   "scheduledRuns",
   "clientMarketingAnalytics",
@@ -2922,6 +2925,19 @@ export async function listTaskComments(taskId: string): Promise<TaskComment[]> {
 
 export async function createTaskComment(data: Omit<TaskComment, "id">): Promise<string> {
   const ref = await col.taskComments().add(data);
+  return ref.id;
+}
+
+/* ─────────────────────── Asset Comments ────────────────────────── */
+
+/** One draft's thread, oldest first — the order a conversation is read in. */
+export async function listAssetComments(assetId: string): Promise<AssetComment[]> {
+  const snap = await col.assetComments().where("assetId", "==", assetId).get();
+  return snap.docs.map((d) => withId<AssetComment>(d)).sort((a, b) => a.createdAt - b.createdAt);
+}
+
+export async function createAssetComment(data: Omit<AssetComment, "id">): Promise<string> {
+  const ref = await col.assetComments().add(data);
   return ref.id;
 }
 
