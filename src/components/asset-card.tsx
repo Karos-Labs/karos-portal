@@ -5,6 +5,7 @@ import type { KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Card, Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { VersionComparison } from "@/components/version-comparison";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { CopyCaptionButton, captionText } from "@/components/copy-caption-button";
 import { downloadTextFile } from "@/components/draft-review-kit";
@@ -704,6 +705,13 @@ export function AssetCard({
                   <span className="font-medium text-foreground">Visual: </span>
                   {imageConcept}
                 </p>
+              )}
+              {/* WHAT THE AGENT WROTE, beside what the person posted. Renders
+                  only when this draft was actually edited (`VersionComparison`
+                  returns null otherwise), and opens on a press — the current
+                  text is what ships and stays the first thing read. */}
+              {typeof asset.meta?.engineOriginalContent === "string" && (
+                <VersionComparison original={asset.meta.engineOriginalContent} current={asset.content} />
               )}
               {editing && (
                 <div className="mt-3 space-y-2">
