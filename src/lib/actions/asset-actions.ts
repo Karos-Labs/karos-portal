@@ -18,6 +18,7 @@ import {
   reconcileAssetPublished,
   getClientSettings,
   getClient,
+  listClientMarketingAnalytics,
   PUBLISH_CLAIM_TTL_MS,
 } from "@/lib/data";
 import { getCurrentUser } from "@/lib/auth";
@@ -30,6 +31,7 @@ import {
   runWithFreshCredentials,
 } from "@/lib/integrations/token-refresh";
 import { preferredPlatform } from "@/lib/asset-platform";
+import { atHour, bestPublishHour, describeBestHour } from "@/lib/best-hour";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { recommendPublishTimeWithDensity, sameLocalDay } from "@/lib/scheduling";
 import { chainFamilyFor } from "@/lib/post-chain";
@@ -298,11 +300,38 @@ export async function recommendAssetScheduleAction(
   const scheduled = all
     .filter((a) => a.id !== id && a.scheduledAt != null)
     .map((a) => a.scheduledAt as number);
-  return recommendPublishTimeWithDensity({
-    assetType: asset.type,
-    platform: preferredPlatform(asset),
-    scheduled,
+  const platform = preferredPlatform(asset);
+  const density = recommendPublishTimeWithDensity({ assetType: asset.type, platform, scheduled });
+  if (density === null || platform === undefined) return density;
+
+  /**
+   * THE HOUR, FROM THE CLIENT'S OWN PUBLISHED POSTS (§09, 2026-09-24).
+   *
+   * `recommendPublishTimeWithDensity` proposes a slot from the shape of the
+   * CALENDAR — what is booked, what hours the platform conventionally posts
+   * at. It has never looked at how this client's posts actually performed.
+   * `bestPublishHour` does, from live measured rows joined to the moment each
+   * post really went out, and it refuses far more often than it answers: ten
+   * published posts on the platform, three in the hour, and a median clear of
+   * the account's own.
+   *
+   * The DAY is still the density planner's. This moves the clock inside it,
+   * and only when the moved slot is still ahead of us — a suggestion the
+   * reviewer cannot accept is worse than the one they already had.
+   */
+  const rows = await listClientMarketingAnalytics(asset.clientId);
+  const publishedById = new Map(all.filter((a) => a.publishedAt != null).map((a) => [a.id, a.publishedAt as number]));
+  const measured = rows.flatMap((row) => {
+    const publishedAt = publishedById.get(row.assetId);
+    return publishedAt === undefined
+      ? []
+      : [{ publishedAt, engagementScore: row.engagementScore, source: row.source, platform: row.platform }];
   });
+  const hour = bestPublishHour(measured, platform);
+  if (hour.best === undefined) return density;
+  const moved = atHour(density.at, hour.best.hour, Date.now());
+  if (moved === null) return density;
+  return { at: moved, reason: `${density.reason} Moved to the hour that measured best: ${describeBestHour(hour.best)}.` };
 }
 
 /**
