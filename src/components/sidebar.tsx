@@ -822,6 +822,7 @@ export function Sidebar({
             clientId={clientCtx.client.id}
             hasWebsite={!!clientCtx.client.website}
             isStaff
+            logoUrl={clientCtx.client.logoUrl}
           />
           <nav className="flex flex-col gap-0.5 border-t border-border pt-4">
             <NavLink item={items[0]} pathname={pathname} />
@@ -1001,6 +1002,7 @@ export function Sidebar({
               clientId={clientCtx.client.id}
               hasWebsite={!!clientCtx.client.website}
               isStaff
+              logoUrl={clientCtx.client.logoUrl}
             />
 
             {/* "AI agents" has no slot in the 2-icon bottom tab bar (Home,

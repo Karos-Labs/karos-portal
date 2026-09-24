@@ -5,11 +5,11 @@ import { useRouter } from "next/navigation";
 import { Button, Input, Textarea, Label } from "@/components/ui";
 import { Modal } from "@/components/modal";
 import { Icon } from "@/components/icon";
+import { BRAND_LOGO_ACCEPT, BRAND_LOGO_HINT, checkBrandLogoFile } from "@/lib/brand-logo-file";
 import { createClientAction } from "@/lib/actions";
 import { CLIENT_CATEGORY_MAX_LENGTH } from "@/lib/utils";
 
-const LOGO_ACCEPT = "image/png,image/jpeg,image/svg+xml,.svg";
-const MAX_LOGO_BYTES = 4 * 1024 * 1024;
+const LOGO_ACCEPT = BRAND_LOGO_ACCEPT;
 
 export function CreateClientButton() {
   const router = useRouter();
@@ -36,8 +36,12 @@ export function CreateClientButton() {
   }
 
   function pickLogo(file: File) {
-    if (file.size > MAX_LOGO_BYTES) {
-      setLogoError("Logo exceeds 4 MB.");
+    // The upload route's own rules (agent-engine's 4,000,000-byte cap and
+    // types), so a file the route would refuse is refused here, not silently
+    // dropped by the best-effort upload after the client is created.
+    const check = checkBrandLogoFile(file);
+    if (!check.ok) {
+      setLogoError(check.error);
       return;
     }
     setLogoError(null);
@@ -131,7 +135,7 @@ export function CreateClientButton() {
                 className="flex cursor-pointer flex-col items-center gap-1.5 rounded-[10px] border-2 border-dashed border-border py-4 text-center transition-colors hover:border-neon/40"
               >
                 <Icon name="Upload" className="h-4 w-4 text-muted-2" />
-                <p className="text-xs text-muted-2">Click to upload · PNG, JPG, or SVG · max 4 MB</p>
+                <p className="text-xs text-muted-2">Click to upload · {BRAND_LOGO_HINT}</p>
               </div>
             )}
             <input

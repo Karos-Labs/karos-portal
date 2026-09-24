@@ -299,7 +299,12 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
     // attachment is parsed and silently dropped exactly as designed) but
     // never reads the parsed array back out.
     readBy: [
-      { product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts:806 (filters role === source|reference)" },
+      // 2026-09-24: also the product campaign's photo. `04q-plan-product-campaign`
+      // offers this run's Tier 0 uploads to the product-photo picker before any
+      // library frame, and reads an upload's `label` as the product's name
+      // (`productPhotoCandidates`, product-campaign.ts) — see
+      // `productCampaignAssets` in product-mapping.ts.
+      { product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts:806 (filters role === source|reference); 05z-attach-user-media (runDirection.mediaAssets role source|reference -> media.ingestAssets, Tier 0); 04q-plan-product-campaign (productPhotoCandidates(tier0Pool uploads first, label -> productName))" },
       { product: "tiktok-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:237 (firstAsset(rich.mediaAssets, \"source\"))" },
       // 2026-09-20, agent-engine RFC-25 phase 4: the attachment no longer has
       // to be a FILE. `01b-resolve-source` routes on `isDirectMediaUri` — a
@@ -514,8 +519,9 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
     readBy: [
       { product: "x-agent", evidence: "agents/x-agent/src/workflow/create-x-agent-workflow.ts (00-intake-check overlays wf.input.requestedMode; :415-416 07b-select-content-mode: selectContentMode(recentModes, runDirection.modeOverride ?? intake.requestedMode) — applied when the note names no kind)" },
       { product: "linkedin-agent", evidence: "agents/linkedin-agent/src/workflow/create-linkedin-agent-workflow.ts (RUN_SCOPED_KEYS includes requestedMode; readRunConfig; :562-563 07b-select-content-mode: selectContentMode(recentDecisions.modes, runDirection.modeOverride ?? intake.requestedMode) — applied when the note names no kind)" },
-      // 2026-09-23: only the value "news_flash", sent by the Instagram post-type select.
-      { product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts (01-open-run: wf.input.requestedMode === \"news_flash\" -> InstagramRunClaim.newsFlash; 04p newsCover)" },
+      // 2026-09-23: the value "news_flash", sent by the Instagram post-type select.
+      // 2026-09-24 (agent-engine #223): and "product_campaign", from the same select.
+      { product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts (01-open-run: wf.input.requestedMode === \"news_flash\" -> InstagramRunClaim.newsFlash; 04p newsCover; wf.input.requestedMode === PRODUCT_CAMPAIGN_MODE (\"product_campaign\") -> InstagramRunClaim.productCampaign; 04q-plan-product-campaign)" },
     ],
     sentButUnread: [],
   },

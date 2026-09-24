@@ -3,6 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { BrandingGuidelines, Client, ClientContextDoc, ContextDocTier } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
+import { engineBrandLogoUrl } from "@/lib/brand-logo-file";
 import { isWorkspaceWriterConfigured, writeWorkspaceJson } from "./workspace-writer";
 
 /**
@@ -105,6 +106,12 @@ export interface ProjectedBrand {
   /** `BrandingGuidelines.toneKeywords`, as the list it is. */
   toneKeywords?: string[];
   colors?: string[];
+  /**
+   * The logo every post carries — `engineBrandLogoUrl`: the portal upload
+   * (`Client.logoUrl`) first, the guidelines' own field second, https only.
+   * Read by instagram-agent's `deriveBrandRenderTokens` and downloaded by
+   * `downloadBrandLogoOutcome`.
+   */
   logoUrl?: string;
   tagline?: string;
   fonts?: { heading?: string; body?: string };
@@ -203,9 +210,13 @@ export function toProjectedBrand(
    * way — `toProjectedBrand(g, at, voice, terms, ...)` is how a call site ends
    * up passing `undefined` into the wrong slot.
    */
-  fromClient: { brandVoice?: string; forbiddenTerms?: readonly string[] } = {},
+  fromClient: { brandVoice?: string; forbiddenTerms?: readonly string[]; logoUrl?: string } = {},
 ): ProjectedBrand {
   const { brandVoice } = fromClient;
+  // The uploaded logo lives on the CLIENT, not in the guidelines — see
+  // `engineBrandLogoUrl` for why reading only `g.logoUrl` meant no upload ever
+  // reached a post.
+  const logoUrl = engineBrandLogoUrl({ logoUrl: fromClient.logoUrl, brandingGuidelines: g });
   const forbiddenTerms = (fromClient.forbiddenTerms ?? []).filter((t) => t.trim().length > 0);
   const dominant = (g.dominantColors ?? []).filter((c) => typeof c.hex === "string" && c.hex.length > 0);
   const colors = dominant.length > 0 ? dominant.map((c) => c.hex.toLowerCase()) : [g.primaryAccent, g.secondaryAccent, g.brandNeutralDark, g.brandNeutralLight].filter((c): c is string => Boolean(c));
@@ -218,7 +229,7 @@ export function toProjectedBrand(
     ...(voice ? { voice } : {}),
     ...(keywords.length > 0 ? { toneKeywords: keywords } : {}),
     ...(colors.length > 0 ? { colors } : {}),
-    ...(g.logoUrl ? { logoUrl: g.logoUrl } : {}),
+    ...(logoUrl ? { logoUrl } : {}),
     ...(g.fontHeading || g.fontBody ? { fonts: { ...(g.fontHeading ? { heading: g.fontHeading } : {}), ...(g.fontBody ? { body: g.fontBody } : {}) } } : {}),
     ...(dominant.length > 0 ? { dominantColors: dominant.map((c) => ({ hex: c.hex.toLowerCase(), ...(c.role ? { role: c.role } : {}), dominanceRank: c.dominanceRank })) } : {}),
     ...(g.visualStyle ? { visualStyle: g.visualStyle } : {}),
@@ -294,10 +305,19 @@ export async function projectClientToWorkspace(
   // branding step; gating the whole file on `brandingGuidelines` would leave
   // exactly those clients' gate unconfigured with the rules sitting filled in
   // on the settings page, which is the failure this ticket exists to end.
+  //
+  // And the uploaded logo, for the same reason: a client uploads a logo in the
+  // portal long before the branding step runs, and every post reads it from
+  // this file.
   const hasForbiddenTerms = (client.forbiddenTerms ?? []).some((t) => t.trim().length > 0);
+  const hasLogo = engineBrandLogoUrl(client) !== undefined;
   const brand =
-    client.brandingGuidelines || hasForbiddenTerms
-      ? toProjectedBrand(client.brandingGuidelines ?? {}, projectedAt, { brandVoice: client.brandVoice, forbiddenTerms: client.forbiddenTerms })
+    client.brandingGuidelines || hasForbiddenTerms || hasLogo
+      ? toProjectedBrand(client.brandingGuidelines ?? {}, projectedAt, {
+          brandVoice: client.brandVoice,
+          forbiddenTerms: client.forbiddenTerms,
+          logoUrl: client.logoUrl,
+        })
       : null;
   if (brand) writes.push(deps.write(`${prefix}/client/brand.json`, brand));
   writes.push(deps.write(`${prefix}/client/profile.json`, toProjectedProfile(client, projectedAt)));

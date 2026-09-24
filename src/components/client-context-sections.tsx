@@ -509,10 +509,13 @@ export function BrandColorsSection({
   clientId,
   hasWebsite,
   isStaff = false,
+  logoUrl,
 }: {
   guidelines: BrandingGuidelines | undefined;
   clientId: string;
   hasWebsite: boolean;
+  /** The client's uploaded logo, for the branding dialog's Logo block. */
+  logoUrl?: string;
   /**
    * Staff shells only. Gates the internal usage-percentage display and the
    * matching editor field (CD-E2). This is defence in depth, not the boundary:
@@ -666,6 +669,7 @@ export function BrandColorsSection({
         existing={guidelines}
         hasWebsite={hasWebsite}
         allowUsagePct={isStaff}
+        logoUrl={logoUrl}
       />
     </div>
   );

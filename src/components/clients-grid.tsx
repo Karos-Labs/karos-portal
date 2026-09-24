@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Card, Badge, Button, Input, Select, Textarea, Label } from "@/components/ui";
 import { Modal } from "@/components/modal";
 import { Icon } from "@/components/icon";
+import { BRAND_LOGO_ACCEPT, BRAND_LOGO_HINT, checkBrandLogoFile } from "@/lib/brand-logo-file";
 import { updateClientAction, deleteClientAction } from "@/lib/actions";
 import { CLIENT_CATEGORY_MAX_LENGTH, clientCategoryValue, cn } from "@/lib/utils";
 import { MAX_PER_DAY } from "@/lib/daily-pace";
@@ -80,6 +81,11 @@ function EditClientModal({
 
   async function handleLogoUpload(file: File) {
     if (logoUploading) return;
+    const check = checkBrandLogoFile(file);
+    if (!check.ok) {
+      setLogoError(check.error);
+      return;
+    }
     setLogoUploading(true);
     setLogoError(null);
     try {
@@ -217,7 +223,7 @@ function EditClientModal({
               ) : (
                 <>
                   <Icon name="Upload" className="h-4 w-4 text-muted-2" />
-                  <p className="text-xs text-muted-2">Click to upload · PNG, JPG, or SVG · max 4 MB</p>
+                  <p className="text-xs text-muted-2">Click to upload · {BRAND_LOGO_HINT}</p>
                 </>
               )}
             </div>
@@ -225,7 +231,7 @@ function EditClientModal({
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/png,image/jpeg,image/svg+xml,.svg"
+            accept={BRAND_LOGO_ACCEPT}
             className="sr-only"
             onChange={(e) => { if (e.target.files?.[0]) handleLogoUpload(e.target.files[0]); }}
           />

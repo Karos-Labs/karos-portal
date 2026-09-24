@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { BRAND_LOGO_ACCEPT, BRAND_LOGO_HINT, checkBrandLogoFile } from "@/lib/brand-logo-file";
 import {
   CLIENT_CATEGORY_MAX_LENGTH,
   clientCategoryLabel,
@@ -272,6 +273,11 @@ function BrandProfileModal({
 
   async function uploadLogo(file: File) {
     setLogoError(null);
+    const check = checkBrandLogoFile(file);
+    if (!check.ok) {
+      setLogoError(check.error);
+      return;
+    }
     setLogoBusy(true);
     try {
       const body = new FormData();
@@ -423,7 +429,7 @@ function BrandProfileModal({
                   {client.logoUrl ? "Replace" : "Upload"}
                   <input
                     type="file"
-                    accept="image/png,image/jpeg,image/svg+xml"
+                    accept={BRAND_LOGO_ACCEPT}
                     className="sr-only"
                     disabled={logoBusy}
                     onChange={(e) => {
@@ -445,6 +451,7 @@ function BrandProfileModal({
                 )}
               </div>
             </div>
+            <p className="mt-1.5 text-[11px] text-muted-2">{BRAND_LOGO_HINT} Your logo goes on every post.</p>
             {/* R4 — the two-step block, borrowed from client-key-inline.tsx. */}
             {confirmingLogo && (
               <div className="mt-2 rounded-[8px] border border-warning/30 bg-warning/10 px-2.5 py-2">

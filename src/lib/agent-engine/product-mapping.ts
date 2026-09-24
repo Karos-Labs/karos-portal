@@ -557,6 +557,20 @@ function normalizeTargetDate(raw: string): string | undefined {
 /** The Instagram run dialog's optional post-type field (2026-09-23). Declared here so the dialog imports it. */
 export const INSTAGRAM_POST_TYPE_FIELD_KEY = "instagram_post_type";
 
+/** The post type that asks for agent-engine's product campaign (stage 4, agent-engine #223). */
+export const PRODUCT_CAMPAIGN_POST_TYPE = "product_campaign";
+
+/**
+ * The product campaign's optional product photo: one uploaded image, kept in
+ * the brief as the same JSON attachment list `mediaAssets` uses (it is
+ * uploaded by the same `RunAttachments` control), and shown only while the
+ * post type is `product_campaign`.
+ */
+export const PRODUCT_PHOTO_FIELD_KEY = "product_photo";
+
+/** The product campaign's optional product name. Travels as the photo's `label`, see `productCampaignAssets`. */
+export const PRODUCT_NAME_FIELD_KEY = "product_name";
+
 /**
  * The Instagram run dialog's optional post type (2026-09-23), in the engine's
  * own run-input keys. Each maps to something `instagram-agent` reads in
@@ -568,6 +582,15 @@ export function instagramPostTypeInput(postType: string): Record<string, string>
   switch (postType) {
     case "news_flash":
       return { requestedMode: "news_flash", requestedFormat: "single" };
+    // agent-engine #223: `01-open-run` reads `requestedMode ===
+    // "product_campaign"` into `runClaim.productCampaign`. A carousel, whatever
+    // the format select says: the campaign IS a carousel of scenes, and when
+    // it cannot be made (fewer than three verified scenes, no usable product
+    // photo) the engine falls back to "the normal carousel". A `single`
+    // format would make that fallback a different kind of post than the one
+    // the person was told about.
+    case PRODUCT_CAMPAIGN_POST_TYPE:
+      return { requestedMode: PRODUCT_CAMPAIGN_POST_TYPE, requestedFormat: "carousel" };
     case "photo_first":
       return { pictureDensity: "photo-first" };
     case "the_list":
@@ -659,7 +682,17 @@ export function toEngineRunInput(
   // carries strings. Parsed and re-validated here rather than forwarded raw:
   // a malformed attachment should be dropped at the boundary, not become an
   // engine-side surprise on a run someone is waiting for.
-  const mediaAssets = parseMediaAssets(briefValues["mediaAssets"]);
+  let mediaAssets = parseMediaAssets(briefValues["mediaAssets"]);
+  const linksAreAssets = engineProductId === undefined || ENGINE_PRODUCTS_READING_MEDIA_ASSETS.has(engineProductId);
+
+  // The product campaign's photo and name. Only while the post type asks for
+  // the campaign: both boxes are hidden otherwise, and a value left in them
+  // from an earlier choice is not something this run was asked to use.
+  if (postType === PRODUCT_CAMPAIGN_POST_TYPE) {
+    const campaign = productCampaignAssets(briefValues[PRODUCT_PHOTO_FIELD_KEY], at(PRODUCT_NAME_FIELD_KEY), mediaAssets);
+    if (linksAreAssets) mediaAssets = campaign.mediaAssets;
+    if (campaign.productNameProse !== undefined) promptParts.push(campaign.productNameProse);
+  }
 
   // A link is an ASSET only for a product whose workflow opens `mediaAssets`;
   // for every other product it is a reference for the drafting model to read,
@@ -669,7 +702,6 @@ export function toEngineRunInput(
   // `sentButUnread` finding in engine-field-contract.ts) — a question asked of
   // a client and dropped. With no product named (the legacy path) the old
   // behaviour stands.
-  const linksAreAssets = engineProductId === undefined || ENGINE_PRODUCTS_READING_MEDIA_ASSETS.has(engineProductId);
   for (const [dialogKey, role, label] of FOLDED_INTO_MEDIA) {
     const value = at(dialogKey);
     if (!value) continue;
@@ -699,6 +731,68 @@ export function toEngineRunInput(
   if (promptParts.length > 0) input.customPrompt = promptParts.join("\n\n");
 
   return input;
+}
+
+/**
+ * The run's `mediaAssets` for a product campaign, and any prose the product
+ * name has to travel as instead.
+ *
+ * ## Where the photo goes, and why that shape
+ *
+ * agent-engine reads a run's attachments in exactly one place:
+ * `readRichRunInput` (`packages/core/src/types/run-input.ts`) parses
+ * `wf.input.mediaAssets`, an array of `{ uri, role, contentType?, label? }`,
+ * and instagram-agent's `05z-attach-user-media` ingests every asset whose
+ * role is `source` or `reference` into Tier 0. `04q-plan-product-campaign`
+ * then offers those uploads to the product-photo picker FIRST, in upload
+ * order, before any library frame (`productPhotoCandidates` in
+ * `product-campaign.ts`). So the product photo is prepended to `mediaAssets`:
+ * the one the person chose for this purpose is the first one looked at.
+ *
+ * Role `reference`, because that is what the campaign does with it: every
+ * scene is generated with it as the reference image. `05z` ingests `source`
+ * and `reference` identically, so a campaign that falls back to the normal
+ * carousel still uses the photo like any other attachment.
+ *
+ * ## The label IS the product name
+ *
+ * `productPhotoCandidates` reads an upload's `label` as the client's own name
+ * for the product (`productName: u.label`), and `campaignProductName` puts
+ * it ahead of everything but the client config's override. It is lettered on
+ * the billboard and written into every scene prompt. The attach control
+ * labels an upload with its FILE NAME, so an unguarded campaign would have
+ * advertised "IMG_4412.jpg". Therefore:
+ *
+ * - the product photo carries the typed product name as its label, or no
+ *   label at all (the engine then names it from the brief's offers);
+ * - every OTHER attachment on a campaign run loses a label that is just a
+ *   file name, for the same reason: any of them can be picked as the photo;
+ * - a product name typed with no photo to carry it is not dropped: it folds
+ *   into the run direction, which the campaign caption step reads.
+ */
+export function productCampaignAssets(
+  rawPhoto: string | undefined,
+  productName: string | undefined,
+  mediaAssets: ReadonlyArray<Record<string, string>>,
+): { mediaAssets: Array<Record<string, string>>; productNameProse?: string } {
+  const photo = parseMediaAssets(rawPhoto).find((asset) => !asset.contentType || asset.contentType.startsWith("image/"));
+  const name = productName?.trim() || undefined;
+  const others = mediaAssets
+    .filter((asset) => asset.uri !== photo?.uri)
+    .map((asset) => (asset.label !== undefined && looksLikeFileName(asset.label) ? withoutLabel(asset) : { ...asset }));
+  if (photo === undefined) {
+    return { mediaAssets: others, ...(name !== undefined ? { productNameProse: `Product to feature\n${name}` } : {}) };
+  }
+  return { mediaAssets: [{ ...withoutLabel(photo), role: "reference", ...(name !== undefined ? { label: name } : {}) }, ...others] };
+}
+
+function withoutLabel(asset: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(asset).filter(([key]) => key !== "label"));
+}
+
+/** "IMG_4412.jpg", "product shot (2).PNG": a label that is a file's name, not a product's. */
+function looksLikeFileName(label: string): boolean {
+  return /\.(jpe?g|png|webp|gif|heic|heif|avif|tiff?|bmp|mp4|mov|webm)$/i.test(label.trim());
 }
 
 /**
