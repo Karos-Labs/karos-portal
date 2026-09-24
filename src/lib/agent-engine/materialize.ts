@@ -617,28 +617,52 @@ interface BrandedShortsVideoDeliverable extends GoalLineFields {
   gcsUri?: string;
   signedUrl?: string;
   durationSeconds?: number;
+  /**
+   * The post caption (agent-engine step `09c-draft-caption`, 2026-09-25).
+   * Optional because an asset materialized before that step existed has none,
+   * and a deliverable persisted last week must keep opening.
+   */
+  caption?: string;
+  /** 1-3 sentences for the client's own team. Never posted. */
+  about?: string;
+  /** What the approved round had to adapt around — including a caption that fell back to the client's stated takeaway. Absent, never empty, on a clean run. */
+  contentRepairs?: Array<{ check: string; action: string; detail: string }>;
 }
 
 /**
  * The branded short — `tiktok-editing-agent`'s deliverable as well as
- * `branded-shorts-agent`'s. `content` is the empty string by construction: the
- * video IS the post, and this deliverable carries no caption to put under it.
+ * `branded-shorts-agent`'s.
  *
- * Which is exactly why the goal line matters most here. A client opening this
- * asset sees a player and nothing else; the three fields are the only words on
- * the card that say what the video is for.
+ * `content` was the empty string BY CONSTRUCTION until 2026-09-25, and this
+ * comment used to explain why: the video was the post, and the deliverable
+ * carried no caption to put under it. It was the wrong answer to the right
+ * observation. A client who approved a branded short was handed an MP4 and
+ * then wrote the caption themselves, while the two TikTok products that share
+ * this account have shipped a caption since they were migrated.
+ *
+ * The engine drafts one now, inside the review round, from the client's own
+ * transcript. An asset from before that step existed still has none, which is
+ * why this reads optionally and falls back to the empty string rather than to
+ * an invented line — the goal line stays the words on the card in that case,
+ * exactly as it was.
  */
 async function materializeBrandedShortsVideo(job: Job, deliverable: BrandedShortsVideoDeliverable): Promise<AssetMaterialization> {
   const videoUrl = await rehostIfFetchable(deliverable.signedUrl, `agent-engine/${job.id}/final.mp4`, "video/mp4");
   return {
     title: "TikTok video",
-    content: "",
+    content: deliverable.caption?.trim() ?? "",
     videoUrl: videoUrl ?? null,
     channels: ["tiktok"],
     meta: {
       taskType: "social_post",
       ...goalLineMeta(deliverable),
+      ...(deliverable.about !== undefined ? { about: deliverable.about } : {}),
       durationSeconds: deliverable.durationSeconds,
+      // STAFF-FACING. "Did this short come out clean, or was it salvaged" is
+      // the same question the commentary clip answers beside it, and since
+      // the caption can fall back to the client's own takeaway it is now a
+      // question about the words too.
+      ...(deliverable.contentRepairs !== undefined ? { contentRepairs: deliverable.contentRepairs } : {}),
       artifacts: deliverable.gcsUri ? [{ gcsUri: deliverable.gcsUri }] : [],
     },
   };
