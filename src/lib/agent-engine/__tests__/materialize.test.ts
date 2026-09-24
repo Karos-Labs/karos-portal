@@ -733,6 +733,67 @@ describe("the report and bundle products render to something a reviewer can read
   });
 });
 
+describe("branded-shorts-video", () => {
+  /**
+   * THE VIDEO WAS NOT THE POST.
+   *
+   * `content` was the empty string by construction here, and the materializer
+   * said so in its own comment: the deliverable carried no caption to put
+   * under the video. A client approved a finished short and then wrote the
+   * caption themselves — on the same TikTok account where a commentary clip
+   * arrived with its words already written.
+   *
+   * agent-engine drafts one now (step `09c-draft-caption`), inside the review
+   * round, from the client's own transcript.
+   */
+  it("uses the drafted caption as the post text", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) }) as unknown as typeof fetch;
+    uploadBytesMock.mockResolvedValue({ url: "https://karos.example/agent-engine/job_1/final.mp4" });
+    await materialize("branded-shorts-agent", {
+      caption: "Most teams measure the wrong thing, and the number they watch goes up while the business does not.",
+      about: "A forty second clip of the founder on why the obvious metric misleads.",
+      durationSeconds: 38,
+      signedUrl: "https://signed.example/final.mp4",
+      gcsUri: "gs://media/branded-shorts/acme/run/final.mp4",
+    });
+    const asset = createdAsset();
+    expect(asset.type).toBe("social_post");
+    expect(asset.channels).toEqual(["tiktok"]);
+    expect(asset.videoUrl).toBe("https://karos.example/agent-engine/job_1/final.mp4");
+    expect(asset.content).toBe("Most teams measure the wrong thing, and the number they watch goes up while the business does not.");
+    expect(asset.meta).toMatchObject({
+      about: "A forty second clip of the founder on why the obvious metric misleads.",
+      durationSeconds: 38,
+      artifacts: [{ gcsUri: "gs://media/branded-shorts/acme/run/final.mp4" }],
+    });
+  });
+
+  it("carries the repair ledger through, so a caption that fell back to the client's own takeaway is visible to staff", async () => {
+    await materialize("tiktok-editing-agent", {
+      caption: "Hiring the first person changes what the company is.",
+      contentRepairs: [
+        {
+          check: "branded-shorts-caption",
+          action: "unresolved",
+          detail: "the caption drafter returned nothing schema-valid; the short is posted with the client's own stated takeaway",
+        },
+      ],
+    });
+    const asset = createdAsset();
+    expect(asset.content).toBe("Hiring the first person changes what the company is.");
+    expect((asset.meta as { contentRepairs?: Array<{ check: string }> }).contentRepairs?.[0]?.check).toBe("branded-shorts-caption");
+  });
+
+  it("still materializes an asset from a deliverable written before the caption step existed", async () => {
+    // Every branded short in the ledger today. An optional field read as
+    // required is how a schema addition breaks every record that predates it.
+    await materialize("branded-shorts-agent", { durationSeconds: 22, goal: "show what the first hire changed" });
+    const asset = createdAsset();
+    expect(asset.content).toBe("");
+    expect(asset.type).toBe("social_post");
+  });
+});
+
 describe("tiktok-clip", () => {
   it("rehosts the signed clip into a video asset whose content is the commentary caption", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) }) as unknown as typeof fetch;
