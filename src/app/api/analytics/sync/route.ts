@@ -23,6 +23,7 @@ import {
 } from "@/lib/integrations/token-refresh";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { logger } from "@/services/logger";
+import { syncPerformanceSignalToWorkspace } from "@/lib/agent-engine/performance-signal-sync";
 
 // Long-running batch: on GCP Cloud Run the request can run well past Vercel's
 // old 60s ceiling. Cloud Scheduler triggers it and the container timeout governs.
@@ -291,6 +292,38 @@ export async function GET(req: NextRequest) {
             }
           }
         }
+      }
+      // ── The loop the product is named for, closed ─────────────────────
+      //
+      // The engine's `preferredByPerformance` picks the format a client's own
+      // numbers favour, and reads them from
+      // `context/learning/<platform>/what-works` — a file nothing had ever
+      // written. This is the tick that writes it, and it belongs here because
+      // this is the only place that knows the rows are fresh: the projection
+      // is derived from what the loop above just measured.
+      //
+      // AFTER the writes and inside the per-client try, so a projection that
+      // fails costs this client its signal and not its metrics. It is the
+      // derived artefact; the rows are the thing that must land.
+      try {
+        const signal = await syncPerformanceSignalToWorkspace(client);
+        for (const p of signal.platforms) {
+          results.push({
+            clientId: client.id,
+            platform: p.platform,
+            assetId: "-",
+            action: "written",
+            detail: p.refusal ?? `what-works: ${p.outliers} outlier(s)`,
+          });
+        }
+      } catch (e) {
+        results.push({
+          clientId: client.id,
+          platform: "-",
+          assetId: "-",
+          action: "skipped",
+          detail: `what-works projection failed: ${e instanceof Error ? e.message : "unknown"}`,
+        });
       }
     } catch (e) {
       results.push({
