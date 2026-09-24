@@ -86,9 +86,18 @@ describe("the today section", () => {
   it("hides nothing by lifting: every row keeps its own status card", () => {
     // A draft made this morning is still visibly a draft, just promoted. Both
     // sections render the same AssetCard.
-    const todaySection = view.slice(view.indexOf("todayAssets.length > 0 &&"));
-    expect(todaySection).toContain("<AssetCard");
-    expect(todaySection).toContain("canApprove={canApprove}");
+    //
+    // THROUGH ONE RENDERER since the batch selection landed (2026-09-24): the
+    // two grids call `cardFor`, which is where the card and its checkbox are
+    // written once. The rule this test states is unchanged — both sections
+    // render the same card with the same approval rights — so it is asserted
+    // on the renderer they share rather than on markup inlined twice, which is
+    // exactly the duplication that made a shared helper worth having.
+    expect(view).toContain("{todayAssets.map(cardFor)}");
+    expect(view).toContain("{group.items.map(cardFor)}");
+    const renderer = view.slice(view.indexOf("const cardFor ="), view.indexOf("return assets.length === 0"));
+    expect(renderer).toContain("<AssetCard");
+    expect(renderer).toContain("canApprove={canApprove}");
   });
 
   it("does not render at all on a day with no output", () => {

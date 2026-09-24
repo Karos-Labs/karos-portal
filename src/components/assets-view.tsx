@@ -6,6 +6,7 @@ import { Icon } from "@/components/icon";
 import { EmptyState } from "@/components/ui";
 import { AssetCard } from "@/components/asset-card";
 import { ReviewQueue } from "@/components/review-queue";
+import { BulkApproveBar } from "@/components/bulk-approve-bar";
 // The staff register. These words were a local const here; they are unchanged
 // byte for byte, and this is now the only place they are written down — the
 // analytics chart was printing a third, drifted set of them to the same reader
@@ -101,6 +102,18 @@ export function AssetsView({
    * component's filters, so whatever is on screen is what the queue holds.
    */
   const [queueOpen, setQueueOpen] = useState(false);
+  /**
+   * SELECTION IS ITS OWN MODE, and it is off until asked for.
+   *
+   * A checkbox on every card at all times is a checkbox nobody uses and a
+   * click target beside every Approve button. The bar that reads the selection
+   * (`BulkApproveBar`) is where the summary and the one action live; this
+   * component owns only which ids are ticked.
+   */
+  const [selecting, setSelecting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const toggleSelected = (id: string) =>
+    setSelectedIds((current) => (current.includes(id) ? current.filter((x) => x !== id) : [...current, id]));
   const channels = useMemo(
     () => [...new Set(assets.flatMap((asset) => asset.channels ?? []))].sort(),
     [assets],
@@ -183,6 +196,46 @@ export function AssetsView({
       }),
     };
   }, [assets, channel, status, type, now]);
+
+  /**
+   * The card, with a checkbox over it while selecting.
+   *
+   * Written once and used by both grids: the Today section and the status
+   * groups render the same card, and a selection that appeared in one of them
+   * would be a selection the reviewer cannot trust. Only a DRAFT is
+   * selectable — the batch is an approval, and nothing else can be approved.
+   */
+  const cardFor = (asset: Asset) => {
+    const selectable = selecting && canApprove === true && asset.status === "draft";
+    return (
+      <div key={asset.id}>
+        {clientNames?.[asset.clientId] && (
+          <div className="mb-1"><Badge tone="neutral">{clientNames[asset.clientId]}</Badge></div>
+        )}
+        {selectable && (
+          <label className="mb-1 flex items-center gap-2 text-xs text-muted">
+            <input
+              type="checkbox"
+              checked={selectedIds.includes(asset.id)}
+              onChange={() => toggleSelected(asset.id)}
+              className="h-4 w-4 accent-[var(--neon)]"
+            />
+            Include in the batch
+          </label>
+        )}
+        <AssetCard
+          asset={asset}
+          canApprove={canApprove}
+          {...(connectedPlatformsByClient?.[asset.clientId]
+            ? { connectedPlatforms: connectedPlatformsByClient[asset.clientId] }
+            : {})}
+          {...(agentDraftPublishPlatformsByClient?.[asset.clientId]
+            ? { agentDraftPublishPlatforms: agentDraftPublishPlatformsByClient[asset.clientId] }
+            : {})}
+        />
+      </div>
+    );
+  };
 
   return assets.length === 0 ? (
     <EmptyState
@@ -281,6 +334,19 @@ export function AssetsView({
             opens an empty queue is a button that teaches people not to press
             it; below two drafts a grid is already the better shape. */}
         {canApprove && reviewable.length > 1 && !queueOpen && (
+          <Button
+            size="sm"
+            variant={selecting ? "primary" : "outline"}
+            onClick={() => {
+              setSelecting((on) => !on);
+              setSelectedIds([]);
+            }}
+          >
+            <Icon name="SquareCheck" className="h-3.5 w-3.5" />
+            {selecting ? "Done selecting" : "Select"}
+          </Button>
+        )}
+        {canApprove && reviewable.length > 1 && !queueOpen && (
           <Button size="sm" variant="outline" onClick={() => setQueueOpen(true)}>
             <Icon name="ListChecks" className="h-3.5 w-3.5" />
             Review {reviewable.length} drafts
@@ -318,23 +384,7 @@ export function AssetsView({
             <span className="text-xs text-muted-2">{todayAssets.length}</span>
           </div>
           <div className="grid items-start gap-3 lg:grid-cols-2">
-            {todayAssets.map((asset) => (
-              <div key={asset.id}>
-                {clientNames?.[asset.clientId] && (
-                  <div className="mb-1"><Badge tone="neutral">{clientNames[asset.clientId]}</Badge></div>
-                )}
-                <AssetCard
-                  asset={asset}
-                  canApprove={canApprove}
-                  {...(connectedPlatformsByClient?.[asset.clientId]
-                    ? { connectedPlatforms: connectedPlatformsByClient[asset.clientId] }
-                    : {})}
-                  {...(agentDraftPublishPlatformsByClient?.[asset.clientId]
-                    ? { agentDraftPublishPlatforms: agentDraftPublishPlatformsByClient[asset.clientId] }
-                    : {})}
-                />
-              </div>
-            ))}
+            {todayAssets.map(cardFor)}
           </div>
         </section>
       )}
@@ -353,26 +403,23 @@ export function AssetsView({
               <span className="text-xs text-muted-2">{group.items.length}</span>
             </div>
             <div className="grid items-start gap-3 lg:grid-cols-2">
-              {group.items.map((asset) => (
-                <div key={asset.id}>
-                  {clientNames?.[asset.clientId] && (
-                    <div className="mb-1"><Badge tone="neutral">{clientNames[asset.clientId]}</Badge></div>
-                  )}
-                  <AssetCard
-                    asset={asset}
-                    canApprove={canApprove}
-                    {...(connectedPlatformsByClient?.[asset.clientId]
-                      ? { connectedPlatforms: connectedPlatformsByClient[asset.clientId] }
-                      : {})}
-                    {...(agentDraftPublishPlatformsByClient?.[asset.clientId]
-                      ? { agentDraftPublishPlatforms: agentDraftPublishPlatformsByClient[asset.clientId] }
-                      : {})}
-                  />
-                </div>
-              ))}
+              {group.items.map(cardFor)}
             </div>
           </section>
         ))
+      )}
+
+      {/* The batch bar reads the selection and owns the summary. Rendered last
+          so it sticks to the bottom of the list rather than to the filters. */}
+      {selecting && !queueOpen && (
+        <BulkApproveBar
+          selectedIds={selectedIds}
+          onDone={() => {
+            setSelectedIds([]);
+            setSelecting(false);
+          }}
+          onClear={() => setSelectedIds([])}
+        />
       )}
     </div>
   );

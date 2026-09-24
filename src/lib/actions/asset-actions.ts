@@ -29,7 +29,7 @@ import {
   isIntegrationDeadError,
   runWithFreshCredentials,
 } from "@/lib/integrations/token-refresh";
-import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
+import { preferredPlatform } from "@/lib/asset-platform";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { recommendPublishTimeWithDensity, sameLocalDay } from "@/lib/scheduling";
 import { chainFamilyFor } from "@/lib/post-chain";
@@ -283,13 +283,6 @@ export async function clientRescheduleAssetAction(
   return { ok: true };
 }
 
-/** The asset's target platform preference: an explicit schedule wins, else the first
- *  agent channel compatible with the asset type. */
-function preferredPlatform(asset: Asset): string | undefined {
-  if (asset.scheduledPlatform) return asset.scheduledPlatform;
-  const compatible = PUBLISHABLE_PLATFORMS[asset.type] ?? [];
-  return (asset.channels ?? []).find((c) => compatible.includes(c));
-}
 
 /**
  * AI-recommended optimal publish slot for a draft, aware of the client's current
