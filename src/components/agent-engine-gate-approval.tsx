@@ -61,6 +61,10 @@ const SUPPRESSED_KEYS = new Set([
   "runId",
   "preview",
   "client",
+  // Rendered as their own block below (see `WHAT THE CLOCK IS WORTH`), not as
+  // a "Gate wait reason" fact row and a collapsed JSON array.
+  "gateWaitReason",
+  "gateFlags",
   "slideTemplates",
   "images",
   "copy",
@@ -479,6 +483,10 @@ export function AgentEngineGateApproval({
   }
 
   const preview = typeof fields["preview"] === "string" ? fields["preview"].trim() : "";
+  const waitReason = typeof fields["gateWaitReason"] === "string" ? fields["gateWaitReason"].trim() : "";
+  const waitFlags = Array.isArray(fields["gateFlags"])
+    ? fields["gateFlags"].filter((f): f is string => typeof f === "string" && f.trim().length > 0)
+    : [];
   const facts: Array<[string, string]> = [];
   const structured: Array<[string, unknown]> = [];
   for (const [key, value] of Object.entries(fields)) {
@@ -499,6 +507,27 @@ export function AgentEngineGateApproval({
         <Badge tone="neutral">{gateId}</Badge>
         {requiredRole && <Badge tone="neutral">{labelForKey(requiredRole)}</Badge>}
       </div>
+
+      {/* WHAT THE CLOCK ON THIS GATE IS WORTH.
+          Every one of these gates auto-approves on timeout, and since
+          agent-engine's three-tier policy the wait is no longer a flat hour:
+          a deliverable the run itself flagged waits six hours instead of one.
+          A reviewer deciding whether to open this now or after lunch is
+          deciding against a clock, so the clock says what it is — and what
+          made it longer. Read defensively like every other payload key: an
+          engine build that does not send it renders nothing. */}
+      {waitReason && (
+        <div className="rounded-md border border-border/60 bg-surface-2/40 p-2">
+          <p className="text-xs text-muted-2">{waitReason}</p>
+          {waitFlags.length > 0 && (
+            <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs text-fg">
+              {waitFlags.map((flag) => (
+                <li key={flag}>{flag}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {/* The rendered slides, when the gate carried any — a carousel IS its
           photos, and a reviewer approving one sight-unseen is exactly the gap
