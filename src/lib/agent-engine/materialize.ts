@@ -727,6 +727,29 @@ export interface LandingPageSiteDeliverable {
   gcsPrefix?: string;
   fileCount?: number;
   status?: string;
+  /** Present when `status` is `"rejected"`: who refused the page at the craft gate, and why. */
+  rejection?: { decision?: string; by?: string; at?: string; reason?: string };
+}
+
+/**
+ * The line a refused deliverable leads with.
+ *
+ * Three agent-engine products now DELIVER their work when a reviewer says no
+ * instead of ending the run held (landing pages, campaign bundles, reputation
+ * pulses): the reviewer keeps the thing they had opinions about. That only
+ * works if the asset says so. Without this line a rejected pulse renders as an
+ * ordinary pulse — same title, same drafted replies — and the refusal exists
+ * only in a `meta` key nothing paints.
+ *
+ * Asked for, never asserted: an older deliverable carries no `status` at all
+ * and must render exactly as it always did.
+ */
+function rejectionNotice(deliverable: Record<string, unknown>, refused: string): string | undefined {
+  if (str(deliverable["status"]) !== "rejected") return undefined;
+  const rejection = rec(deliverable["rejection"]);
+  const by = str(rejection["by"]);
+  const reason = str(rejection["reason"]);
+  return `**${refused}**${by ? ` Refused by ${by}.` : ""}${reason ? ` Reason: ${reason}` : ""}`;
 }
 
 /**
@@ -758,6 +781,17 @@ export async function materializeLandingPageSite(job: Job, deliverable: LandingP
   // not the client's to attend to. What they need is the ACTION; the reason it
   // was flagged is already on `meta.buildStatus` for staff.
   if (deliverable.status === "needs_human") lines.push("", "Worth a read before you share this one.");
+  if (deliverable.status === "rejected") {
+    // The page was built, checked, rendered and preview-deployed before the
+    // gate; the rejection refused the LIVE release, not the work. Leading with
+    // it is what stops a refused page reading as a shipped one.
+    lines.unshift(
+      `**A reviewer rejected this page — nothing was published live.**${deliverable.rejection?.by ? ` Refused by ${deliverable.rejection.by}.` : ""}${
+        deliverable.rejection?.reason ? ` Reason: ${deliverable.rejection.reason}` : ""
+      }`,
+      "",
+    );
+  }
   if (lines.length === 0) {
     lines.push(
       deliverable.gcsPrefix
@@ -791,6 +825,7 @@ export async function materializeLandingPageSite(job: Job, deliverable: LandingP
       gcsPrefix: deliverable.gcsPrefix,
       fileCount: deliverable.fileCount,
       buildStatus: deliverable.status,
+      ...(deliverable.rejection ? { rejection: deliverable.rejection } : {}),
       gate: deliverable.gate,
       // The diagnostic the body no longer carries. `meta` is staff-side; the
       // body is what a client reads.
@@ -981,11 +1016,12 @@ function materializeCampaignBundle(deliverable: Record<string, unknown>): AssetM
   return {
     title: fallbackTitle(firstOf(deliverable["campaignName"], deliverable["theme"]), "Campaign bundle"),
     content: joinBlocks([
+      rejectionNotice(deliverable, "A reviewer rejected this campaign — nothing below was approved to run."),
       theme ? `**Theme:** ${theme}` : undefined,
       pillars ? `**Pillars:** ${pillars.join(", ")}` : undefined,
       rows ? `## Channels (${channelResults.length})\n\n${rows}` : undefined,
     ]),
-    meta: metaFrom(deliverable, ["campaignName", "theme", "targetPillars", "channelResults"]),
+    meta: metaFrom(deliverable, ["campaignName", "theme", "targetPillars", "channelResults", "status", "rejection"]),
   };
 }
 
@@ -1048,6 +1084,7 @@ function materializeReputationPulse(deliverable: Record<string, unknown>): Asset
   return {
     title: pulseNumber ? `Reputation pulse ${pulseNumber}` : "Reputation pulse",
     content: joinBlocks([
+      rejectionNotice(deliverable, "A reviewer rejected this batch — none of the drafted replies were released."),
       crisisFired ? "**A crisis trigger fired on this pulse — see flagged items below.**" : undefined,
       summaryLine ? `**${summaryLine}**` : undefined,
       flaggedBlock ? `## Flagged — needs a person (${flagged.length})\n\n${flaggedBlock}` : undefined,
@@ -1063,6 +1100,8 @@ function materializeReputationPulse(deliverable: Record<string, unknown>): Asset
       "flagged",
       "approvedDrafts",
       "draftManifest",
+      "status",
+      "rejection",
     ]),
   };
 }

@@ -714,6 +714,23 @@ describe("the report and bundle products render to something a reviewer can read
     expect(asset.content).toContain("- **x** · completed — Two camps");
     expect(asset.content).toContain("- **linkedin** · held");
   });
+
+  it("campaign-bundle: a rejected campaign says so above the channel index", async () => {
+    await materialize("campaign-orchestrator", {
+      campaignName: "Q4 authority push",
+      theme: "AI-first operations",
+      status: "rejected",
+      rejection: { decision: "reject", by: "jane@karoslabs.com", at: "2026-09-24T00:00:00.000Z", reason: "the theme repeats last month's" },
+      channelResults: [{ channel: "x", status: "completed", topic: "Two camps" }],
+    });
+    const asset = createdAsset();
+    expect(asset.content.split("\n")[0]).toMatch(/rejected this campaign/i);
+    expect(asset.content).toContain("the theme repeats last month's");
+    // Every channel's work is still indexed — the reviewer refused the
+    // campaign, not the drafts, and they need both to act on their decision.
+    expect(asset.content).toContain("- **x** · completed — Two camps");
+    expect(asset.meta).toMatchObject({ status: "rejected" });
+  });
 });
 
 describe("tiktok-clip", () => {
@@ -805,6 +822,43 @@ describe("reputation-pulse", () => {
     expect(asset.content).not.toContain("crisis trigger fired");
     expect(asset.content).toContain("Needs a manager's response. (urgency 95/100)");
     expect(asset.content).not.toContain("## Drafted replies");
+  });
+
+  /**
+   * A REFUSED BATCH MUST NOT READ LIKE AN APPROVED ONE.
+   *
+   * agent-engine now delivers the pulse when a reviewer rejects the
+   * approve-all gate instead of holding the run, so the drafted replies a
+   * human said NO to are sitting in this asset looking exactly like replies
+   * they said yes to. The lead line is the only thing between those two
+   * states, since nothing else in the body differs.
+   */
+  it("a rejected batch leads with the refusal, and still carries the drafts it refused", async () => {
+    await materialize("reputation-agent", {
+      pulseNumber: "006",
+      summary: { respond: 1, flag: 0, no_action: 0, unavailable: 0 },
+      crisis: { fired: false },
+      approvedDrafts: [{ reviewId: "r2", draftText: "Thanks for the feedback." }],
+      status: "rejected",
+      rejection: { decision: "reject", by: "account_manager@karoslabs.com", at: "2026-09-24T00:00:00.000Z", reason: "batch needs a second look" },
+    });
+    const asset = createdAsset();
+    expect(asset.content.split("\n")[0]).toMatch(/rejected this batch/i);
+    expect(asset.content).toContain("Refused by account_manager@karoslabs.com.");
+    expect(asset.content).toContain("batch needs a second look");
+    expect(asset.content).toContain("Thanks for the feedback.");
+    expect(asset.meta).toMatchObject({ status: "rejected" });
+  });
+
+  it("an approved pulse says nothing about a rejection — the notice is not standing furniture", async () => {
+    await materialize("reputation-agent", {
+      pulseNumber: "007",
+      summary: { respond: 1, flag: 0, no_action: 0, unavailable: 0 },
+      crisis: { fired: false },
+      approvedDrafts: [{ reviewId: "r2", draftText: "Thanks for the feedback." }],
+      status: "ok",
+    });
+    expect(createdAsset().content).not.toMatch(/rejected|refused/i);
   });
 
   it("survives a deliverable with none of these fields yet, without throwing", async () => {
@@ -1049,6 +1103,35 @@ describe("the three products that already worked keep working", () => {
     expect(asset.content).toContain("read before you share");
     expect(asset.content).not.toMatch(/engine/i);
     expect(asset.imageUrl ?? null).toBeNull();
+  });
+
+  /**
+   * A REFUSED PAGE MUST NOT READ LIKE A SHIPPED ONE.
+   *
+   * agent-engine now delivers the built page when a reviewer rejects it at the
+   * craft gate instead of ending the run held — the reviewer keeps the thing
+   * they had opinions about. Everything that made it look finished is still in
+   * the deliverable (title, preview URL, screenshots), so if this asset does
+   * not SAY it was refused, the refusal is invisible to everyone who opens it.
+   */
+  it("landing-page-site: a rejected build leads with the refusal and keeps the preview it was refused on", async () => {
+    await materialize("landing-builder-agent", {
+      title: "Northwind",
+      status: "rejected",
+      gate: "pass",
+      rejection: { decision: "reject", by: "tomer", at: "2026-09-24T00:00:00.000Z", reason: "the hero says nothing" },
+      previewUrl: "https://karos-northwind--run-abc.web.app",
+      gcsPrefix: "gs://bucket/landing/northwind/run/",
+      screenshots: [],
+    });
+    const asset = createdAsset();
+    expect(asset.content.split("\n")[0]).toMatch(/rejected this page/i);
+    expect(asset.content).toContain("Refused by tomer.");
+    expect(asset.content).toContain("the hero says nothing");
+    // The work survives and is still reachable — that is the point of
+    // delivering a refused build at all.
+    expect(asset.content).toContain("Preview: https://karos-northwind--run-abc.web.app");
+    expect(asset.meta).toMatchObject({ buildStatus: "rejected", rejection: { by: "tomer" } });
   });
 });
 
