@@ -307,8 +307,8 @@ const ENGINE_ROUTED_DIALOGS: ReadonlyArray<{
   { key: "karos-linkedin-setup-v2", name: "LinkedIn Setup", productId: "linkedin-agent", visibleFields: ["li_identity", "request", "customPrompt", "media_source", "mediaAssets"] },
   { key: "karos-reddit-runner", name: "Reddit Runner", productId: "reddit-agent", visibleFields: ["request"] },
   { key: "karos-reddit-setup", name: "Reddit Setup", productId: "reddit-agent", visibleFields: ["request", "audience", "success_criteria", "customPrompt"] },
-  { key: "karos-instagram-agent", name: "Instagram Agent", productId: "instagram-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "instagram_post_type", "batch_size", "audience", "must_include", "customPrompt", "media_source", "mediaAssets"] },
-  { key: "karos-tiktok-agent", name: "TikTok Agent", productId: "tiktok-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "instagram_post_type", "batch_size", "audience", "must_include", "customPrompt", "media_source", "mediaAssets"] },
+  { key: "karos-instagram-agent", name: "Instagram Agent", productId: "instagram-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "instagram_post_type", "product_photo", "product_name", "batch_size", "audience", "must_include", "customPrompt", "media_source", "mediaAssets"] },
+  { key: "karos-tiktok-agent", name: "TikTok Agent", productId: "tiktok-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "instagram_post_type", "product_photo", "product_name", "batch_size", "audience", "must_include", "customPrompt", "media_source", "mediaAssets"] },
   { key: "branded-shorts", name: "Branded Shorts", productId: "branded-shorts-agent", visibleFields: ["request", "source_url", "platform", "duration", "cta", "editing_notes", "customPrompt", "media_source", "mediaAssets"] },
   { key: "landing-builder", name: "Landing Page Builder", productId: "landing-builder-agent", visibleFields: ["request", "offer", "audience", "cta", "proof", "references", "customPrompt"] },
   { key: "karos-blog-writer-v2", name: "Blog Writer", productId: "blog-agent", visibleFields: ["run_mode", "request", "audience", "keywords", "point_of_view", "sources", "customPrompt"] },
@@ -328,7 +328,11 @@ function answerFor(key: string): string {
   // The non-default value, so dropping the field changes the payload.
   if (key === "media_source") return "client";
   // 2026-09-23: a select whose answers are a closed vocabulary; a probe string means Auto.
-  if (key === "instagram_post_type") return "the_list";
+  // 2026-09-24: "product_campaign", the one answer that SHOWS the two fields
+  // below it (`showWhen`), so the sweep proves those reach the engine too.
+  // The other answers are pinned by `instagramPostTypeInput`'s own tests.
+  if (key === "instagram_post_type") return "product_campaign";
+  if (key === "product_photo") return '[{"uri": "gs://bucket/probe-product.png", "role": "source", "contentType": "image/png", "label": "probe.png"}]';
   if (key === "source_url" || key === "references" || key === "sources") {
     return `https://example.com/probe-${key}`;
   }

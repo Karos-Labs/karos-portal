@@ -531,6 +531,7 @@ export default async function ClientSettingsPage({
         clientId={client.id}
         hasWebsite={!!client.website}
         isStaff={isStaff}
+        logoUrl={client.logoUrl}
       />
       {/* Documents, last of the client's own Profile blocks (portal feedback
           round 4, 2026-09). The `id` is what makes `?tab=profile#documents`

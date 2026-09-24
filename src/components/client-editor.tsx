@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardTitle, Button, Input, Textarea, Label, Select } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { BRAND_LOGO_ACCEPT, BRAND_LOGO_HINT, checkBrandLogoFile } from "@/lib/brand-logo-file";
 import { CLIENT_CATEGORY_MAX_LENGTH, clientCategoryValue, cn } from "@/lib/utils";
 import { updateClientAction } from "@/lib/actions";
 import {
@@ -72,6 +73,11 @@ export function ClientEditor({ client }: { client: Client }) {
 
   async function handleFileUpload(file: File) {
     if (logoUploading) return;
+    const check = checkBrandLogoFile(file);
+    if (!check.ok) {
+      setLogoError(check.error);
+      return;
+    }
     setLogoUploading(true);
     setLogoError(null);
     try {
@@ -196,7 +202,7 @@ export function ClientEditor({ client }: { client: Client }) {
       <div>
         <Label>Brand logo</Label>
         <p className="mb-2 text-[10px] text-muted-2">
-          PNG, JPG, or SVG · max 4 MB. AI uses the logo pixels to extract authentic brand colors.
+          {BRAND_LOGO_HINT} It goes on every post, and AI uses its pixels to extract authentic brand colors.
         </p>
 
         {logoUrl ? (
@@ -213,7 +219,7 @@ export function ClientEditor({ client }: { client: Client }) {
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-xs font-medium">{logoFileName ?? "Logo uploaded"}</p>
-              <p className="text-[10px] text-muted-2">Used for AI color extraction</p>
+              <p className="text-[10px] text-muted-2">On every post, and used for AI color extraction</p>
             </div>
             <div className="flex shrink-0 gap-1.5">
               <button
@@ -265,7 +271,7 @@ export function ClientEditor({ client }: { client: Client }) {
                 <Icon name="Upload" className="h-5 w-5 text-muted-2" />
                 <div>
                   <p className="text-sm font-medium">Click or drag to upload</p>
-                  <p className="text-xs text-muted-2">PNG, JPG, or SVG · max 4 MB</p>
+                  <p className="text-xs text-muted-2">{BRAND_LOGO_HINT}</p>
                 </div>
               </>
             )}
@@ -275,7 +281,7 @@ export function ClientEditor({ client }: { client: Client }) {
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/png,image/jpeg,image/svg+xml,.svg"
+          accept={BRAND_LOGO_ACCEPT}
           className="sr-only"
           onChange={(e) => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0]); }}
         />

@@ -179,6 +179,7 @@ export function ClientRail({
               guidelines={client.brandingGuidelines}
               clientId={client.id}
               hasWebsite={!!client.website}
+              logoUrl={client.logoUrl}
             />
 
             <nav className="flex flex-col gap-0.5 border-t border-border pt-4">
@@ -309,6 +310,7 @@ export function ClientRail({
           guidelines={client.brandingGuidelines}
           clientId={client.id}
           hasWebsite={!!client.website}
+          logoUrl={client.logoUrl}
         />
 
         {/* "AI agents" has no slot in the 2-icon bottom tab bar (Home, Calendar

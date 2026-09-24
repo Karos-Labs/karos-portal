@@ -328,6 +328,7 @@ describe("DELETE /api/clients/[id]/logo", () => {
     expect(res.status).toBe(404);
     expect(deleteObject).not.toHaveBeenCalled();
     expect(data.updateClient).not.toHaveBeenCalled();
+    expect(data.clearClientLogo).not.toHaveBeenCalled();
   });
 
   it.each(LEGITIMATE_STAFF)("still clears the logo for %s", async (_label, user) => {
@@ -335,7 +336,9 @@ describe("DELETE /api/clients/[id]/logo", () => {
     const res = await call();
     expect(res.status).toBe(200);
     expect(deleteObject).toHaveBeenCalledWith("clients/c1/logos/old.png");
-    expect(data.updateClient).toHaveBeenCalledTimes(1);
+    // `clearClientLogo`, not `updateClient({ logoUrl: undefined })`, which
+    // ignoreUndefinedProperties turned into a write of nothing.
+    expect(data.clearClientLogo).toHaveBeenCalledWith("c1");
   });
 
   it("lets the client whose workspace it is clear their own logo", async () => {
@@ -351,6 +354,7 @@ describe("DELETE /api/clients/[id]/logo", () => {
     expect(res.status).toBe(404);
     expect(deleteObject).not.toHaveBeenCalled();
     expect(data.updateClient).not.toHaveBeenCalled();
+    expect(data.clearClientLogo).not.toHaveBeenCalled();
   });
 });
 

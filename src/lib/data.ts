@@ -423,6 +423,18 @@ export async function updateClient(id: string, data: Partial<Client>): Promise<v
 }
 
 /**
+ * Actually removes the client's uploaded logo from the record. The logo route
+ * used to call `updateClient(id, { logoUrl: undefined, ... })`, which
+ * `ignoreUndefinedProperties` turns into a write of nothing: the file was
+ * deleted from Storage and the record kept pointing at it, so "Remove" left a
+ * dead link on the client and in the engine's `brand.json`.
+ */
+export async function clearClientLogo(id: string): Promise<void> {
+  const { FieldValue } = await import("firebase-admin/firestore");
+  await col.clients().doc(id).set({ logoUrl: FieldValue.delete(), logoStoragePath: FieldValue.delete() }, { merge: true });
+}
+
+/**
  * Finish the onboarding wizard: flip `hasCompletedOnboarding` on the user doc and
  * apply the workspace patch to the client doc in ONE transaction, so a mid-flight
  * failure never leaves a user marked "done" with an unsaved workspace (or vice

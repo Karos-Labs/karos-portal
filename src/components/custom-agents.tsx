@@ -66,6 +66,7 @@ import {
   attachmentModeForEngineProduct,
   clientOnlyMediaIsRequired,
   isMediaSource,
+  isBriefFieldShown,
   mediaSourceHint,
   parseRunAttachmentsJson,
   ADD_SEAT_OPTION_VALUE,
@@ -1858,7 +1859,9 @@ export function RunCustomAgentModal({
   // field must never be the primary field — quick-start chips write into the
   // primary, and text landing in an invisible box is text the client cannot
   // see or undo.
-  const visibleFields = profile.fields.filter((field) => !field.hidden);
+  // `showWhen` too: the product campaign's photo and name exist only while
+  // "Product campaign" is the post type (`isBriefFieldShown`).
+  const visibleFields = profile.fields.filter((field) => isBriefFieldShown(field, fields));
   const primaryField =
     visibleFields.find((field) => field.key === "request") ??
     visibleFields.find((field) => field.required) ??
@@ -1991,6 +1994,24 @@ export function RunCustomAgentModal({
       viewerIsClient &&
       Boolean(profile.attachments?.required) &&
       field.key === profile.attachments?.satisfyWithFieldKey;
+    if (field.type === "media" && field.media) {
+      // A purpose-built slot (the product campaign's photo): its own mode and
+      // sentence, never required, same upload route and brief encoding as the
+      // run's attachments below.
+      return (
+        <div key={field.key} className="sm:col-span-2">
+          <span className="text-xs font-medium text-muted">{`${field.label} (optional)`}</span>
+          <RunAttachments
+            clientId={selectedClientId}
+            attachments={parseRunAttachmentsJson(fields[field.key])}
+            onChange={(next) => setField(field.key, next.length > 0 ? JSON.stringify(next) : "")}
+            disabled={pending}
+            mode={field.media.mode}
+            hint={field.media.hint}
+          />
+        </div>
+      );
+    }
     if (field.type === "media") {
       // The engine's `mediaAssets`, uploaded browser → GCS through the signed
       // route and kept in the brief as JSON so the submit carries it like any

@@ -16,7 +16,13 @@ import {
   STEER_RUN_HELPER_WITH_KIND,
   STEER_RUN_LABEL,
 } from "@/lib/intake-steer-copy";
-import { ENGINE_PRODUCTS_READING_MEDIA_ASSETS, INSTAGRAM_POST_TYPE_FIELD_KEY } from "@/lib/agent-engine/product-mapping";
+import {
+  ENGINE_PRODUCTS_READING_MEDIA_ASSETS,
+  INSTAGRAM_POST_TYPE_FIELD_KEY,
+  PRODUCT_CAMPAIGN_POST_TYPE,
+  PRODUCT_NAME_FIELD_KEY,
+  PRODUCT_PHOTO_FIELD_KEY,
+} from "@/lib/agent-engine/product-mapping";
 
 /**
  * `media` is the run-attachment control (`RunAttachments`): the value is the
@@ -57,6 +63,29 @@ export interface AgentBriefField {
    * hidden field must never be `required` — nothing can ever fill it in.
    */
   hidden?: boolean;
+  /**
+   * Painted only while another field holds one value — the product campaign's
+   * photo and name appear only once "Product campaign" is the post type. A
+   * field that is not shown is not asked, so it is also left out of the
+   * prose and the price the dialog derives from visible fields
+   * (`isBriefFieldShown`). Such a field must never be `required`.
+   */
+  showWhen?: { key: string; equals: string };
+  /**
+   * For a `media` field OTHER than the run's own `mediaAssets`: how its
+   * attach control behaves. The run's attachments take their mode and hint
+   * from the engine product (`attachmentModeForEngineProduct`,
+   * `mediaSourceHint`); a purpose-built slot like the product photo says its
+   * own.
+   */
+  media?: { mode: "picture"; hint: string };
+}
+
+/** Whether the dialog paints this field for these answers — `hidden` and `showWhen` both apply. */
+export function isBriefFieldShown(field: AgentBriefField, values: Record<string, string | undefined>): boolean {
+  if (field.hidden) return false;
+  if (field.showWhen && (values[field.showWhen.key] ?? "") !== field.showWhen.equals) return false;
+  return true;
 }
 
 export interface AgentAttachmentProfile {
@@ -529,12 +558,40 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           options: [
             { value: "", label: "Auto" },
             { value: "news_flash", label: "News flash (one photo in a news frame)" },
+            { value: PRODUCT_CAMPAIGN_POST_TYPE, label: "Product campaign (scenes built from your product photo)" },
             { value: "photo_first", label: "Photo-led carousel" },
             { value: "the_list", label: "Numbered list" },
             { value: "by_the_numbers", label: "By the numbers" },
             { value: "head_to_head", label: "Head to head" },
             { value: "the_breakdown", label: "The breakdown" },
           ],
+        },
+        {
+          // 2026-09-24, agent-engine #223 (stage 4): the product campaign's
+          // own photo. Sent as the FIRST `mediaAssets` entry, role
+          // `reference`, which `05z-attach-user-media` ingests as Tier 0 and
+          // `04q-plan-product-campaign` looks at before any library photo
+          // (see `productCampaignAssets` in product-mapping.ts). Optional:
+          // with none, the engine picks the client's own product photo from
+          // its media library.
+          key: PRODUCT_PHOTO_FIELD_KEY,
+          label: "Product photo",
+          type: "media",
+          showWhen: { key: INSTAGRAM_POST_TYPE_FIELD_KEY, equals: PRODUCT_CAMPAIGN_POST_TYPE },
+          media: {
+            mode: "picture",
+            hint: "The campaign is a picture-only carousel of scenes built from this photo: a hero shot, a close-up, a billboard, the product in use, a street poster and a flat-lay. A clear photo of the product on a plain background works best. Leave it empty and the agent uses a product photo from your media library. If it cannot make at least three good scenes, or the run is set to use only media you upload (the scenes are generated), you get a normal carousel instead.",
+          },
+        },
+        {
+          // Travels as the photo's `label`, which the engine reads as the
+          // product's name (lettered on the billboard, named in every scene).
+          key: PRODUCT_NAME_FIELD_KEY,
+          label: "Product name",
+          type: "text",
+          showWhen: { key: INSTAGRAM_POST_TYPE_FIELD_KEY, equals: PRODUCT_CAMPAIGN_POST_TYPE },
+          placeholder: "e.g. Daily Glow Serum",
+          helper: "A short name (up to six words, in Latin letters) is written on the billboard and poster scenes exactly as typed.",
         },
         {
           // The shared batch key, not a bespoke `post_count`: the submit core
@@ -2226,7 +2283,10 @@ export function buildCustomAgentPrompt(
     // The count is read separately (see BATCH_SIZE_FIELD_KEY); the two media
     // controls are DATA for the engine (`mediaSource`, `mediaAssets` on the
     // wire), and a JSON array of gs:// URIs is not prose an agent should read.
+    // Any other `media` field (the product photo) is the same kind of data,
+    // and a field the dialog is not showing was not asked this run.
     .filter((field) => field.key !== BATCH_SIZE_FIELD_KEY && field.key !== MEDIA_ASSETS_FIELD_KEY && field.key !== MEDIA_SOURCE_FIELD_KEY)
+    .filter((field) => field.type !== "media" && (!field.showWhen || isBriefFieldShown(field, values)))
     .map((field) => ({ label: field.label, value: values[field.key]?.trim() }))
     .filter((entry): entry is { label: string; value: string } => Boolean(entry.value))
     .map((entry) => `${entry.label}\n${entry.value}`)

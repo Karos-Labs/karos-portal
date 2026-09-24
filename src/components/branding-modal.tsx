@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/modal";
 import { Button, Label, Input, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { BrandLogoField } from "@/components/brand-logo-field";
 import { saveBrandingGuidelinesAction, generateBrandingAction } from "@/lib/actions";
 import type { BrandColor, BrandingGuidelines } from "@/lib/types";
 
@@ -22,6 +23,12 @@ interface Props {
    * editing the palette cannot blank the agency's mix.
    */
   allowUsagePct?: boolean;
+  /**
+   * The client's uploaded logo (`Client.logoUrl`). Painted in the dialog's
+   * Logo block, which uploads through `/api/clients/[id]/logo` on its own —
+   * see `BrandLogoField`.
+   */
+  logoUrl?: string;
 }
 
 /* ── Color entry (local form state - lighter than full BrandColor) ─────── */
@@ -140,6 +147,7 @@ export function BrandingModal({
   existing,
   hasWebsite,
   allowUsagePct = false,
+  logoUrl,
 }: Props) {
   const router = useRouter();
   /**
@@ -500,6 +508,15 @@ export function BrandingModal({
             {`AI Generated from live site/search data${genResult.visualStyle ? ` · ${genResult.visualStyle}` : ""}. This profile is already saved. Edit anything below and save that section again to change it.`}
           </div>
         )}
+
+        {/* ── The logo (owner request 2026-09-24: "add an option in the
+            portal to add logo files"). Its own block with no Save: the file
+            is stored and the record written the moment it is picked, so it
+            is not one of the two halves the Saves below commit. ── */}
+        <section className="space-y-2 rounded-[10px] border border-border p-4">
+          <h3 className="text-sm font-medium text-foreground">Logo</h3>
+          <BrandLogoField clientId={clientId} logoUrl={logoUrl} />
+        </section>
 
         {/* ── Section 1 of 2: what the brand LOOKS like (flow audit 2026-09,
             R14) — palette, the two fonts, the visual style, and its own Save.

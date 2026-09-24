@@ -1,14 +1,26 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth";
-import { getClient, updateClient } from "@/lib/data";
+import { clearClientLogo, getClient, updateClient } from "@/lib/data";
 import { canViewClient } from "@/lib/client-visibility";
 import { uploadBytes, deleteObject } from "@/lib/storage";
+import { checkBrandLogoFile } from "@/lib/brand-logo-file";
+import { projectClientOnSaveInBackground } from "@/lib/agent-engine/project-on-save";
 
 export const maxDuration = 60;
 
-const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/svg+xml"]);
-const MAX_BYTES = 4 * 1024 * 1024;
+/*
+ * The type and size rules live in `@/lib/brand-logo-file` (shared with the
+ * upload controls) and are agent-engine's own: a 4,000,000-byte cap and
+ * SVG/PNG/JPEG/WebP. See that module for why the old 4 MiB cap was a logo
+ * that uploaded here and never appeared on a post.
+ *
+ * BOTH handlers re-project the client into the engine workspace afterwards,
+ * because `client/brand.json`'s `logoUrl` is where every post reads the logo
+ * from (see `engineBrandLogoUrl`). Background, like every other save: the
+ * dispatch-time projection is the correctness guarantee, this makes the new
+ * logo visible before the next run rather than only during it.
+ */
 
 /**
  * SCOPED TO WHOEVER MAY VIEW THE CLIENT, on BOTH handlers. `requireStaff`-
@@ -42,25 +54,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const file = form.get("file");
 
   if (!(file instanceof File)) return NextResponse.json({ error: "No file provided" }, { status: 400 });
-  if (file.size === 0) return NextResponse.json({ error: "Empty file" }, { status: 400 });
-  if (file.size > MAX_BYTES) return NextResponse.json({ error: "File exceeds 4 MB" }, { status: 413 });
-
-  const rawMime = file.type || "image/png";
-  const mimeType = rawMime === "image/jpg" ? "image/jpeg" : rawMime;
-  if (!ALLOWED_TYPES.has(mimeType)) {
-    return NextResponse.json({ error: "Only PNG, JPEG, and SVG files are accepted" }, { status: 415 });
-  }
+  const check = checkBrandLogoFile(file);
+  if (!check.ok) return NextResponse.json({ error: check.error }, { status: check.status });
+  const mimeType = check.contentType;
 
   const bytes = Buffer.from(await file.arrayBuffer());
   const safeName = file.name.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "logo";
   const path = `clients/${clientId}/logos/${crypto.randomUUID()}-${safeName}`;
 
-  // Delete previous logo from storage (soft-fail)
-  if (client.logoStoragePath) await deleteObject(client.logoStoragePath).catch(() => {});
-
   const { url } = await uploadBytes({ bytes, path, contentType: mimeType });
 
   await updateClient(clientId, { logoUrl: url, logoStoragePath: path });
+  projectClientOnSaveInBackground(clientId, "logo-uploaded");
+
+  // The previous file goes only AFTER the new one is stored and recorded (soft-
+  // fail). It used to be deleted first, so an upload that then failed left the
+  // record — and the engine's brand.json — pointing at a file that was gone.
+  if (client.logoStoragePath && client.logoStoragePath !== path) {
+    await deleteObject(client.logoStoragePath).catch(() => {});
+  }
 
   return NextResponse.json({ url, path });
 }
@@ -79,7 +91,8 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
 
   if (client.logoStoragePath) await deleteObject(client.logoStoragePath).catch(() => {});
 
-  await updateClient(clientId, { logoUrl: undefined, logoStoragePath: undefined });
+  await clearClientLogo(clientId);
+  projectClientOnSaveInBackground(clientId, "logo-removed");
 
   return NextResponse.json({ ok: true });
 }

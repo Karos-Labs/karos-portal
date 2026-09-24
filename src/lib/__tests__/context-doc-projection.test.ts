@@ -180,6 +180,48 @@ describe("projectClientToWorkspace", () => {
     expect(written.has("clients/karoslabs/client/brand.json")).toBe(false);
   });
 
+  /**
+   * The portal's logo upload writes `Client.logoUrl`. brand.json read ONLY
+   * `brandingGuidelines.logoUrl`, which nothing in the portal writes, so an
+   * uploaded logo never reached a post (owner request 2026-09-24).
+   */
+  it("projects the UPLOADED logo onto brand.json, ahead of the guidelines' own field", async () => {
+    const { deps, written } = fakeDeps();
+    const uploaded = "https://firebasestorage.googleapis.com/v0/b/bkt/o/clients%2Fc1%2Flogos%2Fa-logo.svg?alt=media&token=t";
+    await projectClientToWorkspace({ ...CLIENT, logoUrl: uploaded } as never, undefined, deps);
+    const brand = written.get("clients/karoslabs/client/brand.json") as ReturnType<typeof toProjectedBrand>;
+    expect(brand.logoUrl).toBe(uploaded);
+  });
+
+  it("keeps projecting the guidelines' logo for a client that never uploaded one", async () => {
+    const { deps, written } = fakeDeps();
+    await projectClientToWorkspace(CLIENT, undefined, deps);
+    const brand = written.get("clients/karoslabs/client/brand.json") as ReturnType<typeof toProjectedBrand>;
+    expect(brand.logoUrl).toBe("https://karoslabs.com/icon.svg");
+  });
+
+  it("writes a brand file for a client whose only brand fact is an uploaded logo", async () => {
+    // A client uploads a logo long before anyone runs branding; gating the
+    // file on `brandingGuidelines` would drop exactly that logo.
+    const { deps, written } = fakeDeps();
+    const logoOnly = { ...CLIENT, brandingGuidelines: undefined, brandVoice: undefined, forbiddenTerms: [], logoUrl: "https://cdn.test/logo.png" };
+    const result = await projectClientToWorkspace(logoOnly as never, undefined, deps);
+    expect(result.brand).toBe(true);
+    const brand = written.get("clients/karoslabs/client/brand.json") as ReturnType<typeof toProjectedBrand>;
+    expect(brand.logoUrl).toBe("https://cdn.test/logo.png");
+  });
+
+  it("never projects a logo URL the engine refuses to fetch", async () => {
+    // agent-engine downloads https only (`gs://` is refused by name), so any
+    // other scheme would read as configured and render as absent.
+    const { deps, written } = fakeDeps();
+    const gsOnly = { ...CLIENT, brandingGuidelines: undefined, brandVoice: undefined, forbiddenTerms: [], logoUrl: "gs://bkt/clients/c1/logos/a.png" };
+    const result = await projectClientToWorkspace(gsOnly as never, undefined, deps);
+    expect(result.brand).toBe(false);
+    expect(written.has("clients/karoslabs/client/brand.json")).toBe(false);
+    expect(toProjectedBrand({ logoUrl: "http://acme.test/logo.png" }, "t").logoUrl).toBeUndefined();
+  });
+
   it("projects a hostname as the client domain, never an email address", async () => {
     // Prep's seeded profile carried `domains: ["hello@karoslabs.com"]`, which
     // no citation will ever match.
