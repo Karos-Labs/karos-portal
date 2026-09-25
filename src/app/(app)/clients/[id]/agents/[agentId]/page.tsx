@@ -69,6 +69,7 @@ import {
   buildClipMakerView,
   buildDailyFinderView,
   deliverableStamp,
+  jobBelongsToAgent,
   ownRunsFirst,
   templateDetails,
   umbrellaForAgent,
@@ -651,12 +652,12 @@ export default async function ClientAgentDetailPage({
   // each of these maps to a capability that used to live on that card: the run
   // dialog, the schedule dialog, the intake affordance, the review queue, the
   // run history, the curation pane and the economics card.
-  // A job belongs to this agent by its `customAgentId`, or by its stored name
-  // when an older job has no id (the rule submit-custom.ts uses). The name
-  // alone would lose the agent's history on a rename (TikTok, 2026-09-22).
+  // A job belongs to this agent by its `customAgentId`, else by the engine
+  // product it ran (most engine runs carry no agent id), else by its stored
+  // name — `jobBelongsToAgent`, the same rule the "What it has made" list
+  // uses, so a run and its output always land on the same page.
   const isThisAgentsJob = (job: (typeof jobs)[number]) =>
-    job.customAgentId ? job.customAgentId === agent.id : job.agentName === agent.name;
-  const agentJobIds = new Set(jobs.filter(isThisAgentsJob).map((job) => job.id));
+    jobBelongsToAgent(job, { id: agent.id, name: agent.name, key: agent.key });
   // Portal revamp, Surface 03 — "Run history shows the last three, and opens
   // to all of them." toRunRows() with staff=false: it already strips
   // prompt/href/error/runType and excludes launch/test runs
@@ -669,9 +670,7 @@ export default async function ClientAgentDetailPage({
   // href, no raw error), because this is the client's card and it must render
   // identically. (Staff's fuller copy lived in the Control Room, removed
   // 2026-09-25 at the owner's request; /jobs holds every run's detail.)
-  const clientAgentRuns = toRunRows(jobs, false, umbrellas).filter((run) =>
-    agentJobIds.has(run.id),
-  );
+  const clientAgentRuns = toRunRows(jobs, false, umbrellas, { belongs: isThisAgentsJob, limit: 50 });
   const sourceFiles: SourceFile[] =
     archetype === "clip_maker"
       ? contextItems

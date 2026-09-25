@@ -2,6 +2,7 @@ import "server-only";
 
 import { dateKeyInZone, jobDeliveredWork, shiftDateKey } from "@/lib/client-agents";
 import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
+import { customAgentKeyOwningEngineProduct } from "@/lib/agent-engine/product-mapping";
 import { projectRunOccurrences } from "@/lib/scheduled-runs";
 import { runtimeTimeZone } from "@/lib/run-cadence";
 import { resolveContentIdentity } from "@/lib/agent-identity-map";
@@ -78,6 +79,35 @@ function attributionSlug(value: unknown): string | null {
   return slug || null;
 }
 
+/**
+ * Whether this JOB is this agent's run — the one rule the page's run history
+ * and its "What it has made" list both ask, so a run and its output can never
+ * be listed under two different agents, or its output under none.
+ *
+ *  1. `customAgentId` names the agent: that is the whole answer. Comparing
+ *     names as well credited the legacy X Agent's post (same display name,
+ *     different agent) to X Agent v2, in prep and production (2026-09-25).
+ *  2. No agent id, but an engine product: the agent that owns that product's
+ *     runs (`customAgentKeyOwningEngineProduct`). Most of the engine's history
+ *     is this shape — dispatched as a managed task under names like "Instagram
+ *     Post / Carousel Creator" — and before this rung no agent page showed
+ *     those runs or what they made (owner, 2026-09-25).
+ *  3. Neither: the recorded name, for jobs older than both fields.
+ */
+export function jobBelongsToAgent(
+  job: Pick<Job, "customAgentId" | "agentEngineProductId" | "agentName">,
+  agent: { id: string; name: string; key?: string },
+): boolean {
+  if (typeof job.customAgentId === "string" && job.customAgentId !== "") return job.customAgentId === agent.id;
+  if (typeof job.agentEngineProductId === "string" && job.agentEngineProductId !== "") {
+    return agent.key !== undefined && customAgentKeyOwningEngineProduct(job.agentEngineProductId) === agent.key;
+  }
+  // Read defensively even though `Job.agentName` is typed as required: this
+  // runs over whatever Firestore actually holds.
+  const jobName = typeof job.agentName === "string" ? job.agentName.trim().toLowerCase() : "";
+  return jobName !== "" && jobName === agent.name.trim().toLowerCase();
+}
+
 /** `meta.agentFolder` if the asset carries one — lab imports are the only writer. */
 function agentFolderOf(asset: Asset): string | null {
   const folder = asset.meta?.["agentFolder"];
@@ -121,6 +151,8 @@ export function umbrellaForAgent<T extends { customAgentId: string }>(
 /** One agent's identity, resolved into the spellings the rungs compare. */
 interface AgentAttribution {
   id: string;
+  /** The agent's key, for the engine-product rung (`jobBelongsToAgent`). */
+  key?: string;
   /** The job-name rung's target: trimmed and lowercased. */
   name: string;
   /**
@@ -152,6 +184,7 @@ function agentAttribution(args: {
 }): AgentAttribution {
   return {
     id: args.agent.id,
+    ...(args.agent.key ? { key: args.agent.key } : {}),
     name: args.agent.name.trim().toLowerCase(),
     slugs: new Set(
       [attributionSlug(args.agent.key), attributionSlug(args.agent.name)].filter(
@@ -212,25 +245,12 @@ function assetBelongsToAgent(
   }
 
   if (job) {
-    // A job we can see has already been asked the exact question and answered
-    // no, so its own recorded name is the last word on it. Deliberately NOT
-    // falling through to the folder rung: letting a string in the asset's meta
-    // outrank a job that names a different agent is precisely how one agent's
-    // run lands under another's heading.
-    //
-    // Read defensively even though `Job.agentName` is typed as required: this
-    // runs over whatever Firestore actually holds, and an older job written
-    // without the field would otherwise throw and take the page down.
-    //
-    // A job that names its agent by id has already answered: rung 1 above
-    // said it is not this one. The name is only for jobs older than
-    // `customAgentId` — the same rule the page's run history keeps
-    // (`isThisAgentsJob`). Comparing names here too credited the legacy X
-    // Agent's post (same display name, different agent) to X Agent v2, in
-    // prep and in production (audited 2026-09-25).
-    if (typeof job.customAgentId === "string" && job.customAgentId !== "") return false;
-    const jobName = typeof job.agentName === "string" ? job.agentName.trim().toLowerCase() : "";
-    return jobName !== "" && jobName === agent.name;
+    // A job we can see is the last word on its asset: `jobBelongsToAgent`
+    // answers from the job's own agent id, engine product or recorded name.
+    // Deliberately NOT falling through to the folder rung: letting a string in
+    // the asset's meta outrank a job that names a different agent is precisely
+    // how one agent's run lands under another's heading.
+    return jobBelongsToAgent(job, agent);
   }
 
   // No job — the lab-import shape (`jobId: null`), and equally an asset whose
