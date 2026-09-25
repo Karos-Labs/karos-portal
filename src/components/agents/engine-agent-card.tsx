@@ -4,15 +4,13 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { Badge, Button, Label, Select, Textarea } from "@/components/ui";
 import { AgentMark } from "@/components/agent-identity";
-import { RunAttachments, type RunAttachment } from "@/components/agents/run-attachments";
+import { type RunAttachment } from "@/components/agents/run-attachments";
+import { RunMediaBlock } from "@/components/agents/run-media-block";
 import { dispatchControlPlaneAgentAction } from "@/lib/actions/control-plane-actions";
 import { agentStudioHref, type EngineAgentCardModel } from "@/lib/agent-engine/catalog-union";
 import {
   agentEngineProductAcceptsMediaAssets,
-  attachmentModeForEngineProduct,
-  engineProductSourcesItsOwnMedia,
-  clientOnlyMediaIsRequired,
-  mediaSourceHint,
+  effectiveMediaSource,
   MEDIA_SOURCE_DEFAULT,
   type MediaSource,
 } from "@/lib/custom-agent-launch";
@@ -53,18 +51,7 @@ export function EngineAgentCard({
    * file would upload, cost storage, and be silently ignored.
    */
   const acceptsMedia = agentEngineProductAcceptsMediaAssets(agent.slug);
-  const attachmentMode = attachmentModeForEngineProduct(agent.slug) ?? "slides";
-  /**
-   * Whether the "where do the visuals come from" question has two real
-   * answers here. On `x-agent` it does not — D24 makes it text-only and the
-   * engine hardcodes that — so the selector is not painted and the run goes
-   * out on the default, which is the only behaviour the engine has.
-   */
-  const offersMediaSourceChoice = engineProductSourcesItsOwnMedia(agent.slug);
-  // "Only media I upload" on an agent with no text fallback needs a file.
-  const mediaMissing = acceptsMedia && mediaSource === "client" && clientOnlyMediaIsRequired(agent.slug) && attachments.length === 0;
-
-  const runnable = agent.status === "active" && clientId !== "" && !mediaMissing;
+  const runnable = agent.status === "active" && clientId !== "";
 
   /**
    * Switching client drops what was already uploaded.
@@ -119,36 +106,18 @@ export function EngineAgentCard({
       </div>
 
       {acceptsMedia && (
-        <div className="mt-3 space-y-1 rounded-lg border border-white/10 p-3">
-          {/* The heading labels the SELECT when there is one; with no control
-              to point at, `htmlFor` would dangle, so it is dropped rather than
-              left addressing an id that is not rendered. */}
-          {offersMediaSourceChoice ? (
-            <Label htmlFor={`media-source-${agent.slug}`}>Media for this run</Label>
-          ) : (
-            <p className="text-sm font-medium">Media for this run</p>
-          )}
-          {offersMediaSourceChoice && (
-            <Select
-              id={`media-source-${agent.slug}`}
-              value={mediaSource}
-              onChange={(e) => setMediaSource(e.target.value === "client" ? "client" : "system")}
-            >
-              <option value="system">Karos sources or generates the visuals</option>
-              <option value="client">Only media uploaded for this job</option>
-            </Select>
-          )}
-          <RunAttachments
+        <div className="mt-3">
+          {/* The same block the client run dialog paints (RunMediaBlock): the
+              files first, and "Use only my media" only once there are some. */}
+          <RunMediaBlock
             clientId={clientId}
+            engineProductId={agent.slug}
             attachments={attachments}
-            onChange={setAttachments}
+            onAttachmentsChange={setAttachments}
+            mediaSource={mediaSource}
+            onMediaSourceChange={setMediaSource}
             disabled={pending}
-            mode={attachmentMode}
-            hint={mediaSourceHint(agent.slug, mediaSource)}
           />
-          {mediaMissing && (
-            <p className="text-xs text-red-400">Attach the media this run should use, or let Karos source the visuals.</p>
-          )}
         </div>
       )}
 
@@ -181,7 +150,7 @@ export function EngineAgentCard({
                   ...(attachments.length > 0 ? { mediaAssets: attachments } : {}),
                   // Sent only when it departs from the engine's default, so a
                   // plain run's envelope is byte-identical to before this control.
-                  ...(acceptsMedia && mediaSource !== MEDIA_SOURCE_DEFAULT ? { mediaSource } : {}),
+                  ...(acceptsMedia && effectiveMediaSource(mediaSource, attachments.length) !== MEDIA_SOURCE_DEFAULT ? { mediaSource: "client" as const } : {}),
                 },
               });
               } catch (error) {

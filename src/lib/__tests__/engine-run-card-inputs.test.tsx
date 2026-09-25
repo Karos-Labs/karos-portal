@@ -26,7 +26,8 @@ vi.mock("@/lib/actions/control-plane-actions", () => ({
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }), usePathname: () => "/" }));
 
 import { EngineAgentCard } from "@/components/agents/engine-agent-card";
-import { mediaSourceHint } from "@/lib/custom-agent-launch";
+import { RunMediaBlock } from "@/components/agents/run-media-block";
+import { MEDIA_SOURCE_AUTO_WITH_UPLOADS, mediaSourceHint } from "@/lib/custom-agent-launch";
 import type { EngineAgentCardModel } from "@/lib/agent-engine/catalog-union";
 
 function card(slug: string, overrides: Partial<EngineAgentCardModel> = {}): EngineAgentCardModel {
@@ -87,15 +88,49 @@ describe("the run card only offers what the workflow behind it reads", () => {
     expect(html).not.toContain("video/mp4");
   });
 
-  it("offers the media-source choice on every media card that has two real answers, and on no other (2026-09-06)", () => {
-    for (const slug of READS_MEDIA_ASSETS.filter((s) => s !== "x-agent")) {
+  // 2026-09-25 (owner): the block no longer asks where the visuals come from
+  // before anything is uploaded. With no media there is no switch; with media
+  // it is "Use only my media", off by default, on every card that has two real
+  // answers (RunMediaBlock, rendered with media in the next test).
+  it("asks nothing about the media source until something is uploaded", () => {
+    for (const slug of READS_MEDIA_ASSETS) {
       const html = markup(slug);
-      expect(html, slug).toContain(`id="media-source-${slug}"`);
-      expect(html, slug).toContain("Only media uploaded for this job");
+      expect(html, slug).toContain("Media for this run");
+      expect(html, slug).not.toContain("Use only my media");
     }
     for (const slug of DOES_NOT) {
-      expect(markup(slug), slug).not.toContain("media-source-");
+      expect(markup(slug), slug).not.toContain("Media for this run");
     }
+  });
+
+  it("offers the only-my-media switch, off, once media is attached, on every media agent but X", () => {
+    const attached = [{ uri: "gs://bucket/a.png", role: "source" as const, contentType: "image/png" }];
+    const block = (slug: string, source: "system" | "client", attachments = attached) =>
+      renderToStaticMarkup(
+        <RunMediaBlock
+          clientId="c1"
+          engineProductId={slug}
+          attachments={attachments}
+          onAttachmentsChange={() => {}}
+          mediaSource={source}
+          onMediaSourceChange={() => {}}
+        />,
+      );
+    for (const slug of READS_MEDIA_ASSETS.filter((s) => s !== "x-agent")) {
+      const off = block(slug, "system");
+      expect(off, slug).toContain("Use only my media");
+      expect(off, slug).toContain('aria-checked="false"');
+      expect(off, slug).toContain(MEDIA_SOURCE_AUTO_WITH_UPLOADS);
+      const on = block(slug, "client");
+      expect(on, slug).toContain('aria-checked="true"');
+      expect(on, slug).toContain(mediaSourceHint(slug, "client"));
+    }
+    expect(block("x-agent", "system")).not.toContain("Use only my media");
+    // With nothing attached a stored "on" is not honoured: no switch, and the
+    // sentence is the default one.
+    const empty = block("instagram-agent", "client", []);
+    expect(empty).not.toContain("Use only my media");
+    expect(empty).toContain(mediaSourceHint("instagram-agent", "system"));
   });
 
   /**

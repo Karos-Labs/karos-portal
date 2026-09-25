@@ -397,26 +397,10 @@ describe("the detail modal's panel over a stored publishError", () => {
  * is named rather than assumed — and re-checked below, because an allowlist
  * entry that stops being true would silently permit the next one.
  */
-const HARDCODED_VIEWER_MOUNTS = new Map([
-  [
-    "components/client-agents/outputs-hub.tsx",
-    {
-      /** Only mounted by the Control Room… */
-      via: "components/client-agents/control-room.tsx",
-      /**
-       * …which the agent detail page mounts behind this gate.
-       *
-       * The gate now opens the shared staff frame rather than the ControlRoom
-       * directly (parity pass 2026-09): staff extras on a client page have to
-       * be marked as staff extras, and StaffOnlySection is that one marker. The
-       * gate itself is unchanged — `isStaff &&`, evaluated on the server — so
-       * this still asserts the property it always did, one element out.
-       */
-      gatedIn: "app/(app)/clients/[id]/agents/[agentId]/page.tsx",
-      gate: '{isStaff && ( <StaffOnlySection label="Staff only · control room"> <ControlRoom',
-    },
-  ],
-]);
+// Empty since 2026-09-25: its one entry was the Control Room's outputs hub,
+// deleted with the Control Room. The machinery stays so the next hard-coded
+// viewer has to name what backs it.
+const HARDCODED_VIEWER_MOUNTS = new Map<string, { via: string; viaMount: string; gatedIn: string; gate: string }>();
 
 const MODAL_MOUNT_FILES = [
   "components/archive-view.tsx",
@@ -434,7 +418,6 @@ const MODAL_MOUNT_FILES = [
   // same asset, same viewer flag; the set is already client-redacted by the
   // page before it crosses.
   "components/home-calendar-preview.tsx",
-  "components/client-agents/outputs-hub.tsx",
   "components/run-calendar.tsx",
 ];
 
@@ -477,7 +460,7 @@ describe("every surface that opens the detail modal", () => {
         /viewerIsClient=\{false\}/,
       );
       // …and still reachable only through a staff gate.
-      expect(flat(code(src(backing.via)))).toContain("<OutputsHub");
+      expect(flat(code(src(backing.via)))).toContain(backing.viaMount);
       expect(flat(code(src(backing.gatedIn))), `${backing.gatedIn} no longer gates it on staff`).toContain(
         backing.gate,
       );

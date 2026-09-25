@@ -231,7 +231,9 @@ describe("what the dialog actually renders for a client on the legacy path", () 
     const markup = dialogMarkup({ [CLIENT.id]: { [ROUTABLE_KEY]: ROUTABLE_PRODUCT } });
     expect(markup).toContain("Direction for this run");
     expect(markup).toContain("Media for this run");
-    expect(markup).toContain("Only media I upload for this job");
+    // 2026-09-25: nothing is uploaded yet, so there is nothing to be exclusive
+    // about. The "Use only my media" switch appears only with media in hand.
+    expect(markup).not.toContain("Use only my media");
   });
 
   it("paints NEITHER for a pair that does not dispatch — the T-B5 bug, at its second call site", () => {

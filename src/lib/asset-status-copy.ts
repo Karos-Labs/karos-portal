@@ -60,7 +60,8 @@
  * instead of looking a label up. There were five. Four now ask an accessor —
  * components/client-home-overview.tsx's Recent activity badge,
  * components/asset-detail-modal.tsx's status badge, components/asset-card.tsx and
- * components/client-agents/outputs-hub.tsx — and the fifth,
+ * components/client-agents/outputs-hub.tsx (deleted with the Control Room,
+ * 2026-09-25) — and the fifth,
  * components/client-agents/clip-gallery.tsx, renders it inside its own
  * `!viewerIsClient &&` branch, which no client evaluates.
  *
@@ -74,7 +75,7 @@
  * inventing one. Both are staff-only, each by its own mechanism — asset-card's two
  * mounts sit behind staff routes (app/(app)/jobs/[id] requires
  * KAROS_ADMIN/EMPLOYEE; assets-view's pages redirect a CLIENT_USER away), while
- * outputs-hub's only mount is the Control Room, which the agent page wraps in
+ * outputs-hub's only mount was the Control Room, which the agent page wrapped in
  * `isStaff &&`.
  *
  * That is not a claim that NO raw status render exists in src/. It is

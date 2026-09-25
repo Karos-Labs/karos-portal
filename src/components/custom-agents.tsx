@@ -74,6 +74,7 @@ import {
   MEDIA_ASSETS_FIELD_KEY,
   MEDIA_SOURCE_DEFAULT,
   MEDIA_SOURCE_FIELD_KEY,
+  effectiveMediaSource,
   BLOG_SETUP_REQUIRED_PREFIX,
   LINKEDIN_SETUP_REQUIRED_PREFIX,
   NEWSLETTER_SETUP_REQUIRED_PREFIX,
@@ -88,6 +89,7 @@ import {
   type EngineDispatchMap,
 } from "@/lib/agent-engine/engine-dispatch-map";
 import { RunAttachments } from "@/components/agents/run-attachments";
+import { RunMediaBlock } from "@/components/agents/run-media-block";
 import type { ContextItem, CustomAgent, JobRunType, JobStatus } from "@/lib/types";
 import { cn, formatDate, relativeTime } from "@/lib/utils";
 
@@ -1903,7 +1905,10 @@ export function RunCustomAgentModal({
   const moreFields = visibleFields.filter(
     (field) => field !== primaryField && !STAFF_ONLY_FIELD_KEYS.has(field.key) && !MEDIA_FIELD_KEYS.has(field.key),
   );
-  const mediaSource = isMediaSource(fields[MEDIA_SOURCE_FIELD_KEY]) ? fields[MEDIA_SOURCE_FIELD_KEY] as "system" | "client" : MEDIA_SOURCE_DEFAULT;
+  const mediaSource = effectiveMediaSource(
+    isMediaSource(fields[MEDIA_SOURCE_FIELD_KEY]) ? (fields[MEDIA_SOURCE_FIELD_KEY] as "system" | "client") : MEDIA_SOURCE_DEFAULT,
+    parseRunAttachmentsJson(fields[MEDIA_ASSETS_FIELD_KEY]).length,
+  );
   /* The defaults line: "Instagram + TikTok · 1 post · Produce content now".
      Selects print their chosen option's LABEL and numbers print the output noun,
      because "3" beside "Number of posts" is a form and "3 posts" is a sentence.
@@ -2092,7 +2097,7 @@ export function RunCustomAgentModal({
       clientOnlyMediaIsRequired(engineProductId) &&
       parseRunAttachmentsJson(fields[MEDIA_ASSETS_FIELD_KEY]).length === 0
     ) {
-      setError("Attach the media this run should use, or switch \"Media for this run\" back to letting Karos source the visuals.");
+      setError("Attach the media this run should use, or turn off \"Use only my media\".");
       return;
     }
     const attachments = profile.attachments;
@@ -2578,14 +2583,19 @@ export function RunCustomAgentModal({
             the placeholder already shows what an answer looks like. */}
         <div>{briefFieldControl(primaryField)}</div>
 
-        {/* MEDIA, for the agents that make or carry it: where the visuals come
-            from, then the files. One bordered block so the two controls read as
-            one decision, and the sentence under the attach button changes with
-            the choice above it. */}
-        {mediaFields.length > 0 && (
-          <div className="space-y-3 rounded-lg border border-border bg-surface-1 p-3">
-            {mediaFields.map((field) => briefFieldControl(field))}
-          </div>
+        {/* MEDIA, for the agents that make or carry it (RunMediaBlock): the
+            files first, and a "Use only my media" switch only once there are
+            some. Nothing uploaded means the agent brings its own. */}
+        {mediaFields.some((field) => field.key === MEDIA_ASSETS_FIELD_KEY) && (
+          <RunMediaBlock
+            clientId={selectedClientId}
+            engineProductId={engineProductId}
+            attachments={parseRunAttachmentsJson(fields[MEDIA_ASSETS_FIELD_KEY])}
+            onAttachmentsChange={(next) => setField(MEDIA_ASSETS_FIELD_KEY, next.length > 0 ? JSON.stringify(next) : "")}
+            mediaSource={mediaSource}
+            onMediaSourceChange={(next) => setField(MEDIA_SOURCE_FIELD_KEY, next)}
+            disabled={pending}
+          />
         )}
 
         {/* ONE ROW under the question (2026-09-10, "reduce the number of

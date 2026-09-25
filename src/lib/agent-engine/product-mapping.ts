@@ -734,8 +734,14 @@ export function toEngineRunInput(
   // Where a media agent's visuals come from (custom-agent-launch.ts's
   // MEDIA_SOURCE_FIELD_KEY). Only the two legal values travel; anything else
   // is omitted so the engine applies its own default rather than a guess.
+  // "Only my media" with no media is read as the default (2026-09-25, owner:
+  // nothing uploaded means the agent brings its own), the same rule the form
+  // applies (`effectiveMediaSource`), for a brief saved before the switch or
+  // sent by a schedule.
   const mediaSource = at("media_source");
-  if (mediaSource === "system" || mediaSource === "client") input.mediaSource = mediaSource;
+  if (mediaSource === "system" || mediaSource === "client") {
+    input.mediaSource = mediaSource === "client" && mediaAssets.length === 0 ? "system" : mediaSource;
+  }
 
   for (const [dialogKey, label] of FOLDED_INTO_CUSTOM_PROMPT) {
     const value = at(dialogKey);

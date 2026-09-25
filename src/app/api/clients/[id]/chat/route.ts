@@ -1138,7 +1138,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
    * NULL when this viewer has no screen that holds this output.
    *
    * Staff get the exact per-job route (`/jobs/{id}`) when one exists, or the
-   * agent page with `?asset=` (OutputsHub auto-opens the modal from it), or the
+   * agent page with `?asset=` (its "What it has made" list opens the modal), or the
    * client-scoped Assets list — three returns, none of them null, and none of
    * them filtered by anything a staff account cannot see. Only a client can be
    * told there is nowhere to go.

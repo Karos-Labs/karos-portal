@@ -138,8 +138,8 @@ describe("clientOnlyMediaIsRequired — who has a text fallback", () => {
     }
     expect(mediaSourceHint("linkedin-agent", "system")).toMatch(/sources one/);
     expect(mediaSourceHint("instagram-agent", "client")).toMatch(/Nothing is sourced or generated/);
-    expect(mediaSourceHint("instagram-agent", "system")).toMatch(/sourced or generated as usual/);
-    expect(mediaSourceHint("tiktok-agent", "client")).toMatch(/Nothing else is harvested or generated/);
+    expect(mediaSourceHint("instagram-agent", "system")).toMatch(/finds or makes the pictures/);
+    expect(mediaSourceHint("tiktok-agent", "client")).toMatch(/Nothing else is found or generated/);
   });
 
   /**
