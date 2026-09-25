@@ -97,7 +97,7 @@ type ClientResult = {
 };
 
 export async function GET(req: NextRequest) {
-  const denied = requireCronSecret(req);
+  const denied = await requireCronSecret(req);
   if (denied) return denied;
 
   const dryRun = new URL(req.url).searchParams.get("dryRun") === "1";

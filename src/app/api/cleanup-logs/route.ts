@@ -25,7 +25,7 @@ async function purgeBefore(collectionName: string, cutoff: number): Promise<numb
 }
 
 export async function GET(req: Request) {
-  const denied = requireCronSecret(req);
+  const denied = await requireCronSecret(req);
   if (denied) return denied;
 
   const cutoff = Date.now() - RETENTION_MS;

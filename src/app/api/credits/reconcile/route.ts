@@ -44,7 +44,7 @@ export const maxDuration = 60;
 const STALE_AFTER_MS = 30 * 60 * 1000;
 
 export async function GET(req: NextRequest) {
-  const denied = requireCronSecret(req);
+  const denied = await requireCronSecret(req);
   if (denied) return denied;
 
   const staleBefore = Date.now() - STALE_AFTER_MS;

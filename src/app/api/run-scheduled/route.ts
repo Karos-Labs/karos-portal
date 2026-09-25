@@ -130,7 +130,7 @@ export async function GET(req: NextRequest) {
   // Fails closed in production when CRON_SECRET is unset — this route used to
   // hand-roll its own check that only enforced the header when the secret
   // happened to be set, i.e. failed OPEN if it was ever misconfigured/unset.
-  const unauthorized = requireCronSecret(req);
+  const unauthorized = await requireCronSecret(req);
   if (unauthorized) return unauthorized;
 
   const now = Date.now();

@@ -59,7 +59,7 @@ type SyncResult = {
 };
 
 export async function GET(req: NextRequest) {
-  const denied = requireCronSecret(req);
+  const denied = await requireCronSecret(req);
   if (denied) return denied;
 
   const now = Date.now();

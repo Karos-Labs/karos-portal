@@ -61,7 +61,7 @@ export const maxDuration = 300;
  * drifted.
  */
 export async function GET(req: NextRequest) {
-  const denied = requireCronSecret(req);
+  const denied = await requireCronSecret(req);
   if (denied) return denied;
 
   const apply = req.nextUrl.searchParams.get("apply") === "1";

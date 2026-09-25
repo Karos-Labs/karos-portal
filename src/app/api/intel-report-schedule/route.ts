@@ -35,7 +35,7 @@ export const maxDuration = 300;
  * expensive operation in the product.
  */
 export async function GET(req: NextRequest) {
-  const unauthorized = requireCronSecret(req);
+  const unauthorized = await requireCronSecret(req);
   if (unauthorized) return unauthorized;
 
   const now = Date.now();

@@ -51,12 +51,20 @@
  *
  * ## Creating one
  *
+ * With OIDC (SCRUM-513), so the job's configuration holds no secret. The
+ * service account must be listed in the service's CRON_OIDC_SERVICE_ACCOUNTS,
+ * which the deploy sets to the runtime service account:
+ *
  *     gcloud scheduler jobs create http <name> \
  *       --project=karoscmo --location=europe-west1 \
  *       --schedule="<productionSchedule>" --http-method=GET \
- *       --uri="https://app.karoslabs.com<path>" \
- *       --headers="Authorization=Bearer $(gcloud secrets versions access latest \
- *           --secret=CRON_SECRET --project=karoscmo)"
+ *       --uri="https://app.karoslabs.com/api/<path>" \
+ *       --oidc-service-account-email=karos-cmo-sa@karoscmo.iam.gserviceaccount.com \
+ *       --oidc-token-audience="https://app.karoslabs.com"
+ *
+ * The old shape, a literal `Authorization: Bearer <CRON_SECRET>` header, is
+ * still accepted so existing jobs keep working while they are moved, but it
+ * puts the secret in the job's readable configuration. Do not create new ones.
  */
 
 export interface CronRoute {

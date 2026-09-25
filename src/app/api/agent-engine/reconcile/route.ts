@@ -39,7 +39,7 @@ export const maxDuration = 60;
  * `review`), so nothing is synced twice in a tick.
  */
 export async function GET(req: NextRequest) {
-  const denied = requireCronSecret(req);
+  const denied = await requireCronSecret(req);
   if (denied) return denied;
 
   const inFlight = await listInFlightAgentEngineJobs();

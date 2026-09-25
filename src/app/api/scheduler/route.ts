@@ -43,7 +43,7 @@ const MAX_ERROR_CHARS = 400;
 export async function GET(req: NextRequest) {
   // Auth: Cloud Scheduler sends the shared CRON_SECRET (Bearer or X-Cron-Secret);
   // fails closed in production when the secret is unset. See lib/cron-auth.ts.
-  const unauthorized = requireCronSecret(req);
+  const unauthorized = await requireCronSecret(req);
   if (unauthorized) return unauthorized;
 
   const now = Date.now();
