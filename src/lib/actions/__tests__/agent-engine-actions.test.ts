@@ -29,6 +29,11 @@ vi.mock("@/lib/agent-engine/client", () => ({
   AgentEngineCredentialError: class FakeAgentEngineCredentialError extends Error {},
 }));
 
+const recordGateDecisionMock = vi.fn();
+vi.mock("@/lib/agent-engine/learning-feedback", () => ({
+  recordGateDecisionToLearning: (...args: unknown[]) => recordGateDecisionMock(...args),
+}));
+
 import { resolveAgentEngineGateAction } from "../agent-engine-actions";
 
 const STAFF_USER = { uid: "u-staff", email: "staff@karoslabs.test", name: "Staff User", role: "KAROS_EMPLOYEE" } as any;
@@ -40,6 +45,7 @@ beforeEach(() => {
   requireStaffMock.mockReset().mockResolvedValue(STAFF_USER);
   (data.getJob as any).mockReset().mockResolvedValue(JOB);
   resolveAgentEngineGateMock.mockReset().mockResolvedValue({ runId: "run_1", status: "running" });
+  recordGateDecisionMock.mockReset().mockResolvedValue(undefined);
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -116,5 +122,33 @@ describe("resolveAgentEngineGateAction — style edits reach the engine on both 
 
     const [, , resolution] = resolveAgentEngineGateMock.mock.calls[0];
     expect(resolution.edits).toEqual({ caption: "final caption" });
+  });
+});
+
+describe("resolveAgentEngineGateAction — the reviewer's words reach the learning loop", () => {
+  const LOOP_JOB = { id: "job1", agentEngineRunId: "run_1", agentEngineProductId: "tiktok-clipping-agent", clientId: "c1" } as any;
+
+  it("records the decision and the note once the engine has accepted it, without the rating", async () => {
+    (data.getJob as any).mockResolvedValue(LOOP_JOB);
+    const res = await resolveAgentEngineGateAction("job1", "11-clip-review-r0", { decision: "revise", notes: "Lead with the disagreement.", rating: 2 });
+    expect(res).toEqual({});
+    expect(recordGateDecisionMock).toHaveBeenCalledTimes(1);
+    expect(recordGateDecisionMock.mock.calls[0]![0]).toEqual({
+      clientId: "c1",
+      productId: "tiktok-clipping-agent",
+      runId: "run_1",
+      gateId: "11-clip-review-r0",
+      decision: "revise",
+      notes: "Lead with the disagreement.",
+      actor: "Staff User",
+    });
+  });
+
+  it("records nothing when the engine refused the decision", async () => {
+    (data.getJob as any).mockResolvedValue(LOOP_JOB);
+    resolveAgentEngineGateMock.mockRejectedValueOnce(new Error("boom"));
+    const res = await resolveAgentEngineGateAction("job1", "11-clip-review-r0", { decision: "revise", notes: "x" });
+    expect(res.error).toBeDefined();
+    expect(recordGateDecisionMock).not.toHaveBeenCalled();
   });
 });

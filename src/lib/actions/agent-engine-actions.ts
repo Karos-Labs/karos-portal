@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { creditClientCredits, getJob } from "@/lib/data";
 import { AgentEngineCredentialError, resolveAgentEngineGate, type AgentEngineRequestError } from "@/lib/agent-engine/client";
 import type { AgentEngineReviewEdits, AgentEngineTemplateFeedback } from "@/lib/agent-engine/types";
+import { recordGateDecisionToLearning } from "@/lib/agent-engine/learning-feedback";
 import { requireStaff } from "./_shared";
 
 const NOT_FOUND = "This run could not be found.";
@@ -214,6 +215,22 @@ export async function resolveAgentEngineGateAction(
     }
     return { error: e instanceof Error ? e.message : "Failed to resolve the gate." };
   }
+
+  // ── WHAT THE REVIEWER SAID, INTO THE LEARNING LOOP. ──
+  //
+  // After the `try` for the same reason as the credit below: only a decision
+  // the engine actually recorded is a fact about this draft. The rating is
+  // deliberately NOT sent: it is the calibration label (RFC-22), not a lesson
+  // a draft can act on.
+  await recordGateDecisionToLearning({
+    clientId: job.clientId,
+    productId: job.agentEngineProductId,
+    runId: job.agentEngineRunId,
+    gateId,
+    decision,
+    notes,
+    actor: user.name,
+  });
 
   // ── THE CREDIT, PAID ONLY AFTER THE DECISION ACTUALLY LANDED. ──
   //

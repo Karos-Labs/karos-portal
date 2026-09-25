@@ -285,3 +285,58 @@ export async function bridgeDraftFeedbackToLearning(input: {
     console.error(`[agent-engine] bridging draft feedback to the learning loop failed:`, e);
   }
 }
+
+/**
+ * A reviewer's words at the ENGINE's review gate, into the loop (all engine
+ * platforms; the only review surface Instagram, TikTok and branded-shorts
+ * have).
+ *
+ * Until this, the drafts pages of X, LinkedIn and Reddit were the only doors
+ * that wrote a reason to `client_feedback_log`. A note typed at the gate
+ * steered that run's redraft and, on three of the six publishing agents,
+ * nothing after it: the next run's `clientFeedback` was empty and nothing was
+ * derived from it. Mapped onto the loop's own vocabulary:
+ *
+ * - `revise` → `change_requested`: the reviewer said what the draft should
+ *   have been. The middleware derives it into a standing voice lesson.
+ * - `reject` → `skipped`: the reason a draft was not used. A reason given
+ *   twice becomes a lesson (`MIN_SKIPS_FOR_REASON`).
+ * - `approve` with a note → `note`: the schema's own words for it are "an
+ *   approving reviewer with a preference worth remembering".
+ *
+ * `sourceId` is the run, the gate (which carries its round, `-r0`, `-r1`) and
+ * the action, so a double click or a retried action appends ONE row and two
+ * rounds of the same run append two. Best-effort and never throwing, like
+ * every other call here: the decision has already reached the engine.
+ */
+export async function recordGateDecisionToLearning(input: {
+  clientId: string | undefined;
+  productId: string | undefined;
+  runId: string;
+  gateId: string;
+  decision: "approve" | "revise" | "reject";
+  notes: string | undefined;
+  actor?: string;
+}): Promise<void> {
+  try {
+    const reason = input.notes?.trim();
+    if (!reason || !input.clientId) return;
+    const platform = learningPlatformForProduct(input.productId);
+    if (!platform) return;
+    const { getClient } = await import("@/lib/data");
+    const client = await getClient(input.clientId);
+    if (!client?.agentsRepoSlug) return;
+
+    const action: LearningFeedbackAction =
+      input.decision === "revise" ? "change_requested" : input.decision === "reject" ? "skipped" : "note";
+    await postLearningFeedback(client, platform, {
+      action,
+      runId: input.runId,
+      reason,
+      ...(input.actor ? { actor: input.actor } : {}),
+      sourceId: `${input.runId}:${input.gateId}:${action}`,
+    });
+  } catch (e) {
+    console.error(`[agent-engine] recording the gate decision in the learning loop failed:`, e);
+  }
+}
