@@ -307,8 +307,8 @@ const ENGINE_ROUTED_DIALOGS: ReadonlyArray<{
   { key: "karos-linkedin-setup-v2", name: "LinkedIn Setup", productId: "linkedin-agent", visibleFields: ["li_identity", "request", "customPrompt", "media_source", "mediaAssets"] },
   { key: "karos-reddit-runner", name: "Reddit Runner", productId: "reddit-agent", visibleFields: ["request"] },
   { key: "karos-reddit-setup", name: "Reddit Setup", productId: "reddit-agent", visibleFields: ["request", "audience", "success_criteria", "customPrompt"] },
-  { key: "karos-instagram-agent", name: "Instagram Agent", productId: "instagram-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "instagram_post_type", "product_photo", "product_name", "batch_size", "audience", "must_include", "customPrompt", "media_source", "mediaAssets"] },
-  { key: "karos-tiktok-agent", name: "TikTok Agent", productId: "tiktok-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "instagram_post_type", "product_photo", "product_name", "batch_size", "audience", "must_include", "customPrompt", "media_source", "mediaAssets"] },
+  { key: "karos-instagram-agent", name: "Instagram Agent", productId: "instagram-agent", visibleFields: ["run_mode", "request", "platform", "instagram_post_type", "product_photo", "product_name", "batch_size", "audience", "must_include", "customPrompt", "media_source", "mediaAssets"] },
+  { key: "karos-tiktok-agent", name: "TikTok Agent", productId: "tiktok-agent", visibleFields: ["run_mode", "request", "platform", "instagram_post_type", "product_photo", "product_name", "batch_size", "audience", "must_include", "customPrompt", "media_source", "mediaAssets"] },
   { key: "branded-shorts", name: "Branded Shorts", productId: "branded-shorts-agent", visibleFields: ["request", "source_url", "platform", "duration", "cta", "editing_notes", "customPrompt", "media_source", "mediaAssets"] },
   { key: "landing-builder", name: "Landing Page Builder", productId: "landing-builder-agent", visibleFields: ["request", "offer", "audience", "cta", "proof", "references", "customPrompt"] },
   { key: "karos-blog-writer-v2", name: "Blog Writer", productId: "blog-agent", visibleFields: ["run_mode", "request", "audience", "keywords", "point_of_view", "sources", "customPrompt"] },
@@ -629,16 +629,38 @@ describe("page/server engineProductId consistency (C3 mandatory fix #2)", () => 
 describe("the Instagram post type (2026-09-23)", () => {
   it("translates each option into the engine keys instagram-agent reads", () => {
     expect(instagramPostTypeInput("news_flash")).toEqual({ requestedMode: "news_flash", requestedFormat: "single" });
-    expect(instagramPostTypeInput("photo_first")).toEqual({ pictureDensity: "photo-first" });
+    expect(instagramPostTypeInput("photo_first")).toEqual({ pictureDensity: "photo-first", requestedFormat: "carousel" });
     for (const series of ["the_list", "by_the_numbers", "head_to_head", "the_breakdown"]) {
-      expect(instagramPostTypeInput(series)).toEqual({ requestedSeries: series });
+      expect(instagramPostTypeInput(series)).toEqual({ requestedSeries: series, requestedFormat: "carousel" });
     }
+    expect(instagramPostTypeInput("carousel")).toEqual({ requestedFormat: "carousel" });
+    expect(instagramPostTypeInput("single")).toEqual({ requestedFormat: "single" });
     expect(instagramPostTypeInput("")).toEqual({});
     expect(instagramPostTypeInput("reels")).toEqual({});
   });
 
-  it("a news flash wins over the format select's carousel default, and Auto sends nothing", () => {
+  it("a brief saved with the old format select still means what it meant, and the post type wins over it", () => {
     expect(toEngineRunInput({ requestedFormat: "carousel", instagram_post_type: "news_flash" }, "instagram-agent")).toMatchObject({ requestedFormat: "single", requestedMode: "news_flash" });
-    expect(toEngineRunInput({ requestedFormat: "carousel", instagram_post_type: "" }, "instagram-agent")).toEqual({ requestedFormat: "carousel" });
+    expect(toEngineRunInput({ requestedFormat: "single", instagram_post_type: "the_list" }, "instagram-agent")).toMatchObject({ requestedFormat: "carousel", requestedSeries: "the_list" });
+    expect(toEngineRunInput({ requestedFormat: "auto", instagram_post_type: "" }, "instagram-agent")).toEqual({ requestedFormat: "auto" });
+  });
+
+  // 2026-09-25: the owner ruled "Instagram format" and "Instagram post type"
+  // the same question asked twice. One select now, and its Auto overrides
+  // nothing — the old format select sent "carousel" on every default run,
+  // over the client's standing format and its learned preference.
+  it("the dialog asks one Instagram question, and its default sends no format", () => {
+    const fields = launchProfileFor({ key: "karos-instagram-agent", name: "Instagram Agent" }).fields;
+    expect(fields.some((f) => f.key === "requestedFormat")).toBe(false);
+    const postType = fields.find((f) => f.key === "instagram_post_type");
+    expect(postType?.label).toBe("Instagram post type");
+    expect(postType?.defaultValue).toBe("");
+    expect(postType?.options?.map((o) => o.value)).toEqual([
+      "", "carousel", "photo_first", "the_list", "by_the_numbers", "head_to_head", "the_breakdown", "product_campaign", "single", "news_flash",
+    ]);
+    for (const option of postType?.options ?? []) {
+      if (option.value) expect(Object.keys(instagramPostTypeInput(option.value)), option.value).toContain("requestedFormat");
+    }
+    expect(toEngineRunInput({ instagram_post_type: "" }, "instagram-agent")).toEqual({});
   });
 });
