@@ -116,12 +116,14 @@ describe("one module owns each origin", () => {
     expect((body(path.join(SRC, "lib/jobs/submit-custom.ts")).match(/webhookCallbackOrigin\(\)/g) ?? []).length).toBe(2);
   });
 
-  it("has all five link-base sites delegating", () => {
+  it("has all six link-base sites delegating", () => {
+    // Six since SCRUM-513: the cron gate's OIDC audience is the app's origin.
     const callers = FILES.filter((f) => /\bappLinkBase\b/.test(body(f))).map(rel);
     expect(callers.sort()).toEqual([
       "app/api/daily-digest/route.ts",
       "lib/actions/user-actions.ts",
       "lib/app-origin.ts",
+      "lib/cron-auth.ts",
       "lib/integrations/jira.ts",
       "lib/integrations/oauth.ts",
       "lib/job-alerts.ts",

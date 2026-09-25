@@ -29,7 +29,7 @@ export const maxDuration = 60;
 const STALE_AFTER_MS = 20 * 60 * 1000;
 
 export async function GET(req: NextRequest) {
-  const denied = requireCronSecret(req);
+  const denied = await requireCronSecret(req);
   if (denied) return denied;
   if (!isAgentServiceConfigured()) {
     return NextResponse.json({ skipped: true, reason: "agent service not configured" });

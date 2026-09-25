@@ -567,7 +567,7 @@ describe("the sweep under the loosenings it forbids", () => {
     const target = file("app/api/intel-report-schedule/route.ts");
     const original = readSource(target);
     const planted = original.replace(
-      /const unauthorized = requireCronSecret\(req\);\s*\n\s*if \(unauthorized\) return unauthorized;/,
+      /const unauthorized = await requireCronSecret\(req\);\s*\n\s*if \(unauthorized\) return unauthorized;/,
       "",
     );
     expect(planted, "the cron gate's shape changed — re-aim this plant").not.toBe(original);

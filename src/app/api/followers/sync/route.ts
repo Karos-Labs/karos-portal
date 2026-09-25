@@ -149,7 +149,7 @@ async function followerCountFor(integration: ClientIntegration): Promise<number 
 const FOLLOWER_PLATFORMS = new Set(["twitter", "instagram", "linkedin_community"]);
 
 export async function GET(req: NextRequest) {
-  const denied = requireCronSecret(req);
+  const denied = await requireCronSecret(req);
   if (denied) return denied;
 
   const capturedAt = followerCaptureDay(Date.now());
