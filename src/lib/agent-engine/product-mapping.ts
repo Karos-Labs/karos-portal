@@ -272,6 +272,26 @@ export function resolveAgentEngineProductIdForCustomAgent(agentKey: string): str
 }
 
 /**
+ * The ONE custom agent whose page owns an engine run that names only its
+ * product: a job with `agentEngineProductId` and no `customAgentId`.
+ *
+ * Those are most of the engine's history. Audited 2026-09-25 in prep: 129 of
+ * Karos Labs' 166 jobs, all 23 of Geektime's, carried a product
+ * ("instagram-agent") and a managed-task name ("Instagram Post / Carousel
+ * Creator") but no agent id, so no agent page listed them or what they made.
+ *
+ * Where two keys share a product (a setup key and its drafting parent, above),
+ * the drafting agent owns the runs: the setup is a pre-flight of that same
+ * workflow, and one run must not appear on two pages.
+ */
+export function customAgentKeyOwningEngineProduct(productId: string): string | undefined {
+  const keys = Object.keys(ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY).filter(
+    (key) => ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY[key] === productId,
+  );
+  return keys.find((key) => !key.includes("setup")) ?? keys[0];
+}
+
+/**
  * Which `runKind` a dispatch to this product should carry.
  *
  * `"recurring"` for everything, with one exception that is not cosmetic:

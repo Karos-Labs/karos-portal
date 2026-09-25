@@ -17,6 +17,7 @@ const { jobDeliveredWork } = await import("@/lib/client-agents");
 
 const {
   agentProducedAssets,
+  jobBelongsToAgent,
   ownRunsFirst,
   agentsWithDeliveredWork,
   agentsWithUpcomingContent,
@@ -129,6 +130,34 @@ describe("agentProducedAssets", () => {
       now: NOW,
     });
     expect(out.map((a) => a.id)).toEqual(["mine"]);
+  });
+
+  // Owner, 2026-09-25: "I don't see the agent's jobs and outputs". Most engine
+  // runs carry a product and no agent id (dispatched as a managed task named
+  // "Instagram Post / Carousel Creator"), and no page claimed them.
+  it("lists an engine run that names only its product under the agent that owns the product", () => {
+    const ig = { id: "ca-ig", name: "Instagram Agent", key: "karos-instagram-agent" };
+    const job = makeJob({ id: "j-eng", agentId: "agent-engine", agentName: "Instagram Post / Carousel Creator", agentEngineProductId: "instagram-agent" });
+    delete (job as Partial<Job>).customAgentId;
+    const post = makeAsset({ id: "eng-post", jobId: "j-eng", status: "draft" });
+
+    const out = agentProducedAssets({ assets: [post], jobs: [job], agent: ig, umbrella: null, umbrellas: [], viewerIsClient: false, now: NOW });
+    expect(out.map((a) => a.id)).toEqual(["eng-post"]);
+    // And no other agent's page: X does not own instagram-agent's runs.
+    expect(jobBelongsToAgent(job, { id: "ca-x", name: "X Agent", key: "karos-x-agent-v2" })).toBe(false);
+  });
+
+  it("gives a shared product's runs to the drafting agent, never also to its setup twin", () => {
+    const job = makeJob({ id: "j-li", agentId: "agent-engine", agentName: "LinkedIn Thought Leadership Writer", agentEngineProductId: "linkedin-agent" });
+    delete (job as Partial<Job>).customAgentId;
+    expect(jobBelongsToAgent(job, { id: "w", name: "LinkedIn Agent", key: "karos-linkedin-writer-v2" })).toBe(true);
+    expect(jobBelongsToAgent(job, { id: "s", name: "LinkedIn Setup", key: "karos-linkedin-setup-v2" })).toBe(false);
+  });
+
+  it("lets an agent id outrank the product, so a bound run never moves pages", () => {
+    const job = makeJob({ id: "j-bound", customAgentId: "ca-setup", agentEngineProductId: "linkedin-agent" });
+    expect(jobBelongsToAgent(job, { id: "ca-setup", name: "LinkedIn Setup", key: "karos-linkedin-setup-v2" })).toBe(true);
+    expect(jobBelongsToAgent(job, { id: "w", name: "LinkedIn Agent", key: "karos-linkedin-writer-v2" })).toBe(false);
   });
 
   // Owner, 2026-09-25: "own runs first, then imports". A client's stamp is the
@@ -1364,7 +1393,7 @@ describe("wiring", () => {
     // toRunRows only fills `prompt`/`href` for staff. Since the Control Room
     // went (2026-09-25) the page builds ONLY the client-safe rows, for both
     // readers, so there is no staff copy left to leak.
-    expect(src).toContain("toRunRows(jobs, false, umbrellas)");
+    expect(src).toContain("toRunRows(jobs, false, umbrellas,");
     expect(src).not.toContain("toRunRows(jobs, true");
   });
 

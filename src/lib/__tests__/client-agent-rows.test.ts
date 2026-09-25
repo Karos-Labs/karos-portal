@@ -483,6 +483,19 @@ function expectClientFieldsSubsetOfStaff<T extends { id: string }>(
 /* ═══════════════════════════════ toRunRows ═══════════════════════════ */
 
 describe("toRunRows — the run-history projection", () => {
+  // 2026-09-25: the agent page's run history was empty or short because the
+  // agent filter ran AFTER the client-wide cap of eight, and engine runs were
+  // dropped by the agent-service filter.
+  it("scoped to one agent, picks its runs before the cap and keeps engine runs", () => {
+    const others = Array.from({ length: 10 }, (_, i) => job({ id: `other_${i}`, customAgentId: "ca-other", createdAt: NOW - i }));
+    const mine = job({ id: "mine", customAgentId: "ca-mine", agentId: "agent-engine", external: undefined, createdAt: NOW - 5_000 });
+    const rows = toRunRows([...others, mine], false, [], { belongs: (j) => j.customAgentId === "ca-mine", limit: 50 });
+    expect(rows.map((r) => r.id)).toEqual(["mine"]);
+    // Unscoped, the roster's rows are unchanged: agent-service custom runs, eight.
+    expect(toRunRows([...others, mine], false, []).map((r) => r.id)).toHaveLength(8);
+    expect(toRunRows([...others, mine], false, []).some((r) => r.id === "mine")).toBe(false);
+  });
+
   it("gives a client exactly the declared client-safe keys, and staff those plus the staff-only ones", () => {
     const [clientRow] = toRunRows([job()], false, []);
     expect(keysOf(clientRow)).toEqual(sorted(RUN_ROW_CLIENT_KEYS));

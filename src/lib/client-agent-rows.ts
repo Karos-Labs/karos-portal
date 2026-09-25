@@ -305,19 +305,31 @@ export function toRunRows(
   jobs: Job[],
   staff: boolean,
   umbrellas: ClientAgentIdentity[],
+  /**
+   * ONE agent's runs (the agent detail page): `belongs` picks them BEFORE the
+   * cap, and engine runs count. Without it the rows are the roster's: the
+   * newest eight agent-service custom runs across the client.
+   *
+   * Both halves were why an agent page's run history was empty or short
+   * (owner, 2026-09-25). The page filtered to its agent AFTER the eight were
+   * taken, so an agent whose runs were not among the client's eight newest
+   * showed none; and the agent-service filter dropped every agent-engine run,
+   * which today is nearly every run.
+   */
+  scope?: { belongs: (job: Job) => boolean; limit: number },
 ): CustomAgentRunRow[] {
   return jobs
-    .filter((j) => j.agentId === "agent-service" && j.external?.taskType === "custom")
+    .filter((j) => (scope ? scope.belongs(j) : j.agentId === "agent-service" && j.external?.taskType === "custom"))
     .filter((j) => staff || (j.runType !== "launch" && j.runType !== "test"))
     .sort((a, b) => b.createdAt - a.createdAt)
-    .slice(0, 8)
+    .slice(0, scope?.limit ?? 8)
     .map((j) => ({
       id: j.id,
       agentName: j.agentName,
       label: runRowLabel(j, umbrellas),
       status: j.status,
       createdAt: j.createdAt,
-      assetCount: j.assetIds.length,
+      assetCount: (j.assetIds ?? []).length,
       ...(staff && j.input.prompt ? { prompt: j.input.prompt } : {}),
       ...(staff ? { href: `/jobs/${j.id}` } : {}),
       ...(staff && j.error ? { error: j.error } : {}),
