@@ -75,6 +75,7 @@ import { buildDynamicAgentClientContextFiles } from "@/lib/agent-service/dynamic
 import { buildDynamicAgentHistory } from "@/lib/agent-service/dynamic-agent-history";
 import { hasForbiddenTopics } from "@/lib/dynamic-agent-guardrails";
 import { getClientAgentByKey } from "@/lib/data-client-agents";
+import { standingFeedbackForEngineRun } from "@/lib/agent-engine/standing-feedback";
 import {
   LINKEDIN_SETUP_REQUIRED_PREFIX,
   BLOG_RUN_CREDITS,
@@ -671,7 +672,11 @@ export async function submitCustomAgentJob(
   // storage hiccup must not turn a paid run into a refusal, so the run proceeds
   // without the file rather than failing — unlike the X/LinkedIn intake above,
   // which the agent cannot work at all without.
-  if (input.runType !== "launch") {
+  //
+  // Not on the engine path: it never sends context files, so the upload would
+  // be thrown away. The engine receives the same feedback as the
+  // `standingFeedback` run input instead (see the dispatch below).
+  if (input.runType !== "launch" && !engineProductId) {
     try {
       const umbrella = await getClientAgentByKey(input.clientId, agent.key);
       if (umbrella?.launchState === "live") {
@@ -883,6 +888,11 @@ export async function submitCustomAgentJob(
           requestSteersRun: requestSteersRun(launchProfileFor(agent)),
         }),
         ...engineExtraInputs,
+        // The client's standing feedback about this agent. The legacy path
+        // below attaches it as a context file; the engine never received
+        // context files, so it travels as a run input instead. After the
+        // dialog fields so no brief field can shadow it.
+        ...(await standingFeedbackInput(input.clientId, agent.key, input.runType)),
         // THE ONE FIELD SEQUENCING OWNS (agent-architecture §1.1, SCRUM-468).
         //
         // Last in the spread on purpose: `slotStage` is the calendar's
@@ -1381,4 +1391,10 @@ export async function submitDynamicAgentJob(
     metadata: { jobId, taskType: "custom", agentKey: `dynamic:${spec.id}` },
   });
   return { jobId };
+}
+
+/** `{ standingFeedback }` for the engine's run input, or nothing when there is none to send. */
+async function standingFeedbackInput(clientId: string, agentKey: string, runType: string | undefined): Promise<{ standingFeedback?: string }> {
+  const standingFeedback = await standingFeedbackForEngineRun({ clientId, agentKey, ...(runType !== undefined ? { runType } : {}) });
+  return standingFeedback !== undefined ? { standingFeedback } : {};
 }

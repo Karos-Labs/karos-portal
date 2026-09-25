@@ -64,6 +64,7 @@ const WIRE_KEY_LABELS: Record<string, string> = {
   runScope: "Run scope",
   runMode: "Run mode",
   cta: "Call to action",
+  standingFeedback: "Client's standing feedback",
 };
 
 /** `requestedTopic` -> "Requested topic". A last resort, not a style. */
