@@ -32,6 +32,8 @@ import { BindAgentControl } from "@/components/client-agents/client-agents-secti
 import { StaffOnlySection } from "@/components/staff-only-section";
 import { SubjectTable } from "@/components/subject-table";
 import { StrategyMapPanel } from "@/components/strategy-map-panel";
+import { LearnedLessonsPanel } from "@/components/learned-lessons-panel";
+import { readLearnedLessons } from "@/lib/agent-engine/learning-lessons";
 import { readSubjectRowsByPlatform } from "@/lib/agent-engine/learning-subjects";
 import { readStrategyMapsByPlatform } from "@/lib/agent-engine/learning-strategy-map";
 import { learningPlatformForProduct } from "@/lib/agent-engine/learning-feedback";
@@ -459,6 +461,10 @@ export default async function ClientAgentsPage({
         .filter((platform): platform is NonNullable<typeof platform> => platform !== undefined),
     ),
   ];
+  // SCRUM-508: the voice lessons every draft reads, and the one control over
+  // them. Asked only for a client whose runs have reached the loop, like the
+  // two reads below, and in parallel with them.
+  const learnedLessonsRead = subjectPlatforms.length > 0 ? readLearnedLessons(client) : Promise.resolve(undefined);
   const [subjectsByPlatform, strategyByPlatform] =
     subjectPlatforms.length > 0
       ? await Promise.all([
@@ -471,6 +477,8 @@ export default async function ClientAgentsPage({
           readStrategyMapsByPlatform(client, subjectPlatforms),
         ])
       : [{}, {}];
+
+  const learnedLessons = await learnedLessonsRead;
 
   return (
     <>
@@ -638,6 +646,16 @@ export default async function ClientAgentsPage({
                   still in the pool, then what the client has already had. */}
               <StrategyMapPanel byPlatform={strategyByPlatform} />
               <SubjectTable byPlatform={subjectsByPlatform} />
+            </StaffOnlySection>
+          )}
+          {/* SCRUM-508. Staff only by product decision: a lesson can be a
+              reviewer's internal note or a counted one, and neither is written
+              for a client, whose say over the agent is the standing feedback
+              they already manage. Here because a wrong lesson reaches every
+              draft on every platform until someone retires it. */}
+          {subjectPlatforms.length > 0 && (
+            <StaffOnlySection className="mt-6 sm:mt-8" label="Staff only · what the agents have learned about this client">
+              <LearnedLessonsPanel clientId={id} initial={learnedLessons} />
             </StaffOnlySection>
           )}
         </>
