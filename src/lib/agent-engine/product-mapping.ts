@@ -381,7 +381,10 @@ export const DEDICATED_FIELDS = [
   ["requestedArchetype", "requestedArchetype"],
   // X draft + LinkedIn post: the content-mode rotation (agent-engine RFC-12).
   ["requestedMode", "requestedMode"],
-  // Social content system: Instagram's carousel | single | auto format.
+  // Social content system: Instagram's carousel | single | auto format. No
+  // dialog renders this key since 2026-09-25 (the post type select carries
+  // the format now), but a brief saved before then — a schedule, a "run
+  // again" — still has it, and it must keep meaning what it meant.
   ["requestedFormat", "requestedFormat"],
   // LinkedIn post / setup. `li_identity` itself ("company" | "seat:<id>") is
   // NOT a row here any more: the engine never read a `liIdentity` key. It is
@@ -571,15 +574,26 @@ export const PRODUCT_PHOTO_FIELD_KEY = "product_photo";
 /** The product campaign's optional product name. Travels as the photo's `label`, see `productCampaignAssets`. */
 export const PRODUCT_NAME_FIELD_KEY = "product_name";
 
+/** The plain carousel / single-image post types: the old "Instagram format" select's two fixed choices (2026-09-25). */
+export const INSTAGRAM_CAROUSEL_POST_TYPE = "carousel";
+export const INSTAGRAM_SINGLE_POST_TYPE = "single";
+
 /**
  * The Instagram run dialog's optional post type (2026-09-23), in the engine's
  * own run-input keys. Each maps to something `instagram-agent` reads in
- * `01-open-run`: `requestedMode: "news_flash"` (with `requestedFormat:
- * "single"`, because a news flash is one image), `pictureDensity`, or
- * `requestedSeries`. An unknown value sends nothing, so the agent decides.
+ * `01-open-run`: `requestedFormat`, `requestedMode: "news_flash"` (with
+ * `requestedFormat: "single"`, because a news flash is one image),
+ * `pictureDensity`, or `requestedSeries`. Since 2026-09-25 this select is
+ * also the run's format (the separate format select is gone), so every
+ * carousel type says `requestedFormat: "carousel"` itself — otherwise a
+ * client whose standing format is `single` would get a "numbered list" as one
+ * image. An unknown value sends nothing, so the agent decides.
  */
 export function instagramPostTypeInput(postType: string): Record<string, string> {
   switch (postType) {
+    case INSTAGRAM_CAROUSEL_POST_TYPE:
+    case INSTAGRAM_SINGLE_POST_TYPE:
+      return { requestedFormat: postType };
     case "news_flash":
       return { requestedMode: "news_flash", requestedFormat: "single" };
     // agent-engine #223: `01-open-run` reads `requestedMode ===
@@ -592,12 +606,12 @@ export function instagramPostTypeInput(postType: string): Record<string, string>
     case PRODUCT_CAMPAIGN_POST_TYPE:
       return { requestedMode: PRODUCT_CAMPAIGN_POST_TYPE, requestedFormat: "carousel" };
     case "photo_first":
-      return { pictureDensity: "photo-first" };
+      return { pictureDensity: "photo-first", requestedFormat: "carousel" };
     case "the_list":
     case "by_the_numbers":
     case "head_to_head":
     case "the_breakdown":
-      return { requestedSeries: postType };
+      return { requestedSeries: postType, requestedFormat: "carousel" };
     default:
       return {};
   }

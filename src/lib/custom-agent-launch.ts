@@ -18,7 +18,9 @@ import {
 } from "@/lib/intake-steer-copy";
 import {
   ENGINE_PRODUCTS_READING_MEDIA_ASSETS,
+  INSTAGRAM_CAROUSEL_POST_TYPE,
   INSTAGRAM_POST_TYPE_FIELD_KEY,
+  INSTAGRAM_SINGLE_POST_TYPE,
   PRODUCT_CAMPAIGN_POST_TYPE,
   PRODUCT_NAME_FIELD_KEY,
   PRODUCT_PHOTO_FIELD_KEY,
@@ -531,39 +533,33 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           ],
         },
         {
-          // agent-engine RFC-12 (2026-09): Instagram's post format. `auto`
-          // makes every third post a single image with a deep caption. Read by
-          // instagram-agent only; tiktok-agent receives and ignores it.
-          key: "requestedFormat",
-          label: "Instagram format",
-          type: "select",
-          defaultValue: "carousel",
-          options: [
-            { value: "carousel", label: "Carousel (6-8 slides)" },
-            { value: "single", label: "Single image with a deep caption" },
-            { value: "auto", label: "Rotate (every third post a single image)" },
-          ],
-        },
-        {
           // 2026-09-23: the owner asked for an optional post type for the next
-          // run. Empty means the agent decides from the story and this client's
-          // learned preferences (agent-middleware `client_preferences`). Read by
-          // instagram-agent only; translated in `toEngineRunInput`
-          // (`instagramPostTypeInput`) into the engine's own keys.
+          // run. 2026-09-25: the owner ruled the separate "Instagram format"
+          // select (carousel / single / rotate) the same question asked twice,
+          // so the format lives here now and every option names both the
+          // format and the type. Empty sends nothing, so the agent decides from
+          // the story, this client's standing format and its learned
+          // preferences (agent-middleware `client_preferences`) — the old
+          // format select's "carousel" default overrode all three on every
+          // run. Read by instagram-agent only; translated in
+          // `toEngineRunInput` (`instagramPostTypeInput`) into the engine's
+          // own keys.
           key: INSTAGRAM_POST_TYPE_FIELD_KEY,
-          label: "Instagram post type (optional)",
+          label: "Instagram post type",
           type: "select",
           defaultValue: "",
-          helper: "Leave on Auto and the agent picks the type from the story and this client's preferences.",
+          helper: "Leave on Auto and the agent picks the format and the type from the story and this client's preferences.",
           options: [
-            { value: "", label: "Auto" },
-            { value: "news_flash", label: "News flash (one photo in a news frame)" },
-            { value: PRODUCT_CAMPAIGN_POST_TYPE, label: "Product campaign (scenes built from your product photo)" },
-            { value: "photo_first", label: "Photo-led carousel" },
-            { value: "the_list", label: "Numbered list" },
-            { value: "by_the_numbers", label: "By the numbers" },
-            { value: "head_to_head", label: "Head to head" },
-            { value: "the_breakdown", label: "The breakdown" },
+            { value: "", label: "Auto (the agent decides)" },
+            { value: INSTAGRAM_CAROUSEL_POST_TYPE, label: "Carousel (6-8 slides)" },
+            { value: "photo_first", label: "Carousel: photo-led" },
+            { value: "the_list", label: "Carousel: numbered list" },
+            { value: "by_the_numbers", label: "Carousel: by the numbers" },
+            { value: "head_to_head", label: "Carousel: head to head" },
+            { value: "the_breakdown", label: "Carousel: the breakdown" },
+            { value: PRODUCT_CAMPAIGN_POST_TYPE, label: "Carousel: product campaign (scenes built from your product photo)" },
+            { value: INSTAGRAM_SINGLE_POST_TYPE, label: "Single image with a deep caption" },
+            { value: "news_flash", label: "Single image: news flash (one photo in a news frame)" },
           ],
         },
         {
