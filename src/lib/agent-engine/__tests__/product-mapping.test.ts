@@ -400,8 +400,17 @@ describe("toEngineRunInput — every visible dialog field reaches the engine (C3
 
 describe("toEngineRunInput — media_source → mediaSource (2026-09-06)", () => {
   it("passes exactly the two legal values through under the engine's key", () => {
-    expect(toEngineRunInput({ media_source: "client" }, "x-agent")).toEqual({ mediaSource: "client" });
+    const media = JSON.stringify([{ uri: "gs://bucket/a.png", role: "source", contentType: "image/png" }]);
+    expect(toEngineRunInput({ media_source: "client", mediaAssets: media }, "x-agent")).toMatchObject({ mediaSource: "client" });
     expect(toEngineRunInput({ media_source: "system" }, "instagram-agent")).toEqual({ mediaSource: "system" });
+  });
+
+  // 2026-09-25 (owner): nothing uploaded means the agent brings its own, so a
+  // stored "only my media" with no media (a schedule, a brief saved before the
+  // switch) goes out as the default instead of a refused run.
+  it("reads 'only my media' with nothing attached as the default", () => {
+    expect(toEngineRunInput({ media_source: "client" }, "instagram-agent")).toEqual({ mediaSource: "system" });
+    expect(toEngineRunInput({ media_source: "client", mediaAssets: "[]" }, "tiktok-agent")).toEqual({ mediaSource: "system" });
   });
 
   it("omits anything else, so the engine applies its own default rather than a third mode nobody defined", () => {

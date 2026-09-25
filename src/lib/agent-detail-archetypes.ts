@@ -221,6 +221,14 @@ function assetBelongsToAgent(
     // Read defensively even though `Job.agentName` is typed as required: this
     // runs over whatever Firestore actually holds, and an older job written
     // without the field would otherwise throw and take the page down.
+    //
+    // A job that names its agent by id has already answered: rung 1 above
+    // said it is not this one. The name is only for jobs older than
+    // `customAgentId` — the same rule the page's run history keeps
+    // (`isThisAgentsJob`). Comparing names here too credited the legacy X
+    // Agent's post (same display name, different agent) to X Agent v2, in
+    // prep and in production (audited 2026-09-25).
+    if (typeof job.customAgentId === "string" && job.customAgentId !== "") return false;
     const jobName = typeof job.agentName === "string" ? job.agentName.trim().toLowerCase() : "";
     return jobName !== "" && jobName === agent.name;
   }
@@ -317,6 +325,29 @@ export function groupAssetsByAgent(args: {
     }
   }
   return grouped;
+}
+
+/**
+ * The order "What it has made for you" lists an agent's work in: what its OWN
+ * RUNS made first, then imported work (an asset with no job this page can
+ * see: the July karos-agents lab imports, or a feed like Don Techno's runway),
+ * each newest first by the stamp the row prints.
+ *
+ * The owner, 2026-09-25: the list was "not correct" against the agent's jobs.
+ * Audited the same day, prod and prep: most agents' lists were imported posts
+ * (Pitch by Deel's TikTok agent, 227 of them and no job), and on a client's
+ * page an import touched in August outranked a run from last week, because
+ * the client's stamp is the last time a row moved. Imports are kept (owner:
+ * "own runs first, then imports"), below the runs.
+ *
+ * Returns a new array; `assets` is this viewer's set (`agentProducedAssets`).
+ */
+export function ownRunsFirst(assets: readonly Asset[], jobs: readonly Job[], viewerIsClient: boolean): Asset[] {
+  const jobIds = new Set(jobs.map((job) => job.id));
+  const fromRun = (asset: Asset) => (asset.jobId && jobIds.has(asset.jobId) ? 0 : 1);
+  return [...assets].sort(
+    (a, b) => fromRun(a) - fromRun(b) || deliverableStamp(b, viewerIsClient) - deliverableStamp(a, viewerIsClient),
+  );
 }
 
 /** Everything this agent has produced that THIS viewer may see. */

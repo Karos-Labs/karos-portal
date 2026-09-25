@@ -1561,6 +1561,11 @@ export const MEDIA_ASSETS_FIELD_KEY = "mediaAssets";
  *
  * Wire key `mediaSource` (product-mapping.ts); read engine-side by
  * `readRichRunInput` and honoured by every media agent.
+ *
+ * Since 2026-09-25 (owner) no form ASKS this before anything is uploaded:
+ * `RunMediaBlock` paints a "Use only my media" switch, off by default, only
+ * once there is media to be exclusive about, and `effectiveMediaSource`
+ * reads `client` with nothing attached as `system` everywhere.
  */
 export const MEDIA_SOURCE_FIELD_KEY = "media_source";
 export type MediaSource = "system" | "client";
@@ -1569,6 +1574,21 @@ export const MEDIA_SOURCE_DEFAULT: MediaSource = "system";
 export function isMediaSource(value: unknown): value is MediaSource {
   return value === "system" || value === "client";
 }
+
+/**
+ * The media source a run actually goes out with: "only my media" means
+ * something only while there IS media. With nothing attached the agent finds
+ * or makes its own, whatever the stored choice says — a switch left on from an
+ * upload since removed, or a brief saved before the switch existed, must not
+ * turn into a refused run or a picture-less post nobody asked for.
+ */
+export function effectiveMediaSource(source: MediaSource, attachmentCount: number): MediaSource {
+  return attachmentCount > 0 ? source : "system";
+}
+
+/** The switch's sentence while it is OFF and something is uploaded (the default). */
+export const MEDIA_SOURCE_AUTO_WITH_UPLOADS =
+  "Off: your media is used first, and the agent adds its own only if the post needs more.";
 
 /**
  * How the attach-media control behaves for one engine product — the same three
@@ -1652,12 +1672,15 @@ export function mediaSourceHint(engineProductId: string | undefined, source: Med
   if (!engineProductSourcesItsOwnMedia(engineProductId)) {
     return "Optional. Attach a picture and the post is written to it; leave it empty and the post ships as text — X posts never carry a picture Karos sourced or generated.";
   }
+  // "Only my media" is the switch's ON sentence (RunMediaBlock), painted only
+  // while something is attached (`effectiveMediaSource`), so it describes the
+  // files in hand rather than inviting an upload.
   if (source === "client") {
-    if (mode === "slides") return "Only these images are used, in this order, first file on slide 1. Nothing is sourced or generated for the slides you leave uncovered.";
-    if (mode === "source-video") return "The footage this run works from — upload it or paste a link to it. Nothing else is harvested or generated, so a link that will not resolve stops the run rather than being quietly replaced.";
-    return "Optional. Attach a picture and the post is written to it; leave it empty and the post ships as text — no picture is sourced or generated.";
+    if (mode === "slides") return "On: only these images are used, in this order, first file on slide 1. Nothing is sourced or generated for the slides they do not cover.";
+    if (mode === "source-video") return "On: only this footage is used. Nothing else is found or generated, so a link that will not resolve stops the run rather than being quietly replaced.";
+    return "On: the post is written to this picture and no other picture is sourced or generated.";
   }
-  if (mode === "slides") return "Optional. Anything you attach goes on the first slides; the rest is sourced or generated as usual.";
+  if (mode === "slides") return "Leave it empty and the agent finds or makes the pictures. Anything you add goes on the first slides.";
   if (mode === "source-video") {
     // "finds or generates its own" was true of exactly one of the three
     // products that share this mode, and the two it was wrong about are the
@@ -1789,20 +1812,23 @@ export function withEngineRunFields(
     });
   }
   if (agentEngineProductAcceptsMediaAssets(engineProductId)) {
-    // The two media controls travel together: where the visuals come from, and
-    // the files themselves. Painted by the dialog as one "Media for this run"
+    // The two media controls travel together: the files, and whether they
+    // are the only media. Painted by the dialog as one "Media for this run"
     // block under the primary question rather than behind "More options",
     // because for a media agent this is the second question, not a detail.
     // Only where the choice is real: see `engineProductSourcesItsOwnMedia`.
     if (engineProductSourcesItsOwnMedia(engineProductId) && !profile.fields.some((f) => f.key === MEDIA_SOURCE_FIELD_KEY)) {
+      // Painted by `RunMediaBlock` as the "Use only my media" switch, and
+      // only once something is uploaded; the options stay so the brief keeps
+      // its two legal wire values.
       extra.push({
         key: MEDIA_SOURCE_FIELD_KEY,
-        label: "Media for this run",
+        label: "Use only my media",
         type: "select",
         defaultValue: MEDIA_SOURCE_DEFAULT,
         options: [
-          { value: "system", label: "Karos sources or generates the visuals" },
-          { value: "client", label: "Only media I upload for this job" },
+          { value: "system", label: "Off: my media first, the agent adds its own if needed" },
+          { value: "client", label: "On: only the media I upload" },
         ],
       });
     }

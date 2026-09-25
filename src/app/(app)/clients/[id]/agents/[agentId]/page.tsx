@@ -69,6 +69,7 @@ import {
   buildClipMakerView,
   buildDailyFinderView,
   deliverableStamp,
+  ownRunsFirst,
   templateDetails,
   umbrellaForAgent,
 } from "@/lib/agent-detail-archetypes";
@@ -103,13 +104,9 @@ import {
   isXAgentIdentity,
   launchProfileFor,
 } from "@/lib/custom-agent-launch";
-import { summarizeAgentEconomics } from "@/lib/credit-reporting";
 import { resolveRunPriceQuote } from "@/lib/run-price";
-import { ControlRoom } from "@/components/client-agents/control-room";
 import { CurationPane } from "@/components/client-agents/client-agents-section";
 import { StaffOnlySection } from "@/components/staff-only-section";
-import { deriveAgentHealth } from "@/lib/agent-health";
-import { nextRunCountdown } from "@/lib/scheduled-runs";
 import {
   buildAgentSetup,
   type AgentIntakePanes,
@@ -232,9 +229,10 @@ export default async function ClientAgentDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string; agentId: string }>;
-  /** `asset` - Copilot chat's staff deep link, lands on Control Room's Outputs
-   *  tab with this asset pre-opened (OutputsHub/ControlRoom). Staff-only: a
-   *  CLIENT_USER never receives this param (their side has no Control Room).
+  /** `asset` - Copilot chat's staff deep link: the page opens this asset's
+   *  detail modal from the "What it has made" list (AgentArchiveRows). Staff
+   *  only, and only an asset this agent made: a CLIENT_USER never receives
+   *  this param, and an id the list cannot show opens nothing.
    *
    *  `task` - Home's recommended-task press (portal feedback round 2,
    *  2026-09; round 6 replaced the one generic label with a per-row one). Names
@@ -531,9 +529,9 @@ export default async function ClientAgentDetailPage({
     // Null when this agent runs on no intake: unknown must not read as ready.
     setup,
     // Read through the SAME helper the roster uses (lastRunFailedAgentIds), not
-    // re-derived from `agentRuns` below: that list is staff-only and capped at
-    // eight rows, so a client's page would answer this differently — or not at
-    // all — from the card that opened it.
+    // re-derived from a per-page run list: a staff-only or capped list would
+    // make a client's page answer this differently — or not at all — from the
+    // card that opened it.
     lastRunFailed: lastRunFailedAgentIds(jobs, agentIdByName, { staff: isStaff }).has(agent.id),
     // The same flag `lastRunFailedAgentIds` already takes, handed on rather than
     // re-derived: a client's badge is never moved by a run that broke on our side
@@ -624,9 +622,12 @@ export default async function ClientAgentDetailPage({
   // stored as "other" and a kind check would report none on file.
   // The archive list under the hero: the rows, and what to call them. Capped
   // at 8 on every branch - this is a summary that links the Workspace, not the
-  // Workspace itself.
-  const archiveRows = (
-    clipView ? clipView.documents : finderView ? finderView.documents : produced
+  // Workspace itself. The agent's own runs first, then imported work, newest
+  // first within each (`ownRunsFirst`, owner 2026-09-25).
+  const archiveRows = ownRunsFirst(
+    clipView ? clipView.documents : finderView ? finderView.documents : produced,
+    jobs,
+    viewerIsClient,
   ).slice(0, 8);
   // Whether the hero above this archive actually shows anything. The daily
   // finder and the clip gallery both claim "everything this agent has made is
@@ -639,6 +640,10 @@ export default async function ClientAgentDetailPage({
       : true;
   const archiveHeading =
     archetype === "template_calendar" ? "What it has made for you" : "Documents it produced";
+  // Copilot's staff deep link (`?asset=`), resolved against this agent's own
+  // set so a link to another agent's post opens nothing here.
+  const deepLinkAsset =
+    isStaff && deepLinkAssetId ? produced.find((asset) => asset.id === deepLinkAssetId) : undefined;
 
   // ── STAFF PARITY (CD-I1) ──
   // Everything the retired card grid could do, resolved for THIS agent. The
@@ -652,65 +657,21 @@ export default async function ClientAgentDetailPage({
   const isThisAgentsJob = (job: (typeof jobs)[number]) =>
     job.customAgentId ? job.customAgentId === agent.id : job.agentName === agent.name;
   const agentJobIds = new Set(jobs.filter(isThisAgentsJob).map((job) => job.id));
-  const agentRuns = isStaff
-    ? toRunRows(jobs, true, umbrellas).filter((run) => agentJobIds.has(run.id))
-    : [];
   // Portal revamp, Surface 03 — "Run history shows the last three, and opens
-  // to all of them." Same toRunRows() the staff rows above use, just with
-  // staff=false: it already strips prompt/href/error/runType and excludes
-  // launch/test runs (client-agent-rows.ts).
+  // to all of them." toRunRows() with staff=false: it already strips
+  // prompt/href/error/runType and excludes launch/test runs
+  // (client-agent-rows.ts).
   //
   // B1 (parity pass 2026-09): built for BOTH roles now. It was gated on
   // `viewerIsClient`, so a staff member previewing this page had a card missing
   // from the middle of the client's column — the run history the client reads
-  // simply was not there, and the fuller staff copy inside ControlRoom sits
-  // below the fold in a different shape. Staff get the client's card AND their
-  // own; the rows here stay the client-safe ones (no prompt, no href, no raw
-  // error), because this is the client's card and it must render identically.
+  // simply was not there. The rows stay the client-safe ones (no prompt, no
+  // href, no raw error), because this is the client's card and it must render
+  // identically. (Staff's fuller copy lived in the Control Room, removed
+  // 2026-09-25 at the owner's request; /jobs holds every run's detail.)
   const clientAgentRuns = toRunRows(jobs, false, umbrellas).filter((run) =>
     agentJobIds.has(run.id),
   );
-  const reviewCount = isStaff
-    ? jobs
-        .filter(
-          (job) =>
-            job.external?.taskType === "custom" &&
-            job.status === "review" &&
-            isThisAgentsJob(job),
-        )
-        .reduce((total, job) => total + job.assetIds.length, 0)
-    : 0;
-  const lastStaffRun = agentRuns[0];
-  // §6.2(b). USD this client has spent on this agent, split by run type.
-  // Computed from the jobs already loaded - no extra read - and staff-only:
-  // this is cost data, and the client's side of the same question is credits.
-  const economics = isStaff
-    ? summarizeAgentEconomics(jobs.filter((job) => job.customAgentId === agent.id))
-    : null;
-
-  // ── CONTROL ROOM: health + next-scheduled-execution (real signals only) ──
-  // `scheduledRuns` (unlike `scheduleRows`/`schedule` above, which only cover
-  // WEEKLY umbrella-paced schedules) is the raw PlannedScheduledRun set for
-  // every cadence, so a one-off or daily/monthly schedule still counts toward
-  // health/next-run - deriveAgentHealth and nextRunCountdown are both pure
-  // (agent-health.ts / scheduled-runs.ts), so this is just wiring real rows in.
-  const agentSchedules = scheduledRuns.filter((r) => r.customAgentId === agent.id);
-  const activeAgentSchedules = agentSchedules
-    .filter((r) => r.status === "active")
-    .sort((a, b) => a.nextRunAt - b.nextRunAt);
-  const soonestActiveSchedule = activeAgentSchedules[0] ?? null;
-  const pausedAgentSchedule = agentSchedules.find((r) => r.status === "paused") ?? null;
-  const agentHealth = isStaff
-    ? deriveAgentHealth({
-        runs: agentRuns.map((r) => ({ status: r.status, createdAt: r.createdAt })),
-        scheduleStatus: soonestActiveSchedule ? "active" : pausedAgentSchedule ? "paused" : null,
-        scheduleLastError: (soonestActiveSchedule ?? pausedAgentSchedule)?.lastError ?? null,
-      })
-    : "healthy";
-  const nextRunLabel = soonestActiveSchedule
-    ? `Next run ${nextRunCountdown(soonestActiveSchedule.nextRunAt, now)}`
-    : null;
-
   const sourceFiles: SourceFile[] =
     archetype === "clip_maker"
       ? contextItems
@@ -1486,52 +1447,24 @@ export default async function ClientAgentDetailPage({
               three opening to all of them. Rendered for BOTH roles since the
               parity pass (B1, 2026-09): staff used to be the only reader with a
               hole where this card sits, which is the exact thing a preview is
-              supposed to rule out. Their fuller copy (prompt/href/error) still
-              lives inside ControlRoom below, in the staff-only frame. */}
+              supposed to rule out. */}
           <ClientAgentRunHistory runs={clientAgentRuns} />
 
-          {/* ── STAFF ONLY: THE CONTROL ROOM AND THE CURATION GATE ──
-              B2 (parity pass 2026-09). Both were already client-invisible, and
-              both were styled exactly like the cards above and below them, so a
-              staff preview read one continuous column and nothing said where
-              the client's page stopped. ONE frame around the pair rather than
-              two: they are the same block of operator surface, and a second
-              dashed hairline 20px later reads as a second kind of thing.
+          {/* ── STAFF ONLY: THE CURATION GATE ──
+              Where staff confirm the template set before a client ever sees it
+              (the Q3 curation gate). Umbrella-only by nature - it edits the
+              umbrella's registry - and never shown for an unbound agent. In
+              the staff-only frame so a staff preview can see where the
+              client's page stops.
 
-              CONTROL ROOM (AgentOps upgrade): consolidates what used to be
-              three scattered staff-only sections (StaffAgentControls,
-              AgentRunHistory, AgentEconomicsCard) into one tabbed panel, plus
-              what none of them had: a real (not fabricated) health read, an
-              explicit next-scheduled-execution line, and a Test Run trigger.
-
-              CURATION PANE: where staff confirm the template set before a
-              client ever sees it (the Q3 curation gate). Umbrella-only by
-              nature - it edits the umbrella's registry - and never shown for an
-              unbound agent. */}
-          {isStaff && (
-            <StaffOnlySection label="Staff only · control room">
-              <ControlRoom
-                health={agentHealth}
-                nextRunLabel={nextRunLabel}
-                clientId={id}
-                agent={summary}
-                {...(schedule ? { schedule } : {})}
-                {...(setup ? { setup } : {})}
-                reviewCount={reviewCount}
-                reviewHref={agentRuns.find((run) => run.status === "review")?.href ?? `/clients/${id}/assets`}
-                {...(lastStaffRun ? { lastRunAt: lastStaffRun.createdAt } : {})}
-                viewer={{ name: user.name, email: user.email }}
-                runs={agentRuns}
-                agents={[summary]}
-                economics={economics}
-                economicsAgentName={umbrella?.displayName ?? agent.name}
-                launchCreditCost={agent.launchCreditCost ?? null}
-                outputs={produced}
-                {...(deepLinkAssetId ? { initialOpenAssetId: deepLinkAssetId } : {})}
-              />
-              {row && umbrella && umbrella.launchState !== "not_launched" && (
-                <CurationPane agent={row} />
-              )}
+              The Control Room that shared this frame (health, next run, test
+              run, telemetry, economics, the outputs hub) was removed
+              2026-09-25 at the owner's request: out of date and not a surface
+              worth keeping. Every run's detail is on /jobs, and a Copilot
+              `?asset=` link now opens the post from the list below. */}
+          {isStaff && row && umbrella && umbrella.launchState !== "not_launched" && (
+            <StaffOnlySection label="Staff only · curation">
+              <CurationPane agent={row} />
             </StaffOnlySection>
           )}
 
@@ -1567,6 +1500,7 @@ export default async function ClientAgentDetailPage({
                  three screens up was added to close. Staff keep the
                  generation time. */
               <AgentArchiveRows
+                {...(deepLinkAsset ? { initialOpenAsset: deepLinkAsset } : {})}
                 rows={archiveRows.map((asset) => {
                   const runLabel = rowRunLabel(asset);
                   return {

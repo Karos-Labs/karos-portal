@@ -17,6 +17,7 @@ const { jobDeliveredWork } = await import("@/lib/client-agents");
 
 const {
   agentProducedAssets,
+  ownRunsFirst,
   agentsWithDeliveredWork,
   agentsWithUpcomingContent,
   agentUpcomingCalendarDays,
@@ -128,6 +129,36 @@ describe("agentProducedAssets", () => {
       now: NOW,
     });
     expect(out.map((a) => a.id)).toEqual(["mine"]);
+  });
+
+  // Owner, 2026-09-25: "own runs first, then imports". A client's stamp is the
+  // last time a row moved, so an import touched later outranked a newer run.
+  it("lists the agent's own run outputs before imported work, newest first in each", () => {
+    const job = makeJob({ id: "j-run", customAgentId: "ca-clip" });
+    const oldRun = makeAsset({ id: "old-run", jobId: "j-run", createdAt: NOW - 5_000, updatedAt: NOW - 5_000 });
+    const newRun = makeAsset({ id: "new-run", jobId: "j-run", createdAt: NOW - 1_000, updatedAt: NOW - 1_000 });
+    const touchedImport = makeAsset({ id: "import", jobId: null, createdAt: NOW - 90_000, updatedAt: NOW });
+    const order = ownRunsFirst([touchedImport, oldRun, newRun], [job], true).map((a) => a.id);
+    expect(order).toEqual(["new-run", "old-run", "import"]);
+  });
+
+  // Audited 2026-09-25 in prep AND production: the legacy X Agent and X Agent
+  // v2 share the display name "X Agent", and a post from the legacy agent's
+  // job (its own customAgentId) was listed under v2's "What it has made".
+  it("does not credit another agent's job by a shared display name", () => {
+    const theirs = makeAsset({ id: "theirs", jobId: "j-other", type: "note" });
+    const job = makeJob({ id: "j-other", customAgentId: "ca-legacy-clip", agentName: "Clip Agent" });
+
+    const out = agentProducedAssets({
+      assets: [theirs],
+      jobs: [job],
+      agent,
+      umbrella: null,
+      umbrellas: [],
+      viewerIsClient: false,
+      now: NOW,
+    });
+    expect(out).toEqual([]);
   });
 
   it("keeps the pre-umbrella name rung, so a legacy agent is not shown as having made nothing", () => {
@@ -1330,17 +1361,20 @@ describe("wiring", () => {
 
   it("keeps the staff run history and its prompt off a client payload", () => {
     const src = route();
-    // toRunRows only fills `prompt`/`href` for staff, and the route must not
-    // build the rows at all for a client viewer.
-    expect(src).toContain("const agentRuns = isStaff");
-    expect(src).toContain("const economics = isStaff");
+    // toRunRows only fills `prompt`/`href` for staff. Since the Control Room
+    // went (2026-09-25) the page builds ONLY the client-safe rows, for both
+    // readers, so there is no staff copy left to leak.
+    expect(src).toContain("toRunRows(jobs, false, umbrellas)");
+    expect(src).not.toContain("toRunRows(jobs, true");
   });
 
-  it("mounts every staff capability the retired card grid carried", () => {
+  it("no longer mounts the Control Room, and keeps the curation gate behind staff", () => {
+    // Owner, 2026-09-25: the Control Room was out of date and did not look
+    // right. Removed, not hidden: the component file is gone too.
     const src = route();
-    for (const symbol of ["StaffAgentControls", "CurationPane", "AgentEconomicsCard", "AgentRunHistory"]) {
-      expect(src, symbol).toContain(symbol);
-    }
+    expect(src).not.toContain("<ControlRoom");
+    expect(src).not.toContain("control-room");
+    expect(src).toMatch(/\{isStaff && row && umbrella && [^\n]*\(\s*<StaffOnlySection[^>]*>\s*<CurationPane/);
     // The bind control is the one that belongs to the roster, not to an agent.
     expect(source("src/app/(app)/clients/[id]/agents/page.tsx")).toContain("BindAgentControl");
   });

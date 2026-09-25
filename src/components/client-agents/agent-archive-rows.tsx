@@ -41,6 +41,7 @@ import type { Asset } from "@/lib/types";
 export function AgentArchiveRows({
   rows,
   viewerIsClient,
+  initialOpenAsset,
 }: {
   /**
    * Each row carries EITHER the page's resolved display title (viewer-gated,
@@ -63,9 +64,17 @@ export function AgentArchiveRows({
     runLabel?: string;
   }>;
   viewerIsClient: boolean;
+  /**
+   * Copilot chat's staff deep link (`?asset=`), opened on arrival. May be a
+   * row past the eight listed, so it is carried as the asset itself rather
+   * than as an id into `rows`.
+   */
+  initialOpenAsset?: Asset;
 }) {
-  const [openAssetId, setOpenAssetId] = useState<string | null>(null);
-  const openAsset = rows.find((row) => row.asset.id === openAssetId)?.asset ?? null;
+  const [openAssetId, setOpenAssetId] = useState<string | null>(initialOpenAsset?.id ?? null);
+  const openAsset =
+    rows.find((row) => row.asset.id === openAssetId)?.asset ??
+    (initialOpenAsset && initialOpenAsset.id === openAssetId ? initialOpenAsset : null);
 
   return (
     <>
