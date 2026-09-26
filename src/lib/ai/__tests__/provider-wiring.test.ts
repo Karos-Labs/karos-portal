@@ -242,7 +242,7 @@ describe("per-vendor model ids", () => {
 });
 
 describe("the manifest does not drift from the tree", () => {
-  it("declares exactly 32 call sites", () => {
+  it("declares exactly 33 call sites", () => {
     // SCRUM-387 (33 -> 34): "intel.condense" collapsed from 2 sites
     // (condense.ts's initial + retry pass, each calling aiFor separately) to
     // 1 (both passes now share one routed call site in
@@ -256,7 +256,9 @@ describe("the manifest does not drift from the tree", () => {
     // deleted along with the in-process generation itself — the report is now
     // `intel-report-agent`'s deliverable, and this repo makes no model call to
     // produce it.
-    expect(declaredSiteCount()).toBe(32);
+    //
+    // 32 -> 33: "onboarding.discover", the onboarding website scan.
+    expect(declaredSiteCount()).toBe(33);
   });
 
   it("names only files that exist", () => {
@@ -295,7 +297,7 @@ describe("the manifest does not drift from the tree", () => {
     const coupled = AI_ROLE_NAMES.filter((r) => (roleSpec(r).requires ?? []).length > 0);
     const sites = coupled.reduce((n, r) => n + roleSpec(r).sites.length, 0);
     expect(sites).toBe(4); // 1 measurement + 1 web_fetch + 2 web_search-only
-    expect(declaredSiteCount() - sites).toBe(28); // SCRUM-387: 27 -> 28, see roles.ts header
+    expect(declaredSiteCount() - sites).toBe(29); // SCRUM-387: 27 -> 28; onboarding.discover: 29
   });
 
   it("has no role requiring a capability no vendor can supply", () => {

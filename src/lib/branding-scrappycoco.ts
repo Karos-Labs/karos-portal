@@ -126,6 +126,32 @@ async function execute(
   }
 }
 
+/**
+ * One web search through the same account, for the onboarding scan
+ * (`onboarding-discovery.ts`): about $0.007 a call. Result URLs only - the
+ * caller decides what counts as a match. Null on any failure or when the key
+ * is unset, same posture as everything else here.
+ */
+export async function scrappycocoSearchUrls(
+  query: string,
+  opts: { includeDomains?: string[]; limit?: number; timeoutMs?: number } = {},
+): Promise<string[] | null> {
+  const result = await execute(
+    "web",
+    "search_web",
+    {
+      query,
+      ...(opts.includeDomains?.length ? { include_domains: opts.includeDomains } : {}),
+    },
+    opts.timeoutMs ?? PROFILE_TIMEOUT_MS,
+  );
+  if (!result) return null;
+  return (result.records ?? [])
+    .slice(0, opts.limit ?? 5)
+    .map((r) => (typeof r.url === "string" ? r.url : ""))
+    .filter(Boolean);
+}
+
 /** A base64 payload as delivered by `screenshot` and `fetch_asset`. */
 interface Payload {
   mime_type?: unknown;

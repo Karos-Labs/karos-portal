@@ -62,6 +62,14 @@ export interface AppUser {
    * that predate this field). See needsOnboarding() in lib/onboarding.ts.
    */
   hasCompletedOnboarding?: boolean;
+  /**
+   * The onboarding conversation so far (`ChatDraft` in lib/onboarding-chat.ts),
+   * saved after every answer so a client who leaves, or goes to LinkedIn and
+   * back, resumes where they were. Read through `sanitizeChatDraft`, never raw.
+   */
+  onboardingChatDraft?: unknown;
+  /** How many website scans this account ran during onboarding (capped). */
+  onboardingScans?: number;
   phone?: string;
   /** Uploaded CV/resume URL — powers the employee-advocacy LLM voice. */
   resumeUrl?: string;
@@ -128,6 +136,12 @@ export interface Client {
   domains?: string[];
   description?: string;
   brandVoice?: string;
+  /**
+   * What the client told the onboarding chat that has no field of its own:
+   * who onboarded and in what role, their goals, audience in their own words,
+   * the content language and the chat language. Written once, at Finish.
+   */
+  onboardingProfile?: ClientOnboardingProfile;
   logoUrl?: string;
   /** Firebase Storage path for the client logo — used to delete the old file on replacement. */
   logoStoragePath?: string;
@@ -4238,4 +4252,14 @@ export interface RedditAgentState {
   version: number;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface ClientOnboardingProfile {
+  completedBy: string;
+  completedAt: number;
+  role?: string;
+  goals?: string[];
+  audience?: string;
+  contentLanguages?: ("en" | "he")[];
+  chatLanguage?: "en" | "he";
 }

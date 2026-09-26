@@ -445,7 +445,9 @@ export async function clearClientLogo(id: string): Promise<void> {
 export async function completeOnboarding(
   uid: string,
   clientId: string,
-  clientPatch: Partial<Pick<Client, "name" | "category" | "brandVoice">>,
+  clientPatch: Partial<
+    Pick<Client, "name" | "category" | "brandVoice" | "website" | "socialLinks" | "description" | "logoUrl" | "onboardingProfile">
+  >,
 ): Promise<void> {
   const userRef = col.users().doc(uid);
   const clientRef = col.clients().doc(clientId);
@@ -456,8 +458,33 @@ export async function completeOnboarding(
     const user = userSnap.data() as AppUser;
     if (user.clientId !== clientId) throw new Error("Forbidden - not this user's workspace");
 
-    tx.set(userRef, { hasCompletedOnboarding: true }, { merge: true });
-    tx.set(clientRef, clientPatch, { merge: true });
+    const { FieldValue } = await import("firebase-admin/firestore");
+    // The draft has done its job once the answers are on the client.
+    tx.set(userRef, { hasCompletedOnboarding: true, onboardingChatDraft: FieldValue.delete() }, { merge: true });
+    const { socialLinks, ...rest } = clientPatch;
+    tx.set(clientRef, rest, { merge: true });
+    // Replaced, not merged: a merge keeps a handle the client just removed.
+    if (socialLinks) tx.update(clientRef, { socialLinks });
+  });
+}
+
+/** Save the onboarding conversation so far (see `AppUser.onboardingChatDraft`). */
+export async function saveOnboardingChatDraft(uid: string, draft: unknown): Promise<void> {
+  await col.users().doc(uid).set({ onboardingChatDraft: draft }, { merge: true });
+}
+
+/**
+ * Count one onboarding website scan against the account, atomically. Returns
+ * false (and counts nothing) once `max` scans have run.
+ */
+export async function tryCountOnboardingScan(uid: string, max: number): Promise<boolean> {
+  const ref = col.users().doc(uid);
+  return adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const used = (snap.data() as AppUser | undefined)?.onboardingScans ?? 0;
+    if (used >= max) return false;
+    tx.set(ref, { onboardingScans: used + 1 }, { merge: true });
+    return true;
   });
 }
 

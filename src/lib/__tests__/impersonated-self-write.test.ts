@@ -85,7 +85,9 @@ import { uploadBytes } from "@/lib/storage";
 import { updatePasswordAction, updateUserProfileAction } from "@/lib/actions/user-actions";
 import {
   completeOnboardingAction,
+  discoverOnboardingProfileAction,
   ensureOwnEmployeeSeatAction,
+  saveOnboardingChatDraftAction,
   saveOnboardingProfileAction,
 } from "@/lib/actions/onboarding-actions";
 import * as avatarRoute from "@/app/api/users/avatar/route";
@@ -223,8 +225,25 @@ describe("the three onboarding actions keep refusing, through the shared rule", 
   it("completeOnboardingAction", async () => {
     as(IMPERSONATED);
     await expect(
-      completeOnboardingAction({ name: "Admin Was Here", clientName: "Acme" }),
+      completeOnboardingAction({ answers: { name: "Admin Was Here", companyName: "Acme" } }),
     ).rejects.toThrow(REFUSAL);
+    expectNothingWritten();
+  });
+
+  it("discoverOnboardingProfileAction", async () => {
+    as(IMPERSONATED);
+    await expect(
+      discoverOnboardingProfileAction({ website: "acme.com", companyName: "Acme", language: "en" }),
+    ).rejects.toThrow(REFUSAL);
+    expect(data.tryCountOnboardingScan).not.toHaveBeenCalled();
+  });
+
+  it("saveOnboardingChatDraftAction", async () => {
+    as(IMPERSONATED);
+    await expect(
+      saveOnboardingChatDraftAction({ step: "name", answers: {}, messages: [], voiceSamples: [] }),
+    ).rejects.toThrow(REFUSAL);
+    expect(data.saveOnboardingChatDraft).not.toHaveBeenCalled();
     expectNothingWritten();
   });
 

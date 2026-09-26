@@ -533,11 +533,14 @@ describe("the sweep under the loosenings it forbids", () => {
     // Remove the gate and it becomes an unlimited free model call again.
     const target = file("lib/actions/onboarding-actions.ts");
     const original = readSource(target);
-    const planted = original.replace(/await requireFirstOnboarding\(user\);/, "");
+    // Every occurrence: the website scan and Finish each carry their own gate,
+    // and dropping only the first would leave the second passing on its own.
+    const planted = original.replace(/await requireFirstOnboarding\(user\);/g, "");
     expect(planted).not.toBe(original);
 
     const offenders = analyze(new Map([[target, planted]])).filter((v) => v.kind === "unmetered");
     expect(offenders.map((v) => v.fn)).toContain("completeOnboardingAction");
+    expect(offenders.map((v) => v.fn)).toContain("discoverOnboardingProfileAction");
   });
 
   /**
