@@ -123,7 +123,7 @@ export function emptyAnswers(): ChatAnswers {
 export type ChatSeed = Partial<ChatAnswers> & { brandVoice?: string; existing?: boolean };
 
 export function seedFromClient(
-  client: Pick<Client, "name" | "website" | "socialLinks" | "brandVoice" | "logoUrl">,
+  client: Pick<Client, "name" | "website" | "socialLinks" | "brandVoice" | "logoUrl" | "brandingGuidelines">,
   competitors: readonly string[] = [],
 ): ChatSeed {
   const handles: ChatAnswers["handles"] = {};
@@ -132,14 +132,16 @@ export function seedFromClient(
     if (typeof v === "string" && v.trim()) handles[p] = v.trim();
   }
   const hasHandles = Object.keys(handles).length > 0;
-  const existing = Boolean(client.website?.trim() || hasHandles || client.logoUrl);
+  // The same precedence every portal surface paints: the uploaded logo, then the guidelines'.
+  const logoUrl = client.logoUrl || client.brandingGuidelines?.logoUrl || "";
+  const existing = Boolean(client.website?.trim() || hasHandles || logoUrl);
   const names = competitors.map((c) => c.trim()).filter(Boolean).slice(0, 8);
   return {
     ...(client.name ? { companyName: client.name } : {}),
     ...(client.website ? { website: client.website } : {}),
     ...(hasHandles ? { handles } : {}),
     ...(client.brandVoice?.trim() ? { brandVoice: client.brandVoice.trim() } : {}),
-    ...(client.logoUrl ? { logoUrl: client.logoUrl } : {}),
+    ...(logoUrl ? { logoUrl } : {}),
     ...(names.length ? { competitors: names } : {}),
     ...(existing ? { existing: true } : {}),
   };

@@ -56,6 +56,7 @@ export function OnboardingChat({
   saveDraft,
   renderProfile,
   uploadLogo,
+  findLogo,
   onComplete,
   onLanguageChange,
 }: {
@@ -71,6 +72,8 @@ export function OnboardingChat({
   renderProfile: (lang: ChatLang, name: string) => React.ReactNode;
   /** Stores an uploaded logo and returns its URL. Absent = uploads disabled (the simulation). */
   uploadLogo?: (file: File) => Promise<string>;
+  /** Finds the logo on a website (one page read, no model). Resolves null when there is none. */
+  findLogo: (input: { website: string; companyName: string }) => Promise<string | null>;
   /** `voicePost` is the sample post the client picked, as they saw it. */
   onComplete: (answers: ChatAnswers, voicePost: string) => void;
   /** The wizard bar above speaks the chat's language too. */
@@ -138,6 +141,19 @@ export function OnboardingChat({
           setAnswers(withScan);
           setWritten(found.voiceSamples);
           ask(withScan, found.voiceSamples);
+        });
+      return;
+    }
+    // Arriving at the logo step with no logo but a website (an existing
+    // client whose record has none): look on the site first, then ask.
+    if (next === "logo" && !merged.logoUrl && merged.website) {
+      setTyping(t("lookingForLogo"));
+      findLogo({ website: merged.website, companyName: merged.companyName })
+        .catch(() => null)
+        .then((url) => {
+          const withLogo: ChatAnswers = url ? { ...merged, logoUrl: url } : merged;
+          setAnswers(withLogo);
+          ask(withLogo, written);
         });
       return;
     }
@@ -215,6 +231,8 @@ export function OnboardingChat({
             written={written}
             renderProfile={renderProfile}
             uploadLogo={uploadLogo}
+            findLogo={() => findLogo({ website: answers.website, companyName: answers.companyName })}
+            logoOnFile={seed.logoUrl ?? null}
             onAnswer={answer}
             onComplete={() =>
               onComplete(
@@ -367,6 +385,8 @@ function Composer({
   written,
   renderProfile,
   uploadLogo,
+  findLogo,
+  logoOnFile,
   onAnswer,
   onComplete,
 }: {
@@ -379,6 +399,8 @@ function Composer({
   written: { id: VoiceId; post: string }[];
   renderProfile: (lang: ChatLang, name: string) => React.ReactNode;
   uploadLogo?: (file: File) => Promise<string>;
+  findLogo: () => Promise<string | null>;
+  logoOnFile: string | null;
   onAnswer: (patch: Partial<ChatAnswers>, echo: string) => void;
   onComplete: () => void;
 }) {
@@ -391,7 +413,16 @@ function Composer({
     case "handles":
       return <HandlesComposer t={t} answers={answers} onAnswer={onAnswer} />;
     case "logo":
-      return <LogoComposer t={t} answers={answers} prefilled={prefilled} uploadLogo={uploadLogo} onAnswer={onAnswer} />;
+      return (
+        <LogoComposer
+          t={t}
+          answers={answers}
+          logoOnFile={logoOnFile}
+          uploadLogo={uploadLogo}
+          findLogo={answers.website ? findLogo : undefined}
+          onAnswer={onAnswer}
+        />
+      );
     case "multi":
       return <MultiComposer step={step} lang={lang} t={t} answers={answers} onAnswer={onAnswer} />;
     case "voice":
@@ -607,53 +638,111 @@ function HandlesComposer({
 }
 
 /**
- * The logo step: the logo the scan found (or the one on file), with "that's
- * ours" / "keep it", "upload a different one" and "skip". An upload is stored
- * at once by the regular logo route, so it is already the client's logo; an
- * approved scanned logo is copied into storage at Finish.
+ * The logo step. Whatever logo is on the table - the one on file, one found
+ * on the site, or one just uploaded - is previewed on a light AND a dark
+ * ground (a white logo vanishes on white), labelled with where it came from,
+ * with every way forward next to it: approve it, look on the site (again),
+ * upload one, or skip. A logo that fails to load is said so and treated as
+ * none (two stored logos on prod were dead links, 2026-09-26).
+ *
+ * An upload is stored at once by the regular logo route, so it is already the
+ * client's logo; an approved logo from the site is copied into storage at
+ * Finish; keeping the one on file writes nothing.
  */
 function LogoComposer({
   t,
   answers,
-  prefilled,
+  logoOnFile,
   uploadLogo,
+  findLogo,
   onAnswer,
 }: {
   t: T;
   answers: ChatAnswers;
-  prefilled: boolean;
+  logoOnFile: string | null;
   uploadLogo?: (file: File) => Promise<string>;
+  /** Absent when there is no website to look at. */
+  findLogo?: () => Promise<string | null>;
   onAnswer: (patch: Partial<ChatAnswers>, echo: string) => void;
 }) {
+  type Origin = "file" | "site" | "upload";
+  const initialOrigin: Origin = answers.logoUrl && answers.logoUrl === logoOnFile ? "file" : "site";
+  const [logo, setLogo] = useState<{ url: string; origin: Origin } | null>(
+    answers.logoUrl ? { url: answers.logoUrl, origin: initialOrigin } : null,
+  );
+  const [broken, setBroken] = useState(false);
+  const [busy, setBusy] = useState<"find" | "upload" | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-  const shown = answers.logoUrl && !failed ? answers.logoUrl : null;
+  const usable = logo && !broken ? logo : null;
 
-  async function pick(file: File | undefined) {
-    if (!file || !uploadLogo) return;
-    setError(null);
-    setUploading(true);
-    try {
-      const url = await uploadLogo(file);
-      onAnswer({ logoUrl: url, logoSource: "upload" }, t("uploadedLogo"));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t("uploadFailed"));
-      setUploading(false);
+  async function find() {
+    if (!findLogo) return;
+    setBusy("find");
+    setNote(null);
+    const url = await findLogo().catch(() => null);
+    setBusy(null);
+    if (url) {
+      setLogo({ url, origin: "site" });
+      setBroken(false);
+    } else {
+      setNote(t("logoNotFoundInline"));
     }
   }
 
-  const approve = prefilled ? t("keepIt") : t("thatsOurLogo");
+  async function pick(file: File | undefined) {
+    if (!file || !uploadLogo) return;
+    setBusy("upload");
+    setNote(null);
+    try {
+      const url = await uploadLogo(file);
+      setLogo({ url, origin: "upload" });
+      setBroken(false);
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : t("uploadFailed"));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function approve() {
+    if (!usable) return;
+    const source = usable.origin === "file" ? "kept" : usable.origin === "site" ? "scan" : "upload";
+    const echo = usable.origin === "file" ? t("keepIt") : usable.origin === "upload" ? t("uploadedLogo") : t("thatsOurLogo");
+    onAnswer({ logoUrl: usable.url, logoSource: source }, echo);
+  }
+
+  const badge = logo ? (logo.origin === "file" ? t("badgeOnFile") : logo.origin === "site" ? t("badgeFromSite") : t("badgeUploaded")) : null;
 
   return (
     <div className="space-y-3">
-      {shown && (
-        <div className="flex h-28 items-center justify-center rounded-[12px] border border-border bg-white p-4">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={shown} alt="" className="max-h-full max-w-full object-contain" onError={() => setFailed(true)} />
-        </div>
-      )}
+      <div className="overflow-hidden rounded-[12px] border border-border">
+        {logo && !broken ? (
+          <div className="grid grid-cols-2" dir="ltr">
+            {[
+              { bg: "bg-white", label: t("onLight"), text: "text-neutral-500" },
+              { bg: "bg-neutral-900", label: t("onDark"), text: "text-neutral-400" },
+            ].map((g) => (
+              <div key={g.label} className={cn("flex h-28 flex-col items-center justify-center gap-2 px-8 py-4", g.bg)}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={logo.url} alt="" className="h-12 w-full object-contain" onError={() => setBroken(true)} />
+                <span className={cn("text-[10px]", g.text)}>{g.label}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="flex h-28 flex-col items-center justify-center gap-2 border-dashed bg-surface text-muted-2">
+            <Icon name={broken ? "ImageOff" : "Image"} className="h-6 w-6" />
+            <span className="text-xs">{broken ? t("logoLoadFailed") : t("noLogoYet")}</span>
+          </div>
+        )}
+        {badge && !broken && (
+          <div className="flex items-center gap-1.5 border-t border-border bg-surface px-3 py-1.5 text-[11px] text-muted">
+            <Icon name={logo?.origin === "site" ? "Globe" : logo?.origin === "upload" ? "Upload" : "Archive"} className="h-3 w-3" />
+            {badge}
+          </div>
+        )}
+      </div>
       <input
         ref={inputRef}
         type="file"
@@ -661,25 +750,31 @@ function LogoComposer({
         className="hidden"
         onChange={(e) => pick(e.target.files?.[0])}
       />
-      {error && <p className="text-xs text-danger">{error}</p>}
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button variant="ghost" onClick={() => onAnswer({ logoSource: "skipped" }, t("skipForNow"))} disabled={uploading}>
+      {note && <p className="text-xs text-muted">{note}</p>}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button variant="ghost" onClick={() => onAnswer({ logoSource: "skipped" }, t("skipForNow"))} disabled={!!busy}>
           {t("skipForNow")}
         </Button>
+        {findLogo && (
+          <Button variant="outline" onClick={find} loading={busy === "find"} disabled={!!busy}>
+            {busy !== "find" && <Icon name="Search" className="h-4 w-4" />}
+            {t("findOnSite")}
+          </Button>
+        )}
         <Button
           variant="outline"
           onClick={() => inputRef.current?.click()}
-          loading={uploading}
-          disabled={!uploadLogo}
+          loading={busy === "upload"}
+          disabled={!uploadLogo || !!busy}
           title={uploadLogo ? undefined : "Disabled in simulation"}
         >
-          {!uploading && <Icon name="Upload" className="h-4 w-4" />}
-          {shown ? t("uploadDifferent") : t("uploadLogo")}
+          {busy !== "upload" && <Icon name="Upload" className="h-4 w-4" />}
+          {usable ? t("uploadDifferent") : t("uploadLogo")}
         </Button>
-        {shown && (
-          <Button onClick={() => onAnswer({ logoSource: prefilled ? "kept" : "scan" }, approve)} disabled={uploading}>
+        {usable && (
+          <Button onClick={approve} disabled={!!busy}>
             <Icon name="Check" className="h-4 w-4" />
-            {approve}
+            {usable.origin === "file" ? t("keepIt") : t("thatsOurLogo")}
           </Button>
         )}
       </div>

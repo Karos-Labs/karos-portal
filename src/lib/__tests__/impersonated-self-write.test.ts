@@ -87,6 +87,7 @@ import {
   completeOnboardingAction,
   discoverOnboardingProfileAction,
   ensureOwnEmployeeSeatAction,
+  findOnboardingLogoAction,
   saveOnboardingChatDraftAction,
   saveOnboardingProfileAction,
 } from "@/lib/actions/onboarding-actions";
@@ -235,6 +236,12 @@ describe("the three onboarding actions keep refusing, through the shared rule", 
     await expect(
       discoverOnboardingProfileAction({ website: "acme.com", companyName: "Acme", language: "en" }),
     ).rejects.toThrow(REFUSAL);
+    expect(data.tryCountOnboardingScan).not.toHaveBeenCalled();
+  });
+
+  it("findOnboardingLogoAction", async () => {
+    as(IMPERSONATED);
+    await expect(findOnboardingLogoAction({ website: "acme.com", companyName: "Acme" })).rejects.toThrow(REFUSAL);
     expect(data.tryCountOnboardingScan).not.toHaveBeenCalled();
   });
 
