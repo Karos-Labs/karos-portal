@@ -1,4 +1,4 @@
-import { getClient, listClientIntegrations, listClients } from "@/lib/data";
+import { getClient, listClientCompetitors, listClientIntegrations, listClients } from "@/lib/data";
 import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
 import { sanitizeIntegrations, sanitizeLinkedinSeats } from "@/lib/integrations/sanitize";
 import { CREDIT_COSTS, DEFAULT_LINKEDIN_SEAT_LIMIT } from "@/lib/credits";
@@ -31,7 +31,9 @@ export default async function OnboardingPreviewPage({
   const clients = await listClients();
 
   const existing = clientId ? await getClient(clientId) : null;
-  const rawIntegrations = existing ? await listClientIntegrations(existing.id) : [];
+  const [rawIntegrations, competitors] = existing
+    ? await Promise.all([listClientIntegrations(existing.id), listClientCompetitors(existing.id).catch(() => [])])
+    : [[], []];
   const linkedIntegration = rawIntegrations.find((i) => i.platform === "linkedin") as ClientIntegration | undefined;
 
   return (
@@ -46,7 +48,7 @@ export default async function OnboardingPreviewPage({
         // A fresh invitee: no name, photo or CV yet.
         user={{ name: "", role: "CLIENT_USER" }}
         clientId={existing?.id ?? "onboarding-simulation"}
-        seed={existing ? seedFromClient(existing) : {}}
+        seed={existing ? seedFromClient(existing, competitors.map((c) => c.company)) : {}}
         integrations={sanitizeIntegrations(rawIntegrations)}
         oauthEnabledPlatforms={getOAuthEnabledPlatforms()}
         linkedinSeats={sanitizeLinkedinSeats(linkedIntegration?.employeeSeats as EmployeeSeat[] | undefined)}

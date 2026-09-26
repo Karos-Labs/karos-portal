@@ -20,9 +20,9 @@ import {
 import { adminAuth } from "@/lib/firebase/admin";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { rankSetupLadder } from "@/lib/setup-ladder";
-import { clampClientCategoryValue } from "@/lib/utils";
 import { addEmployeeSeatAction } from "./seat-actions";
 import { upsertManualCompetitor } from "@/lib/competitor-upsert";
+import { importLogoFromUrl } from "@/lib/onboarding-logo";
 import { discoverOnboardingProfile } from "@/lib/onboarding-discovery";
 import { publicWebsiteUrl } from "@/lib/onboarding-discovery-parse";
 import { socialHandleValue } from "@/lib/social-handles";
@@ -37,6 +37,7 @@ import {
   type Discovery,
 } from "@/lib/onboarding-chat";
 import type { SocialLinks } from "@/lib/types";
+import { isChatLang } from "@/lib/onboarding-i18n";
 
 /**
  * Decide and store the order Home's "Get set up" ladder walks this client
@@ -159,7 +160,7 @@ export async function discoverOnboardingProfileAction(input: {
   return discoverOnboardingProfile({
     website: String(input.website ?? "").slice(0, 500),
     companyName: String(input.companyName ?? "").slice(0, 200),
-    language: input.language === "he" ? "he" : "en",
+    language: isChatLang(input.language) ? input.language : "en",
     clientId: user.clientId,
   });
 }
@@ -187,9 +188,10 @@ export async function saveOnboardingChatDraftAction(draft: unknown): Promise<voi
  * research in the background and redirects Home.
  *
  * Where each answer lands:
- *   name → the user and their auth profile; company, website, category,
- *   description, brand voice, social accounts → the client record (the same
- *   fields Settings edits); competitors → the competitor list as manual rows;
+ *   name → the user and their auth profile; company, website, brand voice,
+ *   social accounts → the client record (the same fields Settings edits);
+ *   the brand itself (palette, logo, category, description) is left to the
+ *   research this action starts; competitors → the competitor list as manual rows;
  *   role, goals, audience, languages → `client.onboardingProfile`, and into the
  *   first Intel Report's brief so the research starts from them.
  */
@@ -231,16 +233,11 @@ export async function completeOnboardingAction(input: {
   const voicePost = typeof input.voicePost === "string" ? input.voicePost.slice(0, 800) : "";
   const brandVoice =
     answers.keepVoice || !answers.voice || !voicePost.trim() ? undefined : brandVoiceFromSample(answers.voice, voicePost);
-  // Clamped on the way in, like every other write to this field: the chip that
-  // will show it has one line, whichever form typed it.
-  const category = clampClientCategoryValue(answers.category);
 
   await completeOnboarding(user.uid, user.clientId, {
     name: clientName,
-    ...(category ? { category } : {}),
     ...(brandVoice ? { brandVoice } : {}),
     ...(website ? { website } : {}),
-    ...(answers.description ? { description: answers.description } : {}),
     socialLinks,
     onboardingProfile: {
       completedBy: user.uid,
@@ -259,6 +256,15 @@ export async function completeOnboardingAction(input: {
   for (const competitor of answers.competitors.slice(0, 8)) {
     await upsertManualCompetitor(user.clientId, competitor).catch((e) =>
       console.error("[onboarding] Could not save competitor", competitor, e),
+    );
+  }
+  // An approved logo from the site is copied into storage and becomes the
+  // client's logo, exactly as an upload would. An uploaded one is already
+  // stored (the upload route wrote it). Best effort: a site that refuses the
+  // download leaves the client with no logo, never with a failed onboarding.
+  if (answers.logoSource === "scan" && answers.logoUrl) {
+    await importLogoFromUrl(user.clientId, answers.logoUrl).catch((e) =>
+      console.error("[onboarding] Could not store the logo from the site", e),
     );
   }
   const intelBrief = intelBriefFromAnswers(answers);

@@ -272,7 +272,7 @@ export const AI_ROLES = {
   // and three sample posts from a page's text. Runs once per website a new
   // client types, before they have any context documents; HAIKU because every
   // field is a suggestion the client confirms on the next card.
-  "onboarding.discover": { tier: "HAIKU", sites: ["src/lib/onboarding-discovery.ts:198"] },
+  "onboarding.discover": { tier: "HAIKU", sites: ["src/lib/onboarding-discovery.ts:197"] },
   "campaign.plan": { tier: "SONNET", sites: ["src/lib/campaign-engine.ts:266"] },
   "dynamic_agent.generate": {
     tier: "SONNET",

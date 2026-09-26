@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
-import { getClient, listClientIntegrations } from "@/lib/data";
+import { getClient, listClientCompetitors, listClientIntegrations } from "@/lib/data";
 import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
 import { sanitizeIntegrations, sanitizeLinkedinSeats } from "@/lib/integrations/sanitize";
 import { CREDIT_COSTS, DEFAULT_LINKEDIN_SEAT_LIMIT } from "@/lib/credits";
@@ -27,9 +27,10 @@ export default async function OnboardingPage({
   const user = await getCurrentUser();
   if (!user || !user.clientId) redirect("/dashboard");
 
-  const [client, rawIntegrations] = await Promise.all([
+  const [client, rawIntegrations, competitors] = await Promise.all([
     getClient(user.clientId),
     listClientIntegrations(user.clientId),
+    listClientCompetitors(user.clientId).catch(() => []),
   ]);
   if (!client) redirect("/dashboard");
 
@@ -45,9 +46,10 @@ export default async function OnboardingPage({
     <OnboardingChatWizard
       user={user}
       clientId={client.id}
-      // A workspace an admin already filled in (an invited user of an existing
-      // client) opens its steps as "still right?"; a blank one just asks.
-      seed={seedFromClient(client)}
+      // A workspace set up before (an invited user of an existing client) is
+      // confirmed from its record - accounts, logo, competitors - with no
+      // website scan; a blank one is scanned and asked.
+      seed={seedFromClient(client, competitors.map((c) => c.company))}
       initialDraft={sanitizeChatDraft(user.onboardingChatDraft)}
       notice={notice}
       integrations={sanitizeIntegrations(rawIntegrations)}
