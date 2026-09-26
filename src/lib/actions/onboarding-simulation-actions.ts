@@ -1,7 +1,7 @@
 "use server";
 
 import { requireAdmin } from "./_shared";
-import { discoverOnboardingProfile } from "@/lib/onboarding-discovery";
+import { discoverOnboardingProfile, findSiteLogo } from "@/lib/onboarding-discovery";
 import type { ChatLang, Discovery } from "@/lib/onboarding-chat";
 import { isChatLang } from "@/lib/onboarding-i18n";
 
@@ -21,5 +21,14 @@ export async function simulateOnboardingDiscoveryAction(input: {
     companyName: String(input.companyName ?? "").slice(0, 200),
     language: isChatLang(input.language) ? input.language : "en",
     clientId: null,
+  });
+}
+
+/** The simulation's "find our logo on the site": the real finder, read-only. */
+export async function simulateOnboardingLogoAction(input: { website: string; companyName: string }): Promise<string | null> {
+  await requireAdmin();
+  return findSiteLogo({
+    website: String(input.website ?? "").slice(0, 500),
+    companyName: String(input.companyName ?? "").slice(0, 200),
   });
 }

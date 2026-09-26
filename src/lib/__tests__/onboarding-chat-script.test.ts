@@ -123,6 +123,14 @@ describe("onboarding chat script", () => {
     for (const id of ["company", "website", "handles", "logo", "voice"] as const) expect(isPrefilled(id, seed), id).toBe(true);
   });
 
+  it("reads the record's logo the way every portal surface does: uploaded first, then the guidelines'", () => {
+    const fromGuidelines = seedFromClient({ name: "Acme", brandingGuidelines: { logoUrl: "https://cdn/g.png" } as never });
+    expect(fromGuidelines.logoUrl).toBe("https://cdn/g.png");
+    expect(fromGuidelines.existing).toBe(true);
+    const both = seedFromClient({ name: "Acme", logoUrl: "https://cdn/u.png", brandingGuidelines: { logoUrl: "https://cdn/g.png" } as never });
+    expect(both.logoUrl).toBe("https://cdn/u.png");
+  });
+
   it("a company an admin only named is NOT existing: it gets the scan", () => {
     const seed = seedFromClient({ name: "Acme" });
     expect(seed.existing).toBeUndefined();

@@ -15,10 +15,11 @@ import {
   completeOnboardingAction,
   discoverOnboardingProfileAction,
   ensureOwnEmployeeSeatAction,
+  findOnboardingLogoAction,
   saveOnboardingChatDraftAction,
   saveOnboardingProfileAction,
 } from "@/lib/actions/onboarding-actions";
-import { simulateOnboardingDiscoveryAction } from "@/lib/actions/onboarding-simulation-actions";
+import { simulateOnboardingDiscoveryAction, simulateOnboardingLogoAction } from "@/lib/actions/onboarding-simulation-actions";
 import { HANDLE_PLATFORMS, type ChatAnswers, type ChatDraft, type ChatSeed } from "@/lib/onboarding-chat";
 import { isRtl, tr, type ChatLang, type MsgKey } from "@/lib/onboarding-i18n";
 import type { AppUser } from "@/lib/types";
@@ -83,6 +84,7 @@ export function OnboardingChatWizard({
   const t: T = (key, vars) => tr(lang, key, vars);
 
   const discover = simulation ? simulateOnboardingDiscoveryAction : discoverOnboardingProfileAction;
+  const findLogo = simulation ? simulateOnboardingLogoAction : findOnboardingLogoAction;
   const saveDraft = useCallback(
     (draft: ChatDraft) => {
       if (simulation) return;
@@ -181,6 +183,7 @@ export function OnboardingChatWizard({
           discover={discover}
           saveDraft={saveDraft}
           uploadLogo={uploadLogo}
+          findLogo={findLogo}
           renderProfile={(l, name) => (
             <ProfileControls user={user} name={name} clientId={clientId} lang={l} simulated={!!simulation} />
           )}

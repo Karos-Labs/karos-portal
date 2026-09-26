@@ -60,8 +60,9 @@ describe("onboarding simulation writes nothing", () => {
     expect(wizard).toMatch(/const uploadLogo = simulation\s*\?\s*undefined/);
   });
 
-  it("the scan is the admin action in a simulation", () => {
+  it("the scan and the logo finder are the admin actions in a simulation", () => {
     expect(wizard).toMatch(/simulation \? simulateOnboardingDiscoveryAction : discoverOnboardingProfileAction/);
+    expect(wizard).toMatch(/simulation \? simulateOnboardingLogoAction : findOnboardingLogoAction/);
   });
 
   it("makes the self-writing widgets inert", () => {
@@ -78,5 +79,8 @@ describe("onboarding simulation writes nothing", () => {
     const action = readFileSync(path.join(root, "src/lib/actions/onboarding-simulation-actions.ts"), "utf8");
     expect(action.indexOf("await requireAdmin()")).toBeGreaterThan(0);
     expect(action.indexOf("await requireAdmin()")).toBeLessThan(action.indexOf("discoverOnboardingProfile({"));
+    const logo = action.slice(action.indexOf("export async function simulateOnboardingLogoAction"));
+    expect(logo.indexOf("await requireAdmin()")).toBeGreaterThan(0);
+    expect(logo.indexOf("await requireAdmin()")).toBeLessThan(logo.indexOf("findSiteLogo({"));
   });
 });

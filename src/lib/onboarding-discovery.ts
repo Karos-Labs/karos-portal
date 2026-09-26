@@ -216,6 +216,21 @@ async function describe(
   }
 }
 
+/**
+ * Only the logo: the page's own mark, read the same way the full scan reads
+ * it. No model call and no search, so it is cheap enough to offer as a
+ * button ("find it on our site") and to run on its own for an existing
+ * client whose record has no logo.
+ */
+export async function findSiteLogo(input: { website: string; companyName: string }): Promise<string | null> {
+  const url = publicWebsiteUrl(input.website);
+  if (!url) return null;
+  const page = await fetchHtml(url);
+  if (!page) return null;
+  const brand = input.companyName.trim() || url.hostname.replace(/^www\./, "").split(".")[0]!;
+  return extractSiteMeta(page.html, page.finalUrl, brand).logoUrl;
+}
+
 export async function discoverOnboardingProfile(input: {
   website: string;
   companyName: string;

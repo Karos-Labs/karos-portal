@@ -23,7 +23,7 @@ import { rankSetupLadder } from "@/lib/setup-ladder";
 import { addEmployeeSeatAction } from "./seat-actions";
 import { upsertManualCompetitor } from "@/lib/competitor-upsert";
 import { importLogoFromUrl } from "@/lib/onboarding-logo";
-import { discoverOnboardingProfile } from "@/lib/onboarding-discovery";
+import { discoverOnboardingProfile, findSiteLogo } from "@/lib/onboarding-discovery";
 import { publicWebsiteUrl } from "@/lib/onboarding-discovery-parse";
 import { socialHandleValue } from "@/lib/social-handles";
 import {
@@ -165,7 +165,26 @@ export async function discoverOnboardingProfileAction(input: {
   });
 }
 
-const MAX_ONBOARDING_SCANS = 6;
+/**
+ * "Find our logo on the site", from the logo step. Cheap (one page fetch, no
+ * model), but it still fetches a URL the client typed, so it shares the scan
+ * cap and the once-per-account gate.
+ */
+export async function findOnboardingLogoAction(input: { website: string; companyName: string }): Promise<string | null> {
+  const session = await ownAccountSession();
+  if (!session.ok) throw new Error(session.error);
+  const { user } = session;
+  if (user.role !== "CLIENT_USER" || !user.clientId) throw new Error("Forbidden");
+  await requireFirstOnboarding(user);
+  if (!(await tryCountOnboardingScan(user.uid, MAX_ONBOARDING_SCANS))) return null;
+  return findSiteLogo({
+    website: String(input.website ?? "").slice(0, 500),
+    companyName: String(input.companyName ?? "").slice(0, 200),
+  });
+}
+
+/** Full scans and logo finds together, per account. */
+const MAX_ONBOARDING_SCANS = 10;
 /** A draft is a few KB; anything near this is not one. */
 const MAX_DRAFT_BYTES = 200_000;
 
