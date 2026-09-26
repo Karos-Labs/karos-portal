@@ -10,29 +10,32 @@ import {
   STEPS,
   botLine,
   emptyAnswers,
+  emptyDiscovery,
   isPrefilled,
   looksLikeWebsite,
   nextStep,
-  simulateDiscovery,
   stepIndex,
   stepOptions,
   textSuggestions,
   voiceSamples,
   type ChatAnswers,
+  type ChatDraft,
   type ChatLang,
+  type ChatMessage as Message,
+  type ChatSeed,
+  type Discovery,
   type StepId,
-} from "./script";
+  type VoiceId,
+} from "@/lib/onboarding-chat";
 
-/** Step 1 of the redesigned onboarding: the conversation (PROTOTYPE, simulation only). */
-
-interface Message {
-  id: number;
-  from: "bot" | "user";
-  text: string;
-}
+/**
+ * Step 1 of onboarding: the conversation. Owns the flow only; the wizard
+ * decides what "scan the website", "save the draft" and the personal profile
+ * controls do, so the same chat runs for a real client and in the admin
+ * simulation.
+ */
 
 const TYPING_MS = 550;
-const DISCOVERY_MS = 1800;
 
 const PLATFORM_LABEL: Record<string, string> = {
   instagram: "Instagram",
@@ -45,22 +48,40 @@ const PLATFORM_LABEL: Record<string, string> = {
 
 export function OnboardingChat({
   seed,
+  initialDraft,
+  discover,
+  saveDraft,
+  renderProfile,
   onComplete,
   onLanguageChange,
 }: {
   /** What an existing client's record already answers; empty for a new company. */
-  seed: Partial<ChatAnswers>;
-  onComplete: (answers: ChatAnswers) => void;
+  seed: ChatSeed;
+  /** A conversation saved earlier; resumes at its step. */
+  initialDraft?: ChatDraft | null;
+  /** The website scan. May resolve empty; must not reject (a rejection is treated as empty). */
+  discover: (input: { website: string; companyName: string; language: ChatLang }) => Promise<Discovery>;
+  /** Called with the conversation each time a new question is asked. */
+  saveDraft?: (draft: ChatDraft) => void;
+  /** The photo / CV / LinkedIn controls for the optional personal step. */
+  renderProfile: (lang: ChatLang, name: string) => React.ReactNode;
+  /** `voicePost` is the sample post the client picked, as they saw it. */
+  onComplete: (answers: ChatAnswers, voicePost: string) => void;
   /** The wizard bar above speaks the chat's language too. */
   onLanguageChange?: (lang: ChatLang) => void;
 }) {
-  const [answers, setAnswers] = useState<ChatAnswers>(() => ({ ...emptyAnswers(), ...seed }));
-  const [step, setStep] = useState<StepId>("language");
-  const [messages, setMessages] = useState<Message[]>(() => [
-    { id: 0, from: "bot", text: botLine("language", "en", { ...emptyAnswers(), ...seed }, false) },
-  ]);
+  const [answers, setAnswers] = useState<ChatAnswers>(
+    () => initialDraft?.answers ?? { ...emptyAnswers(), ...withoutBrandVoice(seed) },
+  );
+  const [step, setStep] = useState<StepId>(initialDraft?.step ?? "language");
+  const [messages, setMessages] = useState<Message[]>(() =>
+    initialDraft?.messages.length
+      ? initialDraft.messages
+      : [{ id: 0, from: "bot", text: botLine("language", "en", emptyAnswers(), false) }],
+  );
+  const [written, setWritten] = useState<{ id: VoiceId; post: string }[]>(initialDraft?.voiceSamples ?? []);
   const [typing, setTyping] = useState<string | null>(null);
-  const nextId = useRef(1);
+  const nextId = useRef((initialDraft?.messages.length ?? 1) + 1);
   const scrollRef = useRef<HTMLDivElement>(null);
   const lang = answers.language;
   const he = lang === "he";
@@ -73,47 +94,49 @@ export function OnboardingChat({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, typing, step]);
 
-  function push(from: Message["from"], text: string) {
-    setMessages((m) => [...m, { id: nextId.current++, from, text }]);
-  }
-
   /** Record an answer, echo it as the user's bubble, and ask the next question. */
   function answer(patch: Partial<ChatAnswers>, echo: string) {
     const merged = { ...answers, ...patch };
     setAnswers(merged);
-    push("user", echo);
+    const userMessage: Message = { id: nextId.current++, from: "user", text: echo };
+    const transcript = [...messages, userMessage];
+    setMessages(transcript);
     const next = nextStep(step);
 
-    // `typing` is set before every timer below, which hides the composer
-    // until the next question is on screen - no double answers.
-    const ask = (a: ChatAnswers) => {
+    // `typing` is set before the next question arrives, which hides the
+    // composer until it is on screen - no double answers.
+    const ask = (a: ChatAnswers, samples: { id: VoiceId; post: string }[]) => {
       setTyping(null);
-      push("bot", botLine(next, a.language, a, isPrefilled(next, seed)));
+      const botMessage: Message = { id: nextId.current++, from: "bot", text: botLine(next, a.language, a, isPrefilled(next, seed)) };
+      setMessages([...transcript, botMessage]);
       setStep(next);
+      saveDraft?.({ step: next, answers: a, messages: [...transcript, botMessage], voiceSamples: samples });
     };
 
-    // The website answer starts the scan. An existing client who kept the
-    // stored site keeps their stored accounts and brand too; only fields the
-    // record leaves empty are filled from the scan.
+    // The website answer starts the scan. What the client's record already
+    // holds is kept; the scan only fills what it leaves empty.
     if (step === "website") {
       setTyping(he ? `בודק את ${merged.website}…` : `Looking at ${merged.website}…`);
-      setTimeout(() => {
-        const found = simulateDiscovery(merged.website, merged.companyName);
-        const withScan: ChatAnswers = {
-          ...merged,
-          handles: Object.keys(merged.handles).length ? merged.handles : found.handles,
-          category: merged.category || found.category,
-          description: merged.description || found.description,
-          colors: merged.colors.length ? merged.colors : found.colors,
-          competitors: merged.competitors.length ? merged.competitors : found.competitors,
-        };
-        setAnswers(withScan);
-        ask(withScan);
-      }, DISCOVERY_MS);
+      discover({ website: merged.website, companyName: merged.companyName, language: merged.language })
+        .catch(() => emptyDiscovery())
+        .then((found) => {
+          const withScan: ChatAnswers = {
+            ...merged,
+            handles: Object.keys(merged.handles).length ? merged.handles : found.handles,
+            category: merged.category || found.category,
+            description: merged.description || found.description,
+            colors: merged.colors.length ? merged.colors : found.colors,
+            logoUrl: merged.logoUrl || found.logoUrl,
+            competitors: merged.competitors.length ? merged.competitors : found.competitors,
+          };
+          setAnswers(withScan);
+          setWritten(found.voiceSamples);
+          ask(withScan, found.voiceSamples);
+        });
       return;
     }
     setTyping("");
-    setTimeout(() => ask(merged), TYPING_MS);
+    setTimeout(() => ask(merged, written), TYPING_MS);
   }
 
   const current = STEPS.find((s) => s.id === step);
@@ -180,13 +203,27 @@ export function OnboardingChat({
             lang={lang}
             answers={answers}
             prefilled={isPrefilled(step, seed)}
+            written={written}
+            renderProfile={renderProfile}
             onAnswer={answer}
-            onComplete={() => onComplete(answers)}
+            onComplete={() =>
+              onComplete(
+                answers,
+                answers.voice ? voiceSamples(answers.companyName, lang, written).find((v) => v.id === answers.voice)?.post ?? "" : "",
+              )
+            }
           />
         )}
       </div>
     </div>
   );
+}
+
+/** The stored brand voice is the seed's business (it decides the voice step), not an answer. */
+function withoutBrandVoice(seed: ChatSeed): Partial<ChatAnswers> {
+  const rest: ChatSeed = { ...seed };
+  delete rest.brandVoice;
+  return rest;
 }
 
 /* ── pieces ─────────────────────────────────────────────────────────── */
@@ -315,6 +352,8 @@ function Composer({
   lang,
   answers,
   prefilled,
+  written,
+  renderProfile,
   onAnswer,
   onComplete,
 }: {
@@ -323,6 +362,8 @@ function Composer({
   lang: ChatLang;
   answers: ChatAnswers;
   prefilled: boolean;
+  written: { id: VoiceId; post: string }[];
+  renderProfile: (lang: ChatLang, name: string) => React.ReactNode;
   onAnswer: (patch: Partial<ChatAnswers>, echo: string) => void;
   onComplete: () => void;
 }) {
@@ -344,11 +385,18 @@ function Composer({
     case "voice":
       return (
         <div className="grid gap-2">
-          {voiceSamples(answers.companyName, lang).map((v) => (
+          {prefilled && (
+            <div>
+              <Chip onClick={() => onAnswer({ keepVoice: true, voice: "" }, t("Keep our current voice", "להשאיר את הטון הנוכחי"))}>
+                {t("Keep our current voice", "להשאיר את הטון הנוכחי")}
+              </Chip>
+            </div>
+          )}
+          {voiceSamples(answers.companyName, lang, written).map((v) => (
             <button
               key={v.id}
               type="button"
-              onClick={() => onAnswer({ voice: v.id }, `${v.label}`)}
+              onClick={() => onAnswer({ voice: v.id, keepVoice: false }, v.label)}
               className="rounded-[12px] border border-border bg-surface p-3 text-start transition-colors hover:border-neon"
             >
               <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted-2">{v.label}</span>
@@ -362,18 +410,7 @@ function Composer({
     case "profile":
       return (
         <div className="space-y-3">
-          <div inert className="grid gap-2 opacity-70 sm:grid-cols-3" title="Disabled in simulation">
-            {[
-              { icon: "Camera", label: t("Add a photo", "הוספת תמונה") },
-              { icon: "FileText", label: t("Upload CV", "העלאת קורות חיים") },
-              { icon: "LogIn", label: t("Connect LinkedIn", "חיבור LinkedIn") },
-            ].map((b) => (
-              <div key={b.icon} className="flex items-center gap-2 rounded-[10px] border border-dashed border-border px-3 py-2.5 text-sm text-muted">
-                <Icon name={b.icon} className="h-4 w-4" />
-                {b.label}
-              </div>
-            ))}
-          </div>
+          {renderProfile(lang, answers.name)}
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => onAnswer({ profile: "skipped" }, t("Skip for now", "אדלג בינתיים"))}>
               {t("Skip for now", "אדלג בינתיים")}
@@ -591,13 +628,7 @@ function BrandComposer({
   return (
     <div className="space-y-3">
       <div className="flex gap-4 rounded-[12px] border border-border bg-surface p-4">
-        <div
-          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[12px] text-xl font-semibold text-white"
-          style={{ background: accent }}
-          aria-hidden
-        >
-          {initial}
-        </div>
+        <BrandMark logoUrl={answers.logoUrl ?? null} initial={initial} accent={accent} />
         <div className="min-w-0 flex-1 space-y-2">
           {editing ? (
             <>
@@ -631,6 +662,28 @@ function BrandComposer({
           {t("That's us", "זה אנחנו")}
         </Button>
       </div>
+    </div>
+  );
+}
+
+/** The logo the scan found, on a white tile; the initial on the accent when there is none or it fails to load. */
+function BrandMark({ logoUrl, initial, accent }: { logoUrl: string | null; initial: string; accent: string }) {
+  const [failed, setFailed] = useState(false);
+  if (logoUrl && !failed) {
+    return (
+      <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-[12px] border border-border bg-white p-1.5">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={logoUrl} alt="" className="max-h-full max-w-full object-contain" onError={() => setFailed(true)} />
+      </div>
+    );
+  }
+  return (
+    <div
+      className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[12px] text-xl font-semibold text-white"
+      style={{ background: accent }}
+      aria-hidden
+    >
+      {initial}
     </div>
   );
 }
@@ -718,7 +771,9 @@ function SummaryComposer({
     .map((o) => o.label)
     .join(", ");
   const handles = HANDLE_PLATFORMS.filter((p) => answers.handles[p]).map((p) => PLATFORM_LABEL[p]).join(", ");
-  const voice = voiceSamples(answers.companyName, lang).find((v) => v.id === answers.voice)?.label ?? "";
+  const voice = answers.keepVoice
+    ? t("Kept the current voice", "הטון הנוכחי נשאר")
+    : (voiceSamples(answers.companyName, lang).find((v) => v.id === answers.voice)?.label ?? "");
   const rows: [string, string][] = [
     [t("You", "את/ה"), [answers.name, answers.role].filter(Boolean).join(" · ")],
     [t("Company", "חברה"), [answers.companyName, answers.website].filter(Boolean).join(" · ")],
@@ -737,7 +792,7 @@ function SummaryComposer({
           <div key={k} className="grid grid-cols-[120px_1fr] gap-3 px-3 py-1.5">
             <dt className="text-muted-2">{k}</dt>
             <dd dir="auto" className="break-words">
-              {v || <span className="text-muted-2">-</span>}
+              {v || <span className="text-muted-2">{t("Not set", "לא הוזן")}</span>}
             </dd>
           </div>
         ))}

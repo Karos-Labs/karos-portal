@@ -154,9 +154,9 @@ export const AI_ROLES = {
   "competitor.analysis": {
     tier: "SONNET",
     sites: [
-      "src/lib/actions/competitor-actions.ts:111",
-      "src/lib/actions/competitor-actions.ts:185",
-      "src/lib/actions/competitor-actions.ts:309",
+      "src/lib/actions/competitor-actions.ts:47",
+      "src/lib/actions/competitor-actions.ts:121",
+      "src/lib/actions/competitor-actions.ts:245",
     ],
   },
   // HAIKU, not SONNET: both sites read a local `const MODEL = MODELS.HAIKU`.
@@ -268,6 +268,11 @@ export const AI_ROLES = {
   },
   "agent_swarm.step": { tier: "HAIKU", sites: ["src/lib/agent-swarm.ts:294"] },
   "asset.title": { tier: "HAIKU", sites: ["src/lib/asset-titles.ts:51"] },
+  // The onboarding website scan: category, one-line description, competitors
+  // and three sample posts from a page's text. Runs once per website a new
+  // client types, before they have any context documents; HAIKU because every
+  // field is a suggestion the client confirms on the next card.
+  "onboarding.discover": { tier: "HAIKU", sites: ["src/lib/onboarding-discovery.ts:198"] },
   "campaign.plan": { tier: "SONNET", sites: ["src/lib/campaign-engine.ts:266"] },
   "dynamic_agent.generate": {
     tier: "SONNET",

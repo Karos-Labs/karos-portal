@@ -4,7 +4,8 @@ import { getClient, listClientIntegrations } from "@/lib/data";
 import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
 import { sanitizeIntegrations, sanitizeLinkedinSeats } from "@/lib/integrations/sanitize";
 import { CREDIT_COSTS, DEFAULT_LINKEDIN_SEAT_LIMIT } from "@/lib/credits";
-import { OnboardingWizard } from "@/components/onboarding-wizard";
+import { sanitizeChatDraft, seedFromClient } from "@/lib/onboarding-chat";
+import { OnboardingChatWizard } from "@/components/onboarding-chat/onboarding-chat-wizard";
 import type { ClientIntegration, EmployeeSeat } from "@/lib/types";
 
 export const metadata = { title: "Welcome · Karos CMO" };
@@ -41,9 +42,13 @@ export default async function OnboardingPage({
   const linkedinSeats = sanitizeLinkedinSeats(linkedIntegration?.employeeSeats as EmployeeSeat[] | undefined);
 
   return (
-    <OnboardingWizard
+    <OnboardingChatWizard
       user={user}
-      client={client}
+      clientId={client.id}
+      // A workspace an admin already filled in (an invited user of an existing
+      // client) opens its steps as "still right?"; a blank one just asks.
+      seed={seedFromClient(client)}
+      initialDraft={sanitizeChatDraft(user.onboardingChatDraft)}
       notice={notice}
       integrations={sanitizeIntegrations(rawIntegrations)}
       oauthEnabledPlatforms={getOAuthEnabledPlatforms()}

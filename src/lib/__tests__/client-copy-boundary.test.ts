@@ -1171,7 +1171,7 @@ describe("the pages and components a client's browser renders", () => {
     // And the component tree: the wizard step and the Reddit review surface both
     // carried offences, so both have to be reachable from a root.
     const mods = new Set(CLIENT_RENDER_MODULES.map(toRel));
-    expect(mods.has("components/onboarding-socials-step.tsx")).toBe(true);
+    expect(mods.has("components/onboarding-chat/onboarding-chat-wizard.tsx")).toBe(true);
     expect(mods.has("components/reddit-drafts-review.tsx")).toBe(true);
     expect(mods.has("components/integrations-tab.tsx")).toBe(true);
     expect(CLIENT_RENDER_MODULES.length).toBeGreaterThan(100);

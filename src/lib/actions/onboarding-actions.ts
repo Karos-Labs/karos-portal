@@ -8,6 +8,8 @@ import {
   upsertUser,
   completeOnboarding,
   clearUserPhone,
+  saveOnboardingChatDraft,
+  tryCountOnboardingScan,
   getClient,
   listClientIntegrations,
   listCustomAgents,
@@ -20,6 +22,21 @@ import { integrationIsUsable } from "@/lib/integration-status";
 import { rankSetupLadder } from "@/lib/setup-ladder";
 import { clampClientCategoryValue } from "@/lib/utils";
 import { addEmployeeSeatAction } from "./seat-actions";
+import { upsertManualCompetitor } from "@/lib/competitor-upsert";
+import { discoverOnboardingProfile } from "@/lib/onboarding-discovery";
+import { publicWebsiteUrl } from "@/lib/onboarding-discovery-parse";
+import { socialHandleValue } from "@/lib/social-handles";
+import {
+  HANDLE_PLATFORMS,
+  brandVoiceFromSample,
+  emptyDiscovery,
+  intelBriefFromAnswers,
+  sanitizeChatAnswers,
+  sanitizeChatDraft,
+  type ChatLang,
+  type Discovery,
+} from "@/lib/onboarding-chat";
+import type { SocialLinks } from "@/lib/types";
 
 /**
  * Decide and store the order Home's "Get set up" ladder walks this client
@@ -122,20 +139,64 @@ export async function ensureOwnEmployeeSeatAction(): Promise<{ seatId: string } 
 }
 
 /**
- * Step 2 "Finish Setup" — persists the final profile fields, flips
- * hasCompletedOnboarding + the workspace patch in one transaction, then redirects.
+ * The website scan behind the chat's "Looking at acme.com…" (see
+ * lib/onboarding-discovery.ts). Suggestions only; nothing is written to the
+ * client here. Free, like the rest of onboarding provisioning, which is what
+ * `requireFirstOnboarding` makes affordable; capped per account on top so an
+ * unfinished onboarding cannot be used as a free scraper.
+ */
+export async function discoverOnboardingProfileAction(input: {
+  website: string;
+  companyName: string;
+  language: ChatLang;
+}): Promise<Discovery> {
+  const session = await ownAccountSession();
+  if (!session.ok) throw new Error(session.error);
+  const { user } = session;
+  if (user.role !== "CLIENT_USER" || !user.clientId) throw new Error("Forbidden");
+  await requireFirstOnboarding(user);
+  if (!(await tryCountOnboardingScan(user.uid, MAX_ONBOARDING_SCANS))) return emptyDiscovery();
+  return discoverOnboardingProfile({
+    website: String(input.website ?? "").slice(0, 500),
+    companyName: String(input.companyName ?? "").slice(0, 200),
+    language: input.language === "he" ? "he" : "en",
+    clientId: user.clientId,
+  });
+}
+
+const MAX_ONBOARDING_SCANS = 6;
+/** A draft is a few KB; anything near this is not one. */
+const MAX_DRAFT_BYTES = 200_000;
+
+/** Saves the conversation after every answer, so leaving (or LinkedIn's round trip) loses nothing. */
+export async function saveOnboardingChatDraftAction(draft: unknown): Promise<void> {
+  const session = await ownAccountSession();
+  if (!session.ok) throw new Error(session.error);
+  const { user } = session;
+  if (user.role !== "CLIENT_USER" || !user.clientId) throw new Error("Forbidden");
+  // Only while onboarding is open: a finished account has no draft to keep.
+  await requireFirstOnboarding(user);
+  const clean = sanitizeChatDraft(draft);
+  if (!clean || JSON.stringify(clean).length > MAX_DRAFT_BYTES) return;
+  await saveOnboardingChatDraft(user.uid, clean);
+}
+
+/**
+ * "Finish setup": writes everything the conversation collected, flips
+ * hasCompletedOnboarding in the same transaction, then starts the first
+ * research in the background and redirects Home.
+ *
+ * Where each answer lands:
+ *   name → the user and their auth profile; company, website, category,
+ *   description, brand voice, social accounts → the client record (the same
+ *   fields Settings edits); competitors → the competitor list as manual rows;
+ *   role, goals, audience, languages → `client.onboardingProfile`, and into the
+ *   first Intel Report's brief so the research starts from them.
  */
 export async function completeOnboardingAction(input: {
-  name: string;
-  phone?: string;
-  clientName: string;
-  /**
-   * The wizard's "Industry / niche" box. It writes `category` — the ONE field
-   * behind the profile chip — and not the legacy `industry` it used to, so a
-   * client's very first answer lands where their own editor will find it.
-   */
-  category?: string;
-  brandVoice?: string;
+  answers: unknown;
+  /** The sample post the client picked, as shown to them. */
+  voicePost?: string;
 }): Promise<void> {
   const session = await ownAccountSession();
   if (!session.ok) throw new Error(session.error);
@@ -146,24 +207,61 @@ export async function completeOnboardingAction(input: {
   // and a redirect does not gate a server action.
   await requireFirstOnboarding(user);
 
-  const name = input.name.trim();
+  const answers = sanitizeChatAnswers(input.answers);
+  const name = answers.name;
   if (!name) throw new Error("Name cannot be empty.");
-  const clientName = input.clientName.trim();
+  const clientName = answers.companyName;
   if (!clientName) throw new Error("Company name is required.");
 
-  const phone = input.phone?.trim();
-  await upsertUser({ ...user, name, ...(phone ? { phone } : {}) });
-  if (!phone && user.phone) await clearUserPhone(user.uid);
+  await upsertUser({ ...user, name });
   await adminAuth().updateUser(user.uid, { displayName: name }).catch(() => {});
 
+  const existing = await getClient(user.clientId);
+  // The accounts card is the whole answer for the six networks it lists: a
+  // handle marked "not ours" is REMOVED, not kept from before. Other keys
+  // (website, and networks the card does not ask about) are left alone.
+  const socialLinks: SocialLinks = { ...(existing?.socialLinks ?? {}) };
+  for (const p of HANDLE_PLATFORMS) {
+    const key = p as keyof SocialLinks;
+    const v = answers.handles[p];
+    if (typeof v === "string" && v.trim()) socialLinks[key] = socialHandleValue(p, v);
+    else if (v === null) delete socialLinks[key];
+  }
+  const website = publicWebsiteUrl(answers.website)?.toString().replace(/\/$/, "");
+  const voicePost = typeof input.voicePost === "string" ? input.voicePost.slice(0, 800) : "";
+  const brandVoice =
+    answers.keepVoice || !answers.voice || !voicePost.trim() ? undefined : brandVoiceFromSample(answers.voice, voicePost);
   // Clamped on the way in, like every other write to this field: the chip that
   // will show it has one line, whichever form typed it.
-  const category = clampClientCategoryValue(input.category);
+  const category = clampClientCategoryValue(answers.category);
+
   await completeOnboarding(user.uid, user.clientId, {
     name: clientName,
-    category: category || undefined,
-    brandVoice: input.brandVoice?.trim() || undefined,
+    ...(category ? { category } : {}),
+    ...(brandVoice ? { brandVoice } : {}),
+    ...(website ? { website } : {}),
+    ...(answers.description ? { description: answers.description } : {}),
+    socialLinks,
+    onboardingProfile: {
+      completedBy: user.uid,
+      completedAt: Date.now(),
+      ...(answers.role ? { role: answers.role } : {}),
+      ...(answers.goals.length ? { goals: answers.goals } : {}),
+      ...(answers.audience ? { audience: answers.audience } : {}),
+      ...(answers.contentLanguages.length ? { contentLanguages: answers.contentLanguages } : {}),
+      chatLanguage: answers.language,
+    },
   });
+
+  // Competitors the client named or kept, as manual rows (a matching report
+  // row is promoted rather than duplicated). One failing name never fails the
+  // onboarding: the client is already set up by this point.
+  for (const competitor of answers.competitors.slice(0, 8)) {
+    await upsertManualCompetitor(user.clientId, competitor).catch((e) =>
+      console.error("[onboarding] Could not save competitor", competitor, e),
+    );
+  }
+  const intelBrief = intelBriefFromAnswers(answers);
 
   // Fire-and-forget: build the client's Intel Report + SEO/GEO + Task Map from
   // the freshly-entered workspace details so they land in a tailored workspace
@@ -190,7 +288,7 @@ export async function completeOnboardingAction(input: {
       // failing — and Home then had to recompute it on every render for a
       // client whose onboarding had "succeeded".
       await writeSetupLadderOrder(clientId);
-      await runIntelReportPipeline(clientId);
+      await runIntelReportPipeline(clientId, intelBrief || undefined);
       await updateClient(clientId, { lastIntelReportAt: Date.now() });
       const context = await buildSwarmContext(clientId);
       await runSwarmToCompletion({ clientId, createdBy, context });
