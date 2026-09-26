@@ -1,5 +1,8 @@
 import type { SocialPlatform } from "@/components/agent-identity";
 import type { Client } from "@/lib/types";
+import { CHAT_LANGUAGES, OPENING_MESSAGE, isChatLang, languageName, tr, type ChatLang, type MsgKey } from "@/lib/onboarding-i18n";
+
+export type { ChatLang } from "@/lib/onboarding-i18n";
 
 /**
  * The onboarding conversation, as data (2026-09-26).
@@ -9,16 +12,20 @@ import type { Client } from "@/lib/types";
  * keeps the flow predictable, cheap and testable, and lets every answer be
  * saved the moment it is given so a client can leave and come back.
  *
- * Owner rulings (2026-09-26): the personal profile is asked inside the chat as
- * an optional last question; handle discovery uses ScrappyCoco; the client
- * chooses the chat language, English by default.
+ * Owner rulings (2026-09-26):
+ *   - the language is a dropdown at the top (nine languages), not a question;
+ *     the opening message is English only;
+ *   - handles are found automatically for a NEW company and confirmed; an
+ *     EXISTING client's accounts, logo and competitors come from the database
+ *     to confirm or change, with no scan;
+ *   - the logo is found automatically too, then approved, replaced or skipped;
+ *   - the rest of the brand (palette, category, description) is NOT asked: the
+ *     Intel Report and SEO/GEO research after Finish produce it;
+ *   - the personal profile is an optional last question.
  *
- * Pure and client-safe: no React, no I/O. The website scan itself is
- * `src/lib/onboarding-discovery.ts` (server); this module owns only the shape
- * it returns (`Discovery`) and what the chat does with it.
+ * Pure and client-safe: no React, no I/O. Words live in lib/onboarding-i18n.ts;
+ * the website scan is lib/onboarding-discovery.ts (server).
  */
-
-export type ChatLang = "en" | "he";
 
 /** The networks the handles card asks about, in the order it lists them. */
 export const HANDLE_PLATFORMS: SocialPlatform[] = ["instagram", "linkedin", "facebook", "x", "tiktok", "youtube"];
@@ -33,10 +40,14 @@ export interface ChatAnswers {
   website: string;
   /** A handle, or null for "we don't have one". Absent = not asked yet. */
   handles: Partial<Record<SocialPlatform, string | null>>;
-  category: string;
-  description: string;
-  colors: string[];
-  logoUrl?: string | null;
+  /** The logo on screen at the logo step: the scan's, an upload, or the one on file. */
+  logoUrl?: string;
+  /**
+   * What the client did with it. "scan" = approved the found logo (stored at
+   * Finish); "upload" = uploaded their own (already stored by the upload);
+   * "kept" = kept the one on file; "skipped" = none for now.
+   */
+  logoSource?: "scan" | "upload" | "kept" | "skipped";
   goals: string[];
   audience: string;
   competitors: string[];
@@ -49,13 +60,12 @@ export interface ChatAnswers {
 }
 
 export type StepId =
-  | "language"
   | "name"
   | "role"
   | "company"
   | "website"
   | "handles"
-  | "brand"
+  | "logo"
   | "goals"
   | "audience"
   | "competitors"
@@ -64,22 +74,21 @@ export type StepId =
   | "profile"
   | "done";
 
-export type StepKind = "choice" | "text" | "url" | "handles" | "brand" | "multi" | "voice" | "profile" | "summary";
+export type StepKind = "choice" | "text" | "url" | "handles" | "logo" | "multi" | "voice" | "profile" | "summary";
 
 export interface StepDef {
   id: StepId;
   kind: StepKind;
 }
 
-/** The conversation, in order. Every client walks all of it; an existing client's steps open pre-filled. */
+/** The conversation, in order. The opening message asks the first one. */
 export const STEPS: StepDef[] = [
-  { id: "language", kind: "choice" },
   { id: "name", kind: "text" },
   { id: "role", kind: "choice" },
   { id: "company", kind: "text" },
   { id: "website", kind: "url" },
   { id: "handles", kind: "handles" },
-  { id: "brand", kind: "brand" },
+  { id: "logo", kind: "logo" },
   { id: "goals", kind: "multi" },
   { id: "audience", kind: "text" },
   { id: "competitors", kind: "multi" },
@@ -97,9 +106,6 @@ export function emptyAnswers(): ChatAnswers {
     companyName: "",
     website: "",
     handles: {},
-    category: "",
-    description: "",
-    colors: [],
     goals: [],
     audience: "",
     competitors: [],
@@ -109,30 +115,33 @@ export function emptyAnswers(): ChatAnswers {
   };
 }
 
-/** What an existing client's record answers; the chat opens those steps as "still right?". */
-export type ChatSeed = Partial<ChatAnswers> & { brandVoice?: string };
+/**
+ * What the client's record already answers. `existing` = this workspace was
+ * set up before (a website, accounts or a logo on file): the chat then
+ * confirms what is stored instead of scanning the website for it.
+ */
+export type ChatSeed = Partial<ChatAnswers> & { brandVoice?: string; existing?: boolean };
 
 export function seedFromClient(
-  client: Pick<
-    Client,
-    "name" | "website" | "socialLinks" | "category" | "description" | "brandingGuidelines" | "logoUrl" | "brandVoice"
-  >,
+  client: Pick<Client, "name" | "website" | "socialLinks" | "brandVoice" | "logoUrl">,
+  competitors: readonly string[] = [],
 ): ChatSeed {
   const handles: ChatAnswers["handles"] = {};
   for (const p of HANDLE_PLATFORMS) {
     const v = client.socialLinks?.[p as keyof NonNullable<Client["socialLinks"]>];
     if (typeof v === "string" && v.trim()) handles[p] = v.trim();
   }
-  const colors = (client.brandingGuidelines?.dominantColors ?? []).map((c) => c.hex).filter(Boolean).slice(0, 4);
+  const hasHandles = Object.keys(handles).length > 0;
+  const existing = Boolean(client.website?.trim() || hasHandles || client.logoUrl);
+  const names = competitors.map((c) => c.trim()).filter(Boolean).slice(0, 8);
   return {
     ...(client.name ? { companyName: client.name } : {}),
     ...(client.website ? { website: client.website } : {}),
-    ...(Object.keys(handles).length ? { handles } : {}),
-    ...(client.category ? { category: client.category } : {}),
-    ...(client.description ? { description: client.description } : {}),
-    ...(colors.length ? { colors } : {}),
-    ...(client.logoUrl ? { logoUrl: client.logoUrl } : {}),
+    ...(hasHandles ? { handles } : {}),
     ...(client.brandVoice?.trim() ? { brandVoice: client.brandVoice.trim() } : {}),
+    ...(client.logoUrl ? { logoUrl: client.logoUrl } : {}),
+    ...(names.length ? { competitors: names } : {}),
+    ...(existing ? { existing: true } : {}),
   };
 }
 
@@ -143,12 +152,14 @@ export function looksLikeWebsite(value: string): boolean {
   return /^(https?:\/\/)?[a-z0-9-]+(\.[a-z0-9-]+)+(\/.*)?$/i.test(v);
 }
 
-/** What the website scan found. Every field may come back empty; the chat then just asks. */
+/**
+ * What the website scan found. Every field may come back empty; the chat then
+ * just asks. Accounts, logo, competitors and sample posts only: the rest of
+ * the brand is the research's job after Finish, and appears in the client's
+ * workspace when it is ready.
+ */
 export interface Discovery {
   handles: Partial<Record<SocialPlatform, string | null>>;
-  category: string;
-  description: string;
-  colors: string[];
   logoUrl: string | null;
   competitors: string[];
   /** Three sample posts about THIS company, in the chat language. Empty = the built-in examples. */
@@ -156,8 +167,14 @@ export interface Discovery {
 }
 
 export function emptyDiscovery(): Discovery {
-  return { handles: {}, category: "", description: "", colors: [], logoUrl: null, competitors: [], voiceSamples: [] };
+  return { handles: {}, logoUrl: null, competitors: [], voiceSamples: [] };
 }
+
+const VOICE_KEYS: Record<VoiceId, { label: MsgKey; post: MsgKey }> = {
+  bold: { label: "voiceBold", post: "voicePostBold" },
+  warm: { label: "voiceWarm", post: "voicePostWarm" },
+  expert: { label: "voiceExpert", post: "voicePostExpert" },
+};
 
 /**
  * Three sample posts in three tones. The client picks one instead of describing
@@ -169,20 +186,12 @@ export function voiceSamples(
   lang: ChatLang,
   written: readonly { id: VoiceId; post: string }[] = [],
 ): { id: VoiceId; label: string; post: string }[] {
-  const n = companyName || (lang === "he" ? "החברה שלכם" : "your company");
-  const fallback: { id: VoiceId; label: string; post: string }[] =
-    lang === "he"
-      ? [
-          { id: "bold", label: "נועז", post: `רוב הצוותים מבזבזים חצי שבוע על עבודה ידנית. ב-${n} החלטנו שזה נגמר. הנה איך.` },
-          { id: "warm", label: "חם", post: `כל לקוח שלנו התחיל באותה שאלה: "אפשר לעשות את זה פשוט יותר?" ב-${n} התשובה היא כן, ואנחנו כאן לאורך כל הדרך.` },
-          { id: "expert", label: "מומחה", post: `ניתחנו 200 תהליכי עבודה בשנה האחרונה. שלושה דפוסים חוזרים בכל ארגון שמצליח, והנה מה ש-${n} למדה מהם.` },
-        ]
-      : [
-          { id: "bold", label: "Bold", post: `Most teams lose half their week to busywork. At ${n}, we decided that ends now. Here's how.` },
-          { id: "warm", label: "Warm", post: `Every customer we work with starts with the same question: "Can this be simpler?" At ${n}, the answer is yes, and we're with you the whole way.` },
-          { id: "expert", label: "Expert", post: `We analysed 200 workflows last year. Three patterns show up in every team that wins, and here's what ${n} learned from them.` },
-        ];
-  return fallback.map((v) => ({ ...v, post: written.find((w) => w.id === v.id)?.post.trim() || v.post }));
+  const company = companyName || tr(lang, "yourCompany");
+  return (Object.keys(VOICE_KEYS) as VoiceId[]).map((id) => ({
+    id,
+    label: tr(lang, VOICE_KEYS[id].label),
+    post: written.find((w) => w.id === id)?.post.trim() || tr(lang, VOICE_KEYS[id].post, { company }),
+  }));
 }
 
 /** How each tone is described to the writing agents once a client picks it. */
@@ -206,60 +215,39 @@ export interface Option {
   label: string;
 }
 
-/** The chips a choice/multi step offers. */
+const ROLES: [string, MsgKey][] = [
+  ["Founder / CEO", "roleFounder"],
+  ["Marketing", "roleMarketing"],
+  ["Sales", "roleSales"],
+  ["Operations", "roleOperations"],
+];
+
+const GOALS: [string, MsgKey][] = [
+  ["leads", "goalLeads"],
+  ["awareness", "goalAwareness"],
+  ["thought-leadership", "goalThoughtLeadership"],
+  ["hiring", "goalHiring"],
+  ["community", "goalCommunity"],
+  ["launch", "goalLaunch"],
+];
+
+/** The chips a choice/multi step offers. Values are stable English ids; labels are in `lang`. */
 export function stepOptions(id: StepId, lang: ChatLang, answers: ChatAnswers): Option[] {
-  const he = lang === "he";
   switch (id) {
-    case "language":
-      return [
-        { value: "en", label: "English" },
-        { value: "he", label: "עברית" },
-      ];
     case "role":
-      return he
-        ? [
-            { value: "Founder / CEO", label: "מייסד/ת או מנכ״ל/ית" },
-            { value: "Marketing", label: "שיווק" },
-            { value: "Sales", label: "מכירות" },
-            { value: "Operations", label: "תפעול" },
-          ]
-        : [
-            { value: "Founder / CEO", label: "Founder / CEO" },
-            { value: "Marketing", label: "Marketing" },
-            { value: "Sales", label: "Sales" },
-            { value: "Operations", label: "Operations" },
-          ];
+      return ROLES.map(([value, key]) => ({ value, label: tr(lang, key) }));
     case "goals":
-      return he
-        ? [
-            { value: "leads", label: "יותר לידים" },
-            { value: "awareness", label: "מודעות למותג" },
-            { value: "thought-leadership", label: "מובילות מחשבתית" },
-            { value: "hiring", label: "גיוס" },
-            { value: "community", label: "קהילה" },
-            { value: "launch", label: "השקת מוצר" },
-          ]
-        : [
-            { value: "leads", label: "More leads" },
-            { value: "awareness", label: "Brand awareness" },
-            { value: "thought-leadership", label: "Thought leadership" },
-            { value: "hiring", label: "Hiring" },
-            { value: "community", label: "Community" },
-            { value: "launch", label: "Product launch" },
-          ];
+      return GOALS.map(([value, key]) => ({ value, label: tr(lang, key) }));
     case "competitors":
       return answers.competitors.map((c) => ({ value: c, label: c }));
     case "contentLanguage":
-      return [
-        { value: "en", label: he ? "אנגלית" : "English" },
-        { value: "he", label: he ? "עברית" : "Hebrew" },
-      ];
+      return CHAT_LANGUAGES.map((l) => ({ value: l.code, label: l.label }));
     default:
       return [];
   }
 }
 
-/** The English name of a goal, whatever language the chip was shown in. */
+/** The English name of a goal, for the research brief. */
 export function goalLabel(value: string): string {
   return stepOptions("goals", "en", emptyAnswers()).find((o) => o.value === value)?.label ?? value;
 }
@@ -267,89 +255,50 @@ export function goalLabel(value: string): string {
 /** Quick-fill suggestions under a free-text step. */
 export function textSuggestions(id: StepId, lang: ChatLang): string[] {
   if (id !== "audience") return [];
-  return lang === "he"
-    ? ["מנהלי שיווק בחברות B2B", "מייסדים של סטארטאפים", "לקוחות פרטיים בישראל"]
-    : ["Marketing leads at B2B companies", "Startup founders", "Consumers in the US"];
+  return (["audienceSuggestion1", "audienceSuggestion2", "audienceSuggestion3"] as const).map((k) => tr(lang, k));
 }
 
 /**
- * The bot's line for a step. `prefilled` = an existing client's record already
- * answers it, so the line is a verification, not a question.
+ * The bot's line for a step.
+ *   prefilled: the client's record already answers THIS step (a verification);
+ *   existing:  the workspace was set up before (no scan ran; say "on file").
  */
-export function botLine(id: StepId, lang: ChatLang, a: ChatAnswers, prefilled: boolean): string {
-  const he = lang === "he";
+export function botLine(id: StepId, lang: ChatLang, a: ChatAnswers, ctx: { prefilled: boolean; existing: boolean }): string {
   const first = a.name.trim().split(/\s+/)[0] ?? "";
   switch (id) {
-    case "language":
-      return "Hi, I'm Karos. I'll set up your workspace in a few quick questions. Which language should we talk in?\n\nהיי, אני קארוס. באיזו שפה נדבר?";
     case "name":
-      return he ? "מעולה. איך קוראים לך?" : "Great. What's your name?";
+      // The opening message asks it, in English whatever the dropdown says.
+      return OPENING_MESSAGE;
     case "role":
-      return he ? `נעים מאוד${first ? `, ${first}` : ""}. מה התפקיד שלך?` : `Nice to meet you${first ? `, ${first}` : ""}. What's your role?`;
+      return first ? tr(lang, "askRoleNamed", { name: first }) : tr(lang, "askRole");
     case "company":
-      return prefilled
-        ? he
-          ? `רשום אצלנו שהחברה היא **${a.companyName}**. נכון?`
-          : `We have your company as **${a.companyName}**. Is that right?`
-        : he
-          ? "איך קוראים לחברה?"
-          : "What's the company called?";
+      return ctx.prefilled ? tr(lang, "verifyCompany", { company: a.companyName }) : tr(lang, "askCompany");
     case "website":
-      return prefilled
-        ? he
-          ? `והאתר הוא **${a.website}**?`
-          : `And your website is **${a.website}**?`
-        : he
-          ? "מה כתובת האתר? אחפש משם את החשבונות שלכם ברשתות ואת המותג."
-          : "What's your website? I'll use it to find your social accounts and your brand.";
-    case "handles":
-      return prefilled
-        ? he
-          ? "אלה החשבונות שרשומים אצלנו. תקן/י מה שלא נכון."
-          : "These are the accounts we have on file. Fix anything that's off."
-        : Object.values(a.handles).some(Boolean)
-          ? he
-            ? "מצאתי את החשבונות האלה. אשר/י שהם שלכם, או תקן/י."
-            : "I found these accounts. Confirm they're yours, or fix them."
-          : he
-            ? "לא מצאתי חשבונות ברשתות. אפשר להוסיף אותם כאן."
-            : "I couldn't find your social accounts. You can add them here.";
-    case "brand":
-      return prefilled
-        ? he
-          ? "וזה המותג כפי שהוא רשום אצלנו. זה עדיין נכון?"
-          : "And here's your brand as we have it. Still right?"
-        : he
-          ? "וזה המותג כפי שקראתי אותו מהאתר. זה אתם?"
-          : "And here's your brand as I read it from the site. Is this you?";
+      return ctx.prefilled ? tr(lang, "verifyWebsite", { website: a.website }) : tr(lang, "askWebsite");
+    case "handles": {
+      const any = Object.values(a.handles).some(Boolean);
+      if (ctx.existing) return tr(lang, any ? "handlesOnFile" : "handlesNoneOnFile");
+      return tr(lang, any ? "handlesFound" : "handlesNone");
+    }
+    case "logo":
+      if (ctx.prefilled) return tr(lang, "logoOnFile");
+      if (a.logoUrl) return tr(lang, "logoFound");
+      return tr(lang, ctx.existing ? "logoNoneOnFile" : "logoNone");
     case "goals":
-      return he ? "מה הכי חשוב לכם שהשיווק ישיג? אפשר לבחור כמה." : "What should your marketing achieve? Pick as many as you like.";
+      return tr(lang, "askGoals");
     case "audience":
-      return he ? "למי אתם מדברים? תאר/י את הקהל במשפט." : "Who are you talking to? Describe your audience in a sentence.";
+      return tr(lang, "askAudience");
     case "competitors":
-      return a.competitors.length
-        ? he
-          ? "אלה המתחרים שזיהיתי. תוריד/י או תוסיף/י."
-          : "These look like your competitors. Remove or add any."
-        : he
-          ? "מי המתחרים העיקריים שלכם? אפשר גם לדלג."
-          : "Who are your main competitors? You can skip this too.";
+      if (!a.competitors.length) return tr(lang, "competitorsNone");
+      return tr(lang, ctx.existing ? "competitorsOnFile" : "competitorsFound");
     case "voice":
-      return prefilled
-        ? he
-          ? "יש לנו כבר טון מותג שמור. להשאיר אותו, או לבחור את הפוסט שנשמע הכי כמוכם?"
-          : "We already have a brand voice on file. Keep it, or pick the post that sounds most like you?"
-        : he
-          ? "איזה מהפוסטים האלה נשמע הכי כמוכם?"
-          : "Which of these posts sounds most like you?";
+      return tr(lang, ctx.prefilled ? "verifyVoice" : "askVoice");
     case "contentLanguage":
-      return he ? "באיזו שפה לכתוב את התוכן שלכם?" : "Which language should your content be written in?";
+      return tr(lang, "askContentLanguage");
     case "profile":
-      return he
-        ? "שאלה אחרונה, רק בשבילך (לא חובה): תמונה, קורות חיים ו-LinkedIn אישי עוזרים לנו לכתוב בשמך."
-        : "Last one, just for you (optional): a photo, your CV and your personal LinkedIn help us write in your voice.";
+      return tr(lang, "askProfile");
     case "done":
-      return he ? "זהו, הכול מוכן. הנה הסיכום:" : "That's everything. Here's the summary:";
+      return tr(lang, "done", { company: a.companyName || tr(lang, "yourCompany") });
   }
 }
 
@@ -362,7 +311,7 @@ export function nextStep(id: StepId): StepId {
   return STEPS[Math.min(i + 1, STEPS.length - 1)]!.id;
 }
 
-/** Does an existing client's record already answer this step? */
+/** Does the client's record already answer this step? */
 export function isPrefilled(id: StepId, seed: ChatSeed): boolean {
   switch (id) {
     case "company":
@@ -370,11 +319,11 @@ export function isPrefilled(id: StepId, seed: ChatSeed): boolean {
     case "website":
       return !!seed.website;
     case "handles":
-      return !!seed.handles && Object.keys(seed.handles).length > 0;
-    case "brand":
-      return !!(seed.category || seed.description || seed.colors?.length);
+      return !!seed.existing;
     case "voice":
       return !!seed.brandVoice;
+    case "logo":
+      return !!seed.logoUrl;
     default:
       return false;
   }
@@ -417,10 +366,6 @@ function strList(v: unknown, maxItems = 12, max = 200): string[] {
     : [];
 }
 
-function isLang(v: unknown): v is ChatLang {
-  return v === "en" || v === "he";
-}
-
 /**
  * Chat answers received from the browser, reduced to the shape above with
  * every string bounded. Anything unrecognisable is dropped rather than trusted.
@@ -436,23 +381,23 @@ export function sanitizeChatAnswers(raw: unknown): ChatAnswers {
   }
   return {
     ...emptyAnswers(),
-    language: isLang(a.language) ? a.language : "en",
+    language: isChatLang(a.language) ? a.language : "en",
     name: str(a.name, 100).trim(),
     role: str(a.role, 100).trim(),
     companyName: str(a.companyName, 200).trim(),
     website: str(a.website, 500).trim(),
     handles,
-    category: str(a.category, 200).trim(),
-    description: str(a.description).trim(),
-    colors: strList(a.colors, 6, 9).filter((c) => /^#[0-9a-f]{3,8}$/i.test(c)),
     goals: strList(a.goals),
     audience: str(a.audience).trim(),
     competitors: strList(a.competitors),
     voice: typeof a.voice === "string" && VOICE_IDS.has(a.voice) ? (a.voice as VoiceId) : "",
-    contentLanguages: strList(a.contentLanguages, 2).filter(isLang),
+    contentLanguages: strList(a.contentLanguages, CHAT_LANGUAGES.length).filter(isChatLang),
     profile: a.profile === "done" || a.profile === "skipped" ? a.profile : "",
     ...(a.keepVoice === true ? { keepVoice: true } : {}),
     ...(typeof a.logoUrl === "string" && /^https:\/\//.test(a.logoUrl) ? { logoUrl: a.logoUrl.slice(0, 1000) } : {}),
+    ...(a.logoSource === "scan" || a.logoSource === "upload" || a.logoSource === "kept" || a.logoSource === "skipped"
+      ? { logoSource: a.logoSource }
+      : {}),
   };
 }
 
@@ -497,8 +442,7 @@ export function intelBriefFromAnswers(a: ChatAnswers): string {
     a.goals.length > 0 && `- Marketing goals: ${a.goals.map(goalLabel).join(", ")}`,
     a.audience && `- Target audience, in their words: ${a.audience}`,
     a.competitors.length > 0 && `- Competitors they named or confirmed: ${a.competitors.join(", ")}`,
-    a.contentLanguages.length > 0 &&
-      `- Content language: ${a.contentLanguages.map((l) => (l === "he" ? "Hebrew" : "English")).join(" and ")}`,
+    a.contentLanguages.length > 0 && `- Content language: ${a.contentLanguages.map(languageName).join(" and ")}`,
   ].filter((l): l is string => typeof l === "string" && l !== "");
   return lines.length > 1 ? lines.join("\n") : "";
 }

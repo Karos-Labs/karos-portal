@@ -6,6 +6,7 @@ import type { SocialPlatform } from "@/components/agent-identity";
 import { aiFor, usageFor } from "@/lib/ai/provider";
 import { isScrappycocoConfigured, scrappycocoSearchUrls } from "@/lib/branding-scrappycoco";
 import { HANDLE_PLATFORMS, emptyDiscovery, type ChatLang, type Discovery } from "@/lib/onboarding-chat";
+import { languageName } from "@/lib/onboarding-i18n";
 import {
   extractSiteMeta,
   extractSocialProfiles,
@@ -24,6 +25,11 @@ import { logger } from "@/services/logger";
  * this module prefers "found nothing" to a guess: an empty field makes the
  * chat ask, a wrong one makes the client correct us on their first screen.
  *
+ * Accounts, the logo, competitors and sample posts. The rest of the brand
+ * (palette, category, description) is NOT scanned here: the Intel Report and
+ * SEO/GEO research that Finish starts produce it, and it appears in the
+ * client's workspace when ready (owner ruling 2026-09-26).
+ *
  * Sources, cheapest and most reliable first:
  *   1. The site's own HTML: header/footer links to its profiles (free, and the
  *      brand's own statement of which accounts are theirs), the logo, the
@@ -31,13 +37,8 @@ import { logger } from "@/services/logger";
  *   2. ScrappyCoco web search, one call per network the site did not link
  *      (~$0.007 each; owner ruling 2026-09-26: "costs very little"). A result
  *      only counts when its handle carries the brand's name.
- *   3. The colour the site declares for itself (`<meta name="theme-color">`).
- *      NOT `observeSitePalette`: on stripe.com it spends ~100s of synchronous
- *      CPU on the stylesheets (measured 2026-09-26), which freezes the whole
- *      server process and no deadline can cut. The branding pipeline that runs
- *      after Finish computes the real palette in the background.
- *   4. One small model call over the page text: category, a one-line
- *      description, competitors, and three sample posts in the chat language.
+ *   3. One small model call over the page text: competitors, and three
+ *      sample posts in the chat language.
  *
  * NEVER THROWS. Each source fails on its own into an empty field.
  */
@@ -168,8 +169,6 @@ async function findHandles(
 }
 
 const DescribeSchema = z.object({
-  category: z.string().describe("The company's industry or niche in 2-5 words, e.g. 'B2B payroll software'."),
-  description: z.string().describe("One sentence saying what the company does and for whom."),
   competitors: z.array(z.string()).max(5).describe("Up to 5 real, named direct competitors. Empty if unsure."),
   posts: z
     .object({
@@ -183,8 +182,8 @@ const DescribeSchema = z.object({
 async function describe(
   meta: SiteMeta,
   input: { companyName: string; website: string; language: ChatLang; clientId: string | null },
-): Promise<Pick<Discovery, "category" | "description" | "competitors" | "voiceSamples">> {
-  const empty = { category: "", description: "", competitors: [], voiceSamples: [] };
+): Promise<Pick<Discovery, "competitors" | "voiceSamples">> {
+  const empty = { competitors: [], voiceSamples: [] };
   const usageMeta = {
     clientId: input.clientId,
     agentId: null,
@@ -192,7 +191,7 @@ async function describe(
     ...usageFor("onboarding.discover"),
     operation: "onboarding_discovery",
   };
-  const language = input.language === "he" ? "Hebrew" : "English";
+  const language = languageName(input.language);
   try {
     const { object, usage } = await generateObject({
       model: aiFor("onboarding.discover").model,
@@ -201,15 +200,13 @@ async function describe(
         `A new client is onboarding. Company: "${input.companyName}". Website: ${input.website}.\n` +
         `Page title: ${meta.title || "(none)"}\nMeta description: ${meta.description || "(none)"}\n` +
         `Page text (truncated):\n${meta.text || "(the page could not be read)"}\n\n` +
-        `Write category, description and posts in ${language}. Company and competitor names stay as they are spelled.\n` +
+        `Write the posts in ${language}. Company and competitor names stay as they are spelled.\n` +
         `Posts: one to three sentences each, about what THIS company actually does according to the page, ` +
         `no hashtags, no emoji. bold = direct and confident; warm = human and empathetic; expert = evidence-led and precise.\n` +
         `Competitors: only companies you are confident compete directly; never invent names.`,
     });
     logger.logUsage({ ...usageMeta, inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 });
     return {
-      category: object.category.trim().slice(0, 80),
-      description: object.description.trim().slice(0, 400),
       competitors: object.competitors.map((c) => c.trim()).filter(Boolean).slice(0, 5),
       voiceSamples: (["bold", "warm", "expert"] as const).map((id) => ({ id, post: object.posts[id].trim().slice(0, 600) })),
     };
@@ -230,7 +227,7 @@ export async function discoverOnboardingProfile(input: {
   if (!url) return emptyDiscovery();
   const page = await fetchHtml(url);
   const brand = input.companyName.trim() || url.hostname.replace(/^www\./, "").split(".")[0]!;
-  const meta = page ? extractSiteMeta(page.html, page.finalUrl, brand) : extractSiteMeta("", url.toString(), brand);
+  const meta = page ? extractSiteMeta(page.html, page.finalUrl, brand) : extractSiteMeta("");
   const companyName = input.companyName.trim() || meta.siteName || meta.title.split(/[|\-–·]/)[0]!.trim();
   const fromSite = page ? extractSocialProfiles(page.html) : {};
 
@@ -241,24 +238,12 @@ export async function discoverOnboardingProfile(input: {
       // Past the deadline the site's own links still stand; only the searches are lost.
       Object.fromEntries(HANDLE_PLATFORMS.map((p) => [p, fromSite[p] ?? null])) as Discovery["handles"],
     ),
-    withDeadline(describe(meta, { ...input, companyName }), SOURCE_DEADLINE_MS, {
-      category: "",
-      description: "",
-      competitors: [],
-      voiceSamples: [],
-    }),
+    withDeadline(describe(meta, { ...input, companyName }), SOURCE_DEADLINE_MS, { competitors: [], voiceSamples: [] }),
   ]);
 
   return {
     handles,
-    colors: meta.themeColor ? [meta.themeColor] : [],
     logoUrl: meta.logoUrl,
-    category: described.category,
-    // The site's own sentence about itself beats the model's paraphrase of it.
-    description: (meta.description.length >= 20 && meta.description.length <= 300 && input.language === "en"
-      ? meta.description
-      : described.description
-    ).trim(),
     competitors: described.competitors,
     voiceSamples: described.voiceSamples,
   };

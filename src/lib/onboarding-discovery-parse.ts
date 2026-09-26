@@ -122,28 +122,27 @@ export interface SiteMeta {
   title: string;
   description: string;
   siteName: string;
-  /** `<meta name="theme-color">` as #RRGGBB, when it is a real colour (not white/black). */
-  themeColor: string | null;
-  /** Absolute https URL of the best logo candidate, or null. */
+  /** Absolute https URL of the brand's own logo, or null. */
   logoUrl: string | null;
   /** The page's visible text, whitespace-collapsed and capped, for the model. */
   text: string;
 }
 
 /**
- * What a page says about itself.
+ * What a page says about itself: title, description, name, visible text (for
+ * the model) and the brand's logo (for the client to confirm).
  *
  * THE LOGO IS THE HARD PART. A page carries many images called "logo", and
  * most of them are somebody else's: stripe.com's first one is a customer's,
  * from its logo wall. So an image counts only when it is in the page's
- * <header>, or when its alt/src names the brand; failing that, the
- * apple-touch-icon (square, and nearly always the brand's own mark). og:image
- * is not used: it is usually a wide banner, not a mark. No logo is a fine
- * answer; the card then shows the initial.
+ * <header>, or when its FILE NAME carries both the brand and "logo"; failing
+ * that, the apple-touch-icon (square, and nearly always the brand's own mark).
+ * og:image is not used: it is usually a wide banner, not a mark. No logo is a
+ * fine answer; the client then uploads one or skips.
  */
-export function extractSiteMeta(html: string, pageUrl: string, brand = "", maxText = 6000): SiteMeta {
+export function extractSiteMeta(html: string, pageUrl = "", brand = "", maxText = 6000): SiteMeta {
   const abs = (u: string | undefined): string | null => {
-    if (!u) return null;
+    if (!u || !pageUrl) return null;
     try {
       const url = new URL(decodeEntities(u), pageUrl);
       return url.protocol === "https:" ? url.toString() : null;
@@ -165,7 +164,6 @@ export function extractSiteMeta(html: string, pageUrl: string, brand = "", maxTe
     const f = fileName(attr(tag, "src")).toLowerCase();
     return key.length >= 3 && /logo/.test(f) && f.replace(/[^a-z0-9]/g, "").includes(key);
   };
-
   const header = /<header\b[\s\S]*?<\/header>/i.exec(html)?.[0] ?? "";
   let logo: string | null = null;
   for (const tag of [...logoImages(header), ...logoImages(html).filter(namesBrand)]) {
@@ -196,18 +194,9 @@ export function extractSiteMeta(html: string, pageUrl: string, brand = "", maxTe
     title,
     description: decodeEntities(metaContent(html, "description") ?? metaContent(html, "og:description") ?? ""),
     siteName: decodeEntities(metaContent(html, "og:site_name") ?? ""),
-    themeColor: brandThemeColor(metaContent(html, "theme-color")),
     logoUrl: logo,
     text,
   };
-}
-
-function brandThemeColor(raw: string | undefined): string | null {
-  const m = /^#?([0-9a-f]{6}|[0-9a-f]{3})$/i.exec((raw ?? "").trim());
-  if (!m) return null;
-  const hex = m[1]!.length === 3 ? [...m[1]!].map((c) => c + c).join("") : m[1]!;
-  const upper = `#${hex.toUpperCase()}`;
-  return upper === "#FFFFFF" || upper === "#000000" ? null : upper;
 }
 
 /**

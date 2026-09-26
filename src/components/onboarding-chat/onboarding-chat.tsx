@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Button, Input, Textarea } from "@/components/ui";
+import { Button, Input } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { SocialPlatformMark } from "@/components/agent-identity";
 import { cn } from "@/lib/utils";
@@ -20,19 +20,19 @@ import {
   voiceSamples,
   type ChatAnswers,
   type ChatDraft,
-  type ChatLang,
   type ChatMessage as Message,
   type ChatSeed,
   type Discovery,
   type StepId,
   type VoiceId,
 } from "@/lib/onboarding-chat";
+import { CHAT_LANGUAGES, OPENING_MESSAGE, isChatLang, isRtl, languageLabel, tr, type ChatLang, type MsgKey } from "@/lib/onboarding-i18n";
 
 /**
  * Step 1 of onboarding: the conversation. Owns the flow only; the wizard
- * decides what "scan the website", "save the draft" and the personal profile
- * controls do, so the same chat runs for a real client and in the admin
- * simulation.
+ * decides what "scan the website", "save the draft", "upload a logo" and the
+ * personal profile controls do, so the same chat runs for a real client and
+ * in the admin simulation.
  */
 
 const TYPING_MS = 550;
@@ -46,45 +46,51 @@ const PLATFORM_LABEL: Record<string, string> = {
   youtube: "YouTube",
 };
 
+/** A translator bound to one language, handed to the composers. */
+type T = (key: MsgKey, vars?: Record<string, string | number>) => string;
+
 export function OnboardingChat({
   seed,
   initialDraft,
   discover,
   saveDraft,
   renderProfile,
+  uploadLogo,
   onComplete,
   onLanguageChange,
 }: {
-  /** What an existing client's record already answers; empty for a new company. */
+  /** What the client's record already answers; empty for a new company. */
   seed: ChatSeed;
   /** A conversation saved earlier; resumes at its step. */
   initialDraft?: ChatDraft | null;
-  /** The website scan. May resolve empty; must not reject (a rejection is treated as empty). */
+  /** The website scan (new companies only). May resolve empty; a rejection counts as empty. */
   discover: (input: { website: string; companyName: string; language: ChatLang }) => Promise<Discovery>;
   /** Called with the conversation each time a new question is asked. */
   saveDraft?: (draft: ChatDraft) => void;
   /** The photo / CV / LinkedIn controls for the optional personal step. */
   renderProfile: (lang: ChatLang, name: string) => React.ReactNode;
+  /** Stores an uploaded logo and returns its URL. Absent = uploads disabled (the simulation). */
+  uploadLogo?: (file: File) => Promise<string>;
   /** `voicePost` is the sample post the client picked, as they saw it. */
   onComplete: (answers: ChatAnswers, voicePost: string) => void;
   /** The wizard bar above speaks the chat's language too. */
   onLanguageChange?: (lang: ChatLang) => void;
 }) {
   const [answers, setAnswers] = useState<ChatAnswers>(
-    () => initialDraft?.answers ?? { ...emptyAnswers(), ...withoutBrandVoice(seed) },
+    () => initialDraft?.answers ?? { ...emptyAnswers(), ...seedAnswers(seed) },
   );
-  const [step, setStep] = useState<StepId>(initialDraft?.step ?? "language");
+  const [step, setStep] = useState<StepId>(initialDraft?.step ?? "name");
   const [messages, setMessages] = useState<Message[]>(() =>
-    initialDraft?.messages.length
-      ? initialDraft.messages
-      : [{ id: 0, from: "bot", text: botLine("language", "en", emptyAnswers(), false) }],
+    initialDraft?.messages.length ? initialDraft.messages : [{ id: 0, from: "bot", text: OPENING_MESSAGE }],
   );
   const [written, setWritten] = useState<{ id: VoiceId; post: string }[]>(initialDraft?.voiceSamples ?? []);
   const [typing, setTyping] = useState<string | null>(null);
   const nextId = useRef((initialDraft?.messages.length ?? 1) + 1);
   const scrollRef = useRef<HTMLDivElement>(null);
   const lang = answers.language;
-  const he = lang === "he";
+  const rtl = isRtl(lang);
+  const t: T = (key, vars) => tr(lang, key, vars);
+  const existing = !!seed.existing;
 
   useEffect(() => {
     onLanguageChange?.(lang);
@@ -107,26 +113,26 @@ export function OnboardingChat({
     // composer until it is on screen - no double answers.
     const ask = (a: ChatAnswers, samples: { id: VoiceId; post: string }[]) => {
       setTyping(null);
-      const botMessage: Message = { id: nextId.current++, from: "bot", text: botLine(next, a.language, a, isPrefilled(next, seed)) };
+      const text = botLine(next, a.language, a, { prefilled: isPrefilled(next, seed), existing });
+      const botMessage: Message = { id: nextId.current++, from: "bot", text };
       setMessages([...transcript, botMessage]);
       setStep(next);
       saveDraft?.({ step: next, answers: a, messages: [...transcript, botMessage], voiceSamples: samples });
     };
 
-    // The website answer starts the scan. What the client's record already
-    // holds is kept; the scan only fills what it leaves empty.
-    if (step === "website") {
-      setTyping(he ? `בודק את ${merged.website}…` : `Looking at ${merged.website}…`);
+    // A NEW company's website answer starts the scan: accounts, logo,
+    // competitors and sample posts. An EXISTING client's accounts, logo and
+    // competitors come from their record, so nothing is scanned for them
+    // (owner ruling 2026-09-26) - they confirm or change what is on file.
+    if (step === "website" && !existing) {
+      setTyping(t("scanning", { website: merged.website }));
       discover({ website: merged.website, companyName: merged.companyName, language: merged.language })
         .catch(() => emptyDiscovery())
         .then((found) => {
           const withScan: ChatAnswers = {
             ...merged,
             handles: Object.keys(merged.handles).length ? merged.handles : found.handles,
-            category: merged.category || found.category,
-            description: merged.description || found.description,
-            colors: merged.colors.length ? merged.colors : found.colors,
-            logoUrl: merged.logoUrl || found.logoUrl,
+            ...(merged.logoUrl || !found.logoUrl ? {} : { logoUrl: found.logoUrl }),
             competitors: merged.competitors.length ? merged.competitors : found.competitors,
           };
           setAnswers(withScan);
@@ -148,7 +154,7 @@ export function OnboardingChat({
     // conversation takes what is left, so a tall card (handles, voice) never
     // pushes the thing to answer below the fold.
     <div
-      dir={he ? "rtl" : "ltr"}
+      dir={rtl ? "rtl" : "ltr"}
       className="flex h-[max(520px,calc(100dvh-230px))] flex-col overflow-hidden rounded-[14px] border border-border bg-surface"
     >
       {/* Header */}
@@ -156,25 +162,27 @@ export function OnboardingChat({
         <BotAvatar />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold">Karos</p>
-          <p className="text-[11px] text-muted-2">
-            {he ? "מגדיר את סביבת העבודה שלך" : "Setting up your workspace"}
-          </p>
+          <p className="text-[11px] text-muted-2">{t("headerSubtitle")}</p>
         </div>
-        <div className="flex items-center gap-1 rounded-full border border-border p-0.5 text-[11px]" dir="ltr">
-          {(["en", "he"] as ChatLang[]).map((l) => (
-            <button
-              key={l}
-              type="button"
-              onClick={() => setAnswers((a) => ({ ...a, language: l }))}
-              className={cn(
-                "rounded-full px-2 py-0.5 transition-colors",
-                lang === l ? "bg-surface-3 text-foreground" : "text-muted-2 hover:text-foreground",
-              )}
-            >
-              {l === "en" ? "EN" : "עב"}
-            </button>
-          ))}
-        </div>
+        <label className="flex items-center gap-1.5 text-[11px] text-muted-2">
+          <Icon name="Languages" className="h-3.5 w-3.5" />
+          <span className="sr-only">{t("language")}</span>
+          <select
+            value={lang}
+            onChange={(e) => {
+              const next = e.target.value;
+              if (isChatLang(next)) setAnswers((a) => ({ ...a, language: next }));
+            }}
+            aria-label={t("language")}
+            className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-foreground"
+          >
+            {CHAT_LANGUAGES.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
       <div className="h-0.5 bg-border">
         <div
@@ -201,15 +209,17 @@ export function OnboardingChat({
             step={step}
             kind={current.kind}
             lang={lang}
+            t={t}
             answers={answers}
             prefilled={isPrefilled(step, seed)}
             written={written}
             renderProfile={renderProfile}
+            uploadLogo={uploadLogo}
             onAnswer={answer}
             onComplete={() =>
               onComplete(
                 answers,
-                answers.voice ? voiceSamples(answers.companyName, lang, written).find((v) => v.id === answers.voice)?.post ?? "" : "",
+                answers.voice ? (voiceSamples(answers.companyName, lang, written).find((v) => v.id === answers.voice)?.post ?? "") : "",
               )
             }
           />
@@ -219,10 +229,11 @@ export function OnboardingChat({
   );
 }
 
-/** The stored brand voice is the seed's business (it decides the voice step), not an answer. */
-function withoutBrandVoice(seed: ChatSeed): Partial<ChatAnswers> {
+/** The seed's answers. The stored brand voice and `existing` decide steps; they are not answers. */
+function seedAnswers(seed: ChatSeed): Partial<ChatAnswers> {
   const rest: ChatSeed = { ...seed };
   delete rest.brandVoice;
+  delete rest.existing;
   return rest;
 }
 
@@ -350,46 +361,45 @@ function Composer({
   step,
   kind,
   lang,
+  t,
   answers,
   prefilled,
   written,
   renderProfile,
+  uploadLogo,
   onAnswer,
   onComplete,
 }: {
   step: StepId;
   kind: (typeof STEPS)[number]["kind"];
   lang: ChatLang;
+  t: T;
   answers: ChatAnswers;
   prefilled: boolean;
   written: { id: VoiceId; post: string }[];
   renderProfile: (lang: ChatLang, name: string) => React.ReactNode;
+  uploadLogo?: (file: File) => Promise<string>;
   onAnswer: (patch: Partial<ChatAnswers>, echo: string) => void;
   onComplete: () => void;
 }) {
-  const he = lang === "he";
-  const t = (en: string, hb: string) => (he ? hb : en);
-
   switch (kind) {
     case "choice":
-      return <ChoiceComposer step={step} lang={lang} answers={answers} onAnswer={onAnswer} t={t} />;
+      return <ChoiceComposer step={step} lang={lang} t={t} answers={answers} onAnswer={onAnswer} />;
     case "text":
     case "url":
-      return <TextComposer step={step} kind={kind} lang={lang} answers={answers} prefilled={prefilled} onAnswer={onAnswer} t={t} />;
+      return <TextComposer step={step} kind={kind} lang={lang} t={t} answers={answers} prefilled={prefilled} onAnswer={onAnswer} />;
     case "handles":
-      return <HandlesComposer answers={answers} onAnswer={onAnswer} t={t} />;
-    case "brand":
-      return <BrandComposer answers={answers} onAnswer={onAnswer} t={t} />;
+      return <HandlesComposer t={t} answers={answers} onAnswer={onAnswer} />;
+    case "logo":
+      return <LogoComposer t={t} answers={answers} prefilled={prefilled} uploadLogo={uploadLogo} onAnswer={onAnswer} />;
     case "multi":
-      return <MultiComposer step={step} lang={lang} answers={answers} onAnswer={onAnswer} t={t} />;
+      return <MultiComposer step={step} lang={lang} t={t} answers={answers} onAnswer={onAnswer} />;
     case "voice":
       return (
         <div className="grid gap-2">
           {prefilled && (
             <div>
-              <Chip onClick={() => onAnswer({ keepVoice: true, voice: "" }, t("Keep our current voice", "להשאיר את הטון הנוכחי"))}>
-                {t("Keep our current voice", "להשאיר את הטון הנוכחי")}
-              </Chip>
+              <Chip onClick={() => onAnswer({ keepVoice: true, voice: "" }, t("keepVoice"))}>{t("keepVoice")}</Chip>
             </div>
           )}
           {voiceSamples(answers.companyName, lang, written).map((v) => (
@@ -412,50 +422,36 @@ function Composer({
         <div className="space-y-3">
           {renderProfile(lang, answers.name)}
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => onAnswer({ profile: "skipped" }, t("Skip for now", "אדלג בינתיים"))}>
-              {t("Skip for now", "אדלג בינתיים")}
+            <Button variant="ghost" onClick={() => onAnswer({ profile: "skipped" }, t("skipForNow"))}>
+              {t("skipForNow")}
             </Button>
-            <Button onClick={() => onAnswer({ profile: "done" }, t("Done", "סיימתי"))}>{t("Done", "סיימתי")}</Button>
+            <Button onClick={() => onAnswer({ profile: "done" }, t("doneButton"))}>{t("doneButton")}</Button>
           </div>
         </div>
       );
     case "summary":
-      return <SummaryComposer answers={answers} lang={lang} onComplete={onComplete} t={t} />;
+      return <SummaryComposer lang={lang} t={t} answers={answers} onComplete={onComplete} />;
   }
 }
-
-type T = (en: string, hb: string) => string;
 
 function ChoiceComposer({
   step,
   lang,
+  t,
   answers,
   onAnswer,
-  t,
 }: {
   step: StepId;
   lang: ChatLang;
+  t: T;
   answers: ChatAnswers;
   onAnswer: (patch: Partial<ChatAnswers>, echo: string) => void;
-  t: T;
 }) {
   const [other, setOther] = useState("");
-  const options = stepOptions(step, lang, answers);
-  if (step === "language") {
-    return (
-      <div className="flex flex-wrap gap-2">
-        {options.map((o) => (
-          <Chip key={o.value} selected={answers.language === o.value} onClick={() => onAnswer({ language: o.value as ChatLang }, o.label)}>
-            {o.label}
-          </Chip>
-        ))}
-      </div>
-    );
-  }
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap gap-2">
-        {options.map((o) => (
+        {stepOptions(step, lang, answers).map((o) => (
           <Chip key={o.value} onClick={() => onAnswer({ role: o.value }, o.label)}>
             {o.label}
           </Chip>
@@ -465,8 +461,8 @@ function ChoiceComposer({
         value={other}
         onChange={setOther}
         onSend={() => onAnswer({ role: other.trim() }, other.trim())}
-        placeholder={t("Something else…", "משהו אחר…")}
-        sendLabel={t("Send", "שליחה")}
+        placeholder={t("somethingElse")}
+        sendLabel={t("send")}
       />
     </div>
   );
@@ -476,18 +472,18 @@ function TextComposer({
   step,
   kind,
   lang,
+  t,
   answers,
   prefilled,
   onAnswer,
-  t,
 }: {
   step: StepId;
   kind: "text" | "url";
   lang: ChatLang;
+  t: T;
   answers: ChatAnswers;
   prefilled: boolean;
   onAnswer: (patch: Partial<ChatAnswers>, echo: string) => void;
-  t: T;
 }) {
   const field = ({ name: "name", company: "companyName", website: "website", audience: "audience" } as const)[
     step as "name" | "company" | "website" | "audience"
@@ -501,24 +497,24 @@ function TextComposer({
   if (!editing) {
     return (
       <div className="flex flex-wrap gap-2">
-        <Chip onClick={() => onAnswer({}, t("Yes, that's right", "כן, נכון"))}>{t("Yes, that's right", "כן, נכון")}</Chip>
-        <Chip onClick={() => setEditing(true)}>{t("Change it", "לשנות")}</Chip>
+        <Chip onClick={() => onAnswer({}, t("yesRight"))}>{t("yesRight")}</Chip>
+        <Chip onClick={() => setEditing(true)}>{t("changeIt")}</Chip>
       </div>
     );
   }
 
   const placeholder = {
-    name: t("Your full name", "השם המלא שלך"),
-    companyName: t("Company name", "שם החברה"),
+    name: t("placeholderName"),
+    companyName: t("placeholderCompany"),
     website: "acme.com",
-    audience: t("e.g. marketing leads at B2B companies", "למשל: מנהלי שיווק בחברות B2B"),
+    audience: t("placeholderAudience"),
   }[field];
 
   function send() {
     const v = value.trim();
     if (!v) return;
     if (kind === "url" && !looksLikeWebsite(v)) {
-      setInvalid(t("That doesn't look like a website. Try acme.com", "זה לא נראה כמו אתר. נסה/י acme.com"));
+      setInvalid(t("invalidWebsite"));
       return;
     }
     onAnswer({ [field]: v } as Partial<ChatAnswers>, v);
@@ -544,20 +540,20 @@ function TextComposer({
         onSend={send}
         placeholder={placeholder}
         invalid={invalid}
-        sendLabel={t("Send", "שליחה")}
+        sendLabel={t("send")}
       />
     </div>
   );
 }
 
 function HandlesComposer({
+  t,
   answers,
   onAnswer,
-  t,
 }: {
+  t: T;
   answers: ChatAnswers;
   onAnswer: (patch: Partial<ChatAnswers>, echo: string) => void;
-  t: T;
 }) {
   const [rows, setRows] = useState(() =>
     HANDLE_PLATFORMS.map((p) => ({ platform: p, value: answers.handles[p] ?? "", none: answers.handles[p] == null })),
@@ -569,7 +565,7 @@ function HandlesComposer({
     const handles: ChatAnswers["handles"] = {};
     for (const r of rows) handles[r.platform] = r.none || !r.value.trim() ? null : r.value.trim();
     const count = Object.values(handles).filter(Boolean).length;
-    onAnswer({ handles }, t(`Confirmed ${count} accounts`, `אישרתי ${count} חשבונות`));
+    onAnswer({ handles }, t("confirmedAccounts", { count }));
   }
 
   return (
@@ -580,7 +576,7 @@ function HandlesComposer({
             <SocialPlatformMark platform={r.platform} tone="brand" className="h-4 w-4 shrink-0" />
             <span className="w-20 shrink-0 text-xs text-muted">{PLATFORM_LABEL[r.platform]}</span>
             {r.none ? (
-              <span className="flex-1 text-xs text-muted-2">{t("Not found / we don't have one", "לא נמצא / אין לנו")}</span>
+              <span className="flex-1 text-xs text-muted-2">{t("notFound")}</span>
             ) : (
               <input
                 dir="ltr"
@@ -595,7 +591,7 @@ function HandlesComposer({
               onClick={() => set(i, { none: !r.none })}
               className="shrink-0 text-[11px] text-muted-2 underline-offset-2 hover:text-foreground hover:underline"
             >
-              {r.none ? t("Add it", "להוסיף") : t("Not ours", "לא שלנו")}
+              {r.none ? t("addIt") : t("notOurs")}
             </button>
           </div>
         ))}
@@ -603,87 +599,90 @@ function HandlesComposer({
       <div className="flex justify-end">
         <Button onClick={confirm}>
           <Icon name="Check" className="h-4 w-4" />
-          {t("These are ours", "אלה שלנו")}
+          {t("theseAreOurs")}
         </Button>
       </div>
     </div>
   );
 }
 
-function BrandComposer({
-  answers,
-  onAnswer,
+/**
+ * The logo step: the logo the scan found (or the one on file), with "that's
+ * ours" / "keep it", "upload a different one" and "skip". An upload is stored
+ * at once by the regular logo route, so it is already the client's logo; an
+ * approved scanned logo is copied into storage at Finish.
+ */
+function LogoComposer({
   t,
+  answers,
+  prefilled,
+  uploadLogo,
+  onAnswer,
 }: {
-  answers: ChatAnswers;
-  onAnswer: (patch: Partial<ChatAnswers>, echo: string) => void;
   t: T;
+  answers: ChatAnswers;
+  prefilled: boolean;
+  uploadLogo?: (file: File) => Promise<string>;
+  onAnswer: (patch: Partial<ChatAnswers>, echo: string) => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [category, setCategory] = useState(answers.category);
-  const [description, setDescription] = useState(answers.description);
-  const initial = (answers.companyName || "?").trim().charAt(0).toUpperCase();
-  const accent = answers.colors[0] ?? "#888888";
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const shown = answers.logoUrl && !failed ? answers.logoUrl : null;
+
+  async function pick(file: File | undefined) {
+    if (!file || !uploadLogo) return;
+    setError(null);
+    setUploading(true);
+    try {
+      const url = await uploadLogo(file);
+      onAnswer({ logoUrl: url, logoSource: "upload" }, t("uploadedLogo"));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t("uploadFailed"));
+      setUploading(false);
+    }
+  }
+
+  const approve = prefilled ? t("keepIt") : t("thatsOurLogo");
 
   return (
     <div className="space-y-3">
-      <div className="flex gap-4 rounded-[12px] border border-border bg-surface p-4">
-        <BrandMark logoUrl={answers.logoUrl ?? null} initial={initial} accent={accent} />
-        <div className="min-w-0 flex-1 space-y-2">
-          {editing ? (
-            <>
-              <Input dir="auto" value={category} onChange={(e) => setCategory(e.target.value)} placeholder={t("Industry", "תעשייה")} />
-              <Textarea dir="auto" value={description} onChange={(e) => setDescription(e.target.value)} className="min-h-[64px]" />
-            </>
-          ) : (
-            <>
-              <p dir="auto" className="text-sm font-semibold">
-                {answers.companyName} <span className="font-normal text-muted-2">· {category}</span>
-              </p>
-              <p dir="auto" className="text-sm text-muted">
-                {description}
-              </p>
-            </>
-          )}
-          <div className="flex gap-1.5" dir="ltr">
-            {answers.colors.map((c) => (
-              <span key={c} className="h-5 w-5 rounded-full border border-border" style={{ background: c }} title={c} />
-            ))}
-          </div>
+      {shown && (
+        <div className="flex h-28 items-center justify-center rounded-[12px] border border-border bg-white p-4">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={shown} alt="" className="max-h-full max-w-full object-contain" onError={() => setFailed(true)} />
         </div>
-      </div>
-      <div className="flex justify-end gap-2">
-        {!editing && (
-          <Button variant="ghost" onClick={() => setEditing(true)}>
-            {t("Edit", "עריכה")}
+      )}
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/svg+xml,image/png,image/jpeg,image/webp"
+        className="hidden"
+        onChange={(e) => pick(e.target.files?.[0])}
+      />
+      {error && <p className="text-xs text-danger">{error}</p>}
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button variant="ghost" onClick={() => onAnswer({ logoSource: "skipped" }, t("skipForNow"))} disabled={uploading}>
+          {t("skipForNow")}
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => inputRef.current?.click()}
+          loading={uploading}
+          disabled={!uploadLogo}
+          title={uploadLogo ? undefined : "Disabled in simulation"}
+        >
+          {!uploading && <Icon name="Upload" className="h-4 w-4" />}
+          {shown ? t("uploadDifferent") : t("uploadLogo")}
+        </Button>
+        {shown && (
+          <Button onClick={() => onAnswer({ logoSource: prefilled ? "kept" : "scan" }, approve)} disabled={uploading}>
+            <Icon name="Check" className="h-4 w-4" />
+            {approve}
           </Button>
         )}
-        <Button onClick={() => onAnswer({ category: category.trim(), description: description.trim() }, t("That's us", "זה אנחנו"))}>
-          {t("That's us", "זה אנחנו")}
-        </Button>
       </div>
-    </div>
-  );
-}
-
-/** The logo the scan found, on a white tile; the initial on the accent when there is none or it fails to load. */
-function BrandMark({ logoUrl, initial, accent }: { logoUrl: string | null; initial: string; accent: string }) {
-  const [failed, setFailed] = useState(false);
-  if (logoUrl && !failed) {
-    return (
-      <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-[12px] border border-border bg-white p-1.5">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={logoUrl} alt="" className="max-h-full max-w-full object-contain" onError={() => setFailed(true)} />
-      </div>
-    );
-  }
-  return (
-    <div
-      className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[12px] text-xl font-semibold text-white"
-      style={{ background: accent }}
-      aria-hidden
-    >
-      {initial}
     </div>
   );
 }
@@ -691,15 +690,15 @@ function BrandMark({ logoUrl, initial, accent }: { logoUrl: string | null; initi
 function MultiComposer({
   step,
   lang,
+  t,
   answers,
   onAnswer,
-  t,
 }: {
   step: StepId;
   lang: ChatLang;
+  t: T;
   answers: ChatAnswers;
   onAnswer: (patch: Partial<ChatAnswers>, echo: string) => void;
-  t: T;
 }) {
   const initial = step === "competitors" ? answers.competitors : step === "contentLanguage" ? [lang] : answers.goals;
   const [picked, setPicked] = useState<string[]>(initial);
@@ -711,10 +710,10 @@ function MultiComposer({
 
   function send() {
     const labels = options.filter((o) => picked.includes(o.value)).map((o) => o.label);
-    const echo = labels.length ? labels.join(", ") : t("None", "אין");
+    const echo = labels.length ? labels.join(", ") : t("none");
     if (step === "goals") onAnswer({ goals: picked }, echo);
     else if (step === "competitors") onAnswer({ competitors: picked }, echo);
-    else onAnswer({ contentLanguages: picked as ChatLang[] }, echo);
+    else onAnswer({ contentLanguages: picked.filter(isChatLang) }, echo);
   }
 
   return (
@@ -739,7 +738,7 @@ function MultiComposer({
           }}
           className="flex gap-2"
         >
-          <Input dir="auto" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={t("Add a competitor", "הוספת מתחרה")} />
+          <Input dir="auto" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={t("addCompetitor")} />
           <Button type="submit" variant="outline" disabled={!draft.trim()}>
             <Icon name="Plus" className="h-4 w-4" />
           </Button>
@@ -747,8 +746,8 @@ function MultiComposer({
       )}
       <div className="flex justify-end">
         <Button onClick={send} disabled={!optional && picked.length === 0}>
-          {t("Continue", "המשך")}
-          <Icon name={lang === "he" ? "ArrowLeft" : "ArrowRight"} className="h-4 w-4" />
+          {t("continue")}
+          <Icon name={isRtl(lang) ? "ArrowLeft" : "ArrowRight"} className="h-4 w-4" />
         </Button>
       </div>
     </div>
@@ -756,15 +755,15 @@ function MultiComposer({
 }
 
 function SummaryComposer({
-  answers,
   lang,
-  onComplete,
   t,
+  answers,
+  onComplete,
 }: {
-  answers: ChatAnswers;
   lang: ChatLang;
-  onComplete: () => void;
   t: T;
+  answers: ChatAnswers;
+  onComplete: () => void;
 }) {
   const goals = stepOptions("goals", lang, answers)
     .filter((o) => answers.goals.includes(o.value))
@@ -772,18 +771,26 @@ function SummaryComposer({
     .join(", ");
   const handles = HANDLE_PLATFORMS.filter((p) => answers.handles[p]).map((p) => PLATFORM_LABEL[p]).join(", ");
   const voice = answers.keepVoice
-    ? t("Kept the current voice", "הטון הנוכחי נשאר")
+    ? t("voiceKept")
     : (voiceSamples(answers.companyName, lang).find((v) => v.id === answers.voice)?.label ?? "");
+  const logo =
+    answers.logoSource === "scan"
+      ? t("logoFromSite")
+      : answers.logoSource === "upload"
+        ? t("logoUploaded")
+        : answers.logoSource === "kept"
+          ? t("logoKept")
+          : "";
   const rows: [string, string][] = [
-    [t("You", "את/ה"), [answers.name, answers.role].filter(Boolean).join(" · ")],
-    [t("Company", "חברה"), [answers.companyName, answers.website].filter(Boolean).join(" · ")],
-    [t("Accounts", "חשבונות"), handles],
-    [t("Industry", "תעשייה"), answers.category],
-    [t("Goals", "מטרות"), goals],
-    [t("Audience", "קהל"), answers.audience],
-    [t("Competitors", "מתחרים"), answers.competitors.join(", ")],
-    [t("Voice", "טון"), voice],
-    [t("Content language", "שפת תוכן"), answers.contentLanguages.map((l) => (l === "he" ? t("Hebrew", "עברית") : t("English", "אנגלית"))).join(", ")],
+    [t("sumYou"), [answers.name, answers.role].filter(Boolean).join(" · ")],
+    [t("sumCompany"), [answers.companyName, answers.website].filter(Boolean).join(" · ")],
+    [t("sumAccounts"), handles],
+    [t("sumLogo"), logo],
+    [t("sumGoals"), goals],
+    [t("sumAudience"), answers.audience],
+    [t("sumCompetitors"), answers.competitors.join(", ")],
+    [t("sumVoice"), voice],
+    [t("sumContentLanguage"), answers.contentLanguages.map(languageLabel).join(", ")],
   ];
   return (
     <div className="space-y-3">
@@ -792,15 +799,15 @@ function SummaryComposer({
           <div key={k} className="grid grid-cols-[120px_1fr] gap-3 px-3 py-1.5">
             <dt className="text-muted-2">{k}</dt>
             <dd dir="auto" className="break-words">
-              {v || <span className="text-muted-2">{t("Not set", "לא הוזן")}</span>}
+              {v || <span className="text-muted-2">{t("notSet")}</span>}
             </dd>
           </div>
         ))}
       </dl>
       <div className="flex justify-end">
         <Button onClick={onComplete}>
-          {t("Continue to your channels", "המשך לחיבור הרשתות")}
-          <Icon name={lang === "he" ? "ArrowLeft" : "ArrowRight"} className="h-4 w-4" />
+          {t("toChannels")}
+          <Icon name={isRtl(lang) ? "ArrowLeft" : "ArrowRight"} className="h-4 w-4" />
         </Button>
       </div>
     </div>

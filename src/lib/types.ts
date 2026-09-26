@@ -4260,6 +4260,7 @@ export interface ClientOnboardingProfile {
   role?: string;
   goals?: string[];
   audience?: string;
-  contentLanguages?: ("en" | "he")[];
-  chatLanguage?: "en" | "he";
+  /** Language codes from lib/onboarding-i18n.ts CHAT_LANGUAGES ("en", "he", "ar", "pt", …). */
+  contentLanguages?: string[];
+  chatLanguage?: string;
 }

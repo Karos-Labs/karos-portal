@@ -56,6 +56,10 @@ describe("onboarding simulation writes nothing", () => {
     expect(guard).toBeLessThan(body.indexOf("ensureOwnEmployeeSeatAction("));
   });
 
+  it("logo upload is switched off in a simulation (it would replace a real client's logo)", () => {
+    expect(wizard).toMatch(/const uploadLogo = simulation\s*\?\s*undefined/);
+  });
+
   it("the scan is the admin action in a simulation", () => {
     expect(wizard).toMatch(/simulation \? simulateOnboardingDiscoveryAction : discoverOnboardingProfileAction/);
   });

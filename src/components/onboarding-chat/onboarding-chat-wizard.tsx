@@ -9,6 +9,7 @@ import { AvatarUploader } from "@/components/avatar-uploader";
 import { ResumeUploader } from "@/components/resume-uploader";
 import { IntegrationsTab } from "@/components/integrations-tab";
 import { cn } from "@/lib/utils";
+import { checkBrandLogoFile } from "@/lib/brand-logo-file";
 import { OnboardingChat } from "./onboarding-chat";
 import {
   completeOnboardingAction,
@@ -18,7 +19,8 @@ import {
   saveOnboardingProfileAction,
 } from "@/lib/actions/onboarding-actions";
 import { simulateOnboardingDiscoveryAction } from "@/lib/actions/onboarding-simulation-actions";
-import { HANDLE_PLATFORMS, type ChatAnswers, type ChatDraft, type ChatLang, type ChatSeed } from "@/lib/onboarding-chat";
+import { HANDLE_PLATFORMS, type ChatAnswers, type ChatDraft, type ChatSeed } from "@/lib/onboarding-chat";
+import { isRtl, tr, type ChatLang, type MsgKey } from "@/lib/onboarding-i18n";
 import type { AppUser } from "@/lib/types";
 import type { IntegrationView } from "@/lib/integrations/sanitize";
 import type { SeatView } from "@/components/linkedin-seats-workspace";
@@ -40,9 +42,11 @@ export interface OnboardingSimulation {
 }
 
 const STEPS = [
-  { id: 1, label: "About you", he: "עליכם", icon: "MessagesSquare" },
-  { id: 2, label: "Your channels", he: "הרשתות", icon: "Share2" },
-] as const;
+  { id: 1, label: "stepAboutYou", icon: "MessagesSquare" },
+  { id: 2, label: "stepChannels", icon: "Share2" },
+] as const satisfies readonly { id: number; label: MsgKey; icon: string }[];
+
+type T = (key: MsgKey, vars?: Record<string, string | number>) => string;
 
 export function OnboardingChatWizard({
   user,
@@ -75,8 +79,8 @@ export function OnboardingChatWizard({
   const [lang, setLang] = useState<ChatLang>(initialDraft?.answers.language ?? "en");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const he = lang === "he";
-  const t = (en: string, hb: string) => (he ? hb : en);
+  const rtl = isRtl(lang);
+  const t: T = (key, vars) => tr(lang, key, vars);
 
   const discover = simulation ? simulateOnboardingDiscoveryAction : discoverOnboardingProfileAction;
   const saveDraft = useCallback(
@@ -87,6 +91,21 @@ export function OnboardingChatWizard({
     },
     [simulation],
   );
+
+  // The regular logo route (a client may set their own logo): the upload is
+  // the client's logo the moment it lands. Absent in a simulation.
+  const uploadLogo = simulation
+    ? undefined
+    : async (file: File): Promise<string> => {
+        const check = checkBrandLogoFile(file);
+        if (!check.ok) throw new Error(check.error);
+        const body = new FormData();
+        body.set("file", file);
+        const res = await fetch(`/api/clients/${encodeURIComponent(clientId)}/logo`, { method: "POST", body });
+        const json = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+        if (!res.ok || !json.url) throw new Error(json.error ?? t("uploadFailed"));
+        return json.url;
+      };
 
   function finish() {
     if (!finished) return;
@@ -102,7 +121,7 @@ export function OnboardingChatWizard({
         await completeOnboardingAction({ answers: finished.answers, voicePost: finished.voicePost });
       } catch (e) {
         if (e instanceof Error && e.message.includes("NEXT_REDIRECT")) throw e;
-        setError(e instanceof Error ? e.message : t("Could not finish setup.", "לא הצלחנו לסיים את ההגדרה."));
+        setError(e instanceof Error ? e.message : t("finishFailed"));
       }
     });
   }
@@ -113,8 +132,9 @@ export function OnboardingChatWizard({
         <div className="mb-4 flex items-center gap-2 rounded-md border border-dashed border-border bg-surface-2 px-4 py-2.5 text-xs text-muted">
           <Icon name="FlaskConical" className="h-3.5 w-3.5 shrink-0" />
           <span className="flex-1">
-            Simulation ({simulation.mode === "new" ? "new company" : "existing client"}). The website scan is real;
-            nothing is saved, uploaded or connected.
+            {simulation.mode === "new"
+              ? "Simulation (new company). The website scan is real; nothing is saved, uploaded or connected."
+              : "Simulation (existing client). Accounts, logo and competitors come from this client's record, no scan; nothing is saved, uploaded or connected."}
           </span>
           <Link href={simulation.exitHref} className="font-medium text-foreground hover:underline">
             Exit
@@ -139,7 +159,7 @@ export function OnboardingChatWizard({
                 {step > s.id ? <Icon name="Check" className="h-4 w-4" /> : <Icon name={s.icon} className="h-4 w-4" />}
               </div>
               <span className={cn("text-[11px] font-medium", step === s.id ? "text-foreground" : "text-muted-2")}>
-                {he ? s.he : s.label}
+                {t(s.label)}
               </span>
             </div>
             {i < STEPS.length - 1 && (
@@ -160,6 +180,7 @@ export function OnboardingChatWizard({
           initialDraft={chatKey === 0 ? initialDraft : null}
           discover={discover}
           saveDraft={saveDraft}
+          uploadLogo={uploadLogo}
           renderProfile={(l, name) => (
             <ProfileControls user={user} name={name} clientId={clientId} lang={l} simulated={!!simulation} />
           )}
@@ -172,9 +193,15 @@ export function OnboardingChatWizard({
       )}
 
       {step === 2 && finished && (
-        <Card dir={he ? "rtl" : "ltr"} className="animate-slide-in-right space-y-5">
+        <Card dir={rtl ? "rtl" : "ltr"} className="animate-slide-in-right space-y-5">
           <ConfirmedAccounts answers={finished.answers} t={t} />
           {/* Every card here connects/disconnects a REAL client's channel. */}
+          {simulation && (
+            <p className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted">
+              Connections are switched off in the simulation (they would connect a real client&apos;s accounts). A real
+              client connects here with the same cards as Settings.
+            </p>
+          )}
           <SimulationInert active={!!simulation}>
             <div dir="ltr">
               <IntegrationsTab
@@ -188,14 +215,15 @@ export function OnboardingChatWizard({
               />
             </div>
           </SimulationInert>
+          <ResearchNotice companyName={finished.answers.companyName} t={t} />
           {error && <p className="text-xs text-danger">{error}</p>}
           <div className="flex items-center justify-between pt-2">
             <Button variant="ghost" onClick={() => setStep(1)} disabled={isPending}>
-              <Icon name={he ? "ArrowRight" : "ArrowLeft"} className="h-4 w-4" />
-              {t("Back", "חזרה")}
+              <Icon name={rtl ? "ArrowRight" : "ArrowLeft"} className="h-4 w-4" />
+              {t("back")}
             </Button>
             <Button onClick={finish} loading={isPending}>
-              {t("Finish setup", "סיום ההגדרה")}
+              {t("finishSetup")}
               <Icon name="CircleCheck" className="h-4 w-4" />
             </Button>
           </div>
@@ -236,6 +264,24 @@ export function OnboardingChatWizard({
   );
 }
 
+/**
+ * What Finish starts. The chat collects only what the client knows; their
+ * brand, competitors and market picture are researched afterwards (Intel
+ * Report + SEO/GEO) and land in the workspace on their own - so the client is
+ * told it has started and that they need not wait for it.
+ */
+function ResearchNotice({ companyName, t }: { companyName: string; t: T }) {
+  const name = companyName || t("yourCompany");
+  return (
+    <div className="flex items-start gap-2.5 rounded-[12px] border border-border bg-surface-2 px-4 py-3 text-xs text-muted">
+      <Icon name="Sparkles" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neon" />
+      <p dir="auto">
+        {t("researchNotice", { company: name })}
+      </p>
+    </div>
+  );
+}
+
 /** Shows its children but takes them out of interaction (and the tab order). */
 function SimulationInert({ active, children }: { active: boolean; children: React.ReactNode }) {
   if (!active) return <>{children}</>;
@@ -266,8 +312,7 @@ function ProfileControls({
   lang: ChatLang;
   simulated: boolean;
 }) {
-  const he = lang === "he";
-  const t = (en: string, hb: string) => (he ? hb : en);
+  const t: T = (key, vars) => tr(lang, key, vars);
   const [photoURL, setPhotoURL] = useState<string | null>(user.photoURL ?? null);
   const [resumeUrl, setResumeUrl] = useState<string | null>(user.resumeUrl ?? null);
   const [connecting, setConnecting] = useState(false);
@@ -292,7 +337,7 @@ function ProfileControls({
       );
     } catch (e) {
       setError(
-        e instanceof Error ? e.message : t("Could not start the LinkedIn connection.", "לא הצלחנו להתחיל את החיבור ל-LinkedIn."),
+        e instanceof Error ? e.message : t("linkedinFailed"),
       );
       setConnecting(false);
     }
@@ -306,15 +351,15 @@ function ProfileControls({
         {user.linkedInConnected ? (
           <div className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-4 py-3">
             <Icon name="CircleCheck" className="h-4 w-4 text-neon" />
-            <p className="text-sm">{t("Your LinkedIn account is connected.", "חשבון ה-LinkedIn שלך מחובר.")}</p>
+            <p className="text-sm">{t("linkedinConnected")}</p>
             <Badge tone="neon" className="ml-auto">
-              {t("Connected", "מחובר")}
+              {t("connected")}
             </Badge>
           </div>
         ) : (
           <Button type="button" variant="outline" className="w-full" onClick={connectLinkedIn} loading={connecting}>
             {!connecting && <Icon name="LogIn" className="h-4 w-4" />}
-            {t("Connect your LinkedIn", "חיבור ה-LinkedIn שלך")}
+            {t("connectLinkedin")}
           </Button>
         )}
         {error && <p className="text-xs text-danger">{error}</p>}
@@ -327,18 +372,15 @@ function ProfileControls({
  * The accounts the client confirmed in the chat, on top of the cards: step 2
  * opens with "connect THESE", not a wall of every network.
  */
-function ConfirmedAccounts({ answers, t }: { answers: ChatAnswers; t: (en: string, hb: string) => string }) {
+function ConfirmedAccounts({ answers, t }: { answers: ChatAnswers; t: T }) {
   const confirmed = HANDLE_PLATFORMS.filter((p) => answers.handles[p]);
   return (
     <div>
       <h2 className="text-base font-semibold">
-        {confirmed.length ? t("Connect the accounts you confirmed", "חיבור החשבונות שאישרת") : t("Connect your channels", "חיבור הרשתות")}
+        {confirmed.length ? t("connectConfirmed") : t("connectChannels")}
       </h2>
       <p className="mb-3 text-xs text-muted-2">
-        {t(
-          "Connect the channels your agents should publish to. You can always add the rest later from Settings.",
-          "חבר/י את הרשתות שהסוכנים יפרסמו בהן. תמיד אפשר להוסיף עוד מההגדרות.",
-        )}
+        {t("channelsHint")}
       </p>
       {confirmed.length > 0 && (
         <div className="flex flex-wrap gap-2">
