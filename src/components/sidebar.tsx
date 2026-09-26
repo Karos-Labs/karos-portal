@@ -530,6 +530,18 @@ function UserMenu({
                 <Icon name="Settings" className="h-4 w-4" />
                 Settings
               </Link>
+              {/* Deliberately tucked in here, not in the rail: a staff QA
+                  tool for walking the client onboarding wizard as a dry run. */}
+              {user.role === "KAROS_ADMIN" && !realAdmin && (
+                <Link
+                  href="/admin/onboarding-preview"
+                  onClick={() => setOpen(false)}
+                  className="flex items-center gap-3 rounded-[8px] px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+                >
+                  <Icon name="FlaskConical" className="h-4 w-4" />
+                  Simulate onboarding
+                </Link>
+              )}
               {showChrome && (
                 <>
                   <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
