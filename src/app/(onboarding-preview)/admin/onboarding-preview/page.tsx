@@ -5,6 +5,8 @@ import { CREDIT_COSTS, DEFAULT_LINKEDIN_SEAT_LIMIT } from "@/lib/credits";
 import { getCurrentUser } from "@/lib/auth";
 import { OnboardingWizard } from "@/components/onboarding-wizard";
 import { OnboardingPreviewPicker } from "@/components/onboarding-preview-picker";
+import { OnboardingChatWizard } from "@/components/onboarding-chat/onboarding-chat-wizard";
+import { seedFromClient } from "@/components/onboarding-chat/script";
 import type { AppUser, Client, ClientIntegration, EmployeeSeat } from "@/lib/types";
 
 export const metadata = { title: "Onboarding simulation · Karos CMO" };
@@ -16,6 +18,9 @@ export const metadata = { title: "Onboarding simulation · Karos CMO" };
  *   ?clientId=  absent → a blank new company and a blank new user;
  *               present → that client's stored profile and channels, the way
  *               an invited user of an existing client would meet them.
+ *   ?flow=chat  the redesigned two-step flow (conversation + channels), a
+ *               prototype with simulated website detection; default is the
+ *               wizard clients get today.
  *
  * Read-only by construction: the wizard's `simulation` prop skips every
  * server action and makes the uploaders and channel cards inert.
@@ -23,9 +28,10 @@ export const metadata = { title: "Onboarding simulation · Karos CMO" };
 export default async function OnboardingPreviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ clientId?: string }>;
+  searchParams: Promise<{ clientId?: string; flow?: string }>;
 }) {
-  const { clientId } = await searchParams;
+  const { clientId, flow } = await searchParams;
+  const chatFlow = flow === "chat";
   const admin = (await getCurrentUser())!;
   const clients = await listClients();
 
@@ -58,7 +64,23 @@ export default async function OnboardingPreviewPage({
       <OnboardingPreviewPicker
         clients={clients.filter((c) => c.status !== "archived").map((c) => ({ id: c.id, name: c.name }))}
         selectedClientId={existing?.id ?? null}
+        flow={chatFlow ? "chat" : "current"}
       />
+      {chatFlow ? (
+        <OnboardingChatWizard
+          key={existing?.id ?? "new"}
+          clientId={client.id}
+          seed={existing ? seedFromClient(existing) : {}}
+          mode={existing ? "existing" : "new"}
+          exitHref="/dashboard"
+          integrations={sanitizeIntegrations(rawIntegrations)}
+          oauthEnabledPlatforms={getOAuthEnabledPlatforms()}
+          currentUserRole={user.role}
+          linkedinSeats={sanitizeLinkedinSeats(linkedIntegration?.employeeSeats as EmployeeSeat[] | undefined)}
+          seatLimit={client.linkedinSeatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT}
+          seatCost={CREDIT_COSTS.employeeSeat}
+        />
+      ) : (
       <OnboardingWizard
         // Remount on a switch, so a new pick starts again from step 1.
         key={existing?.id ?? "new"}
@@ -71,6 +93,7 @@ export default async function OnboardingPreviewPage({
         seatCost={CREDIT_COSTS.employeeSeat}
         simulation={{ exitHref: "/dashboard", mode: existing ? "existing" : "new" }}
       />
+      )}
     </>
   );
 }
